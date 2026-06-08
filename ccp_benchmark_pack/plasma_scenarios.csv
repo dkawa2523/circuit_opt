@@ -1,0 +1,4 @@
+scenario,pressure_Pa,ne_scale,Csh_scale,comment
+low_pressure,6.7,0.65,0.75,synthetic robustness scenario
+nominal,13.3,1.0,1.0,synthetic robustness scenario
+high_pressure,26.7,1.35,1.2,synthetic robustness scenario

@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=67", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "circuit-design-platform"
+version = "0.6.0"
+description = "Separated circuit simulation, data, and ML/design workflow platform"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy>=1.23",
+  "pandas>=1.5",
+  "PyYAML>=6.0",
+  "schemdraw>=0.23",
+]
+
+[project.optional-dependencies]
+optuna = ["optuna>=3"]
+test = ["pytest>=7"]
+
+[project.scripts]
+pcd = "pcd.cli:main"
+cdp = "pcd.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

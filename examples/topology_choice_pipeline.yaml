@@ -1,0 +1,42 @@
+case_id: topology_choice_pipeline
+variables:
+  topology_choice: {choices: [l_match, pi_match, pi_match_harmonic], default: pi_match}
+  load_model: {choices: [electrode_stray, plasma_fixed_rlc], default: electrode_stray}
+source:
+  type: sine_voltage
+  name: Vsrc
+  p: src
+  n: 0
+  amplitude_V: 600
+  frequency_Hz: 13560000
+circuit:
+  builder: $topology_choice
+  output_node: electrode
+  variables:
+    C1: {bounds: [1.0e-12, 2.0e-9], scale: log, default: 2.0e-10}
+    L1: {bounds: [1.0e-9, 5.0e-6], scale: log, default: 8.0e-7}
+    C2: {bounds: [1.0e-12, 2.0e-9], scale: log, default: 2.0e-10}
+    Lh: {bounds: [1.0e-9, 5.0e-6], scale: log, default: 3.0e-7}
+    Ch: {bounds: [1.0e-12, 2.0e-9], scale: log, default: 1.0e-10}
+load:
+  name: $load_model
+  ports: {p: electrode, n: 0}
+  variables:
+    Ce: {bounds: [1.0e-12, 2.0e-10], scale: log, default: 5.0e-11}
+    Rp: {bounds: [5, 200], scale: log, default: 25}
+    Lp: {bounds: [1.0e-8, 2.0e-6], scale: log, default: 2.0e-7}
+    Csh: {bounds: [1.0e-12, 1.0e-9], scale: log, default: 2.0e-10}
+  C_F: Ce
+  Rp_ohm: Rp
+  Lp_H: Lp
+  Csh_F: Csh
+measurement: {voltage_node: electrode, current_source: Vsrc}
+solver:
+  name: dummy
+  tran: {step_s: 1.0e-9, stop_s: 3.0e-7}
+target:
+  waveform_file: target_rf.csv
+  objective: waveform_l2_harmonics
+  harmonics: [1, 2, 3]
+  harmonic_weight: 0.2
+optimizer: {name: random, seed: 11}

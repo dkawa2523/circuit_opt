@@ -1,0 +1,34 @@
+case_id: generic_rc_filter
+run: {root: runs/generic_rc}
+
+source:
+  type: voltage_pulse
+  name: Vsrc
+  p: src
+  n: 0
+  v1_V: 0
+  v2_V: 5
+  rise_s: 2.0e-9
+  fall_s: 2.0e-9
+  width_s: 1.0e-6
+  period_s: 2.0e-6
+
+circuit:
+  builder: from_yaml
+  output_node: out
+  variables:
+    R1: {bounds: [100, 10000], scale: log, default: 1000}
+    C1: {bounds: [1.0e-10, 1.0e-7], scale: log, default: 1.0e-9}
+  components:
+    - {ref: R1, n1: src, n2: out, value: R1}
+    - {ref: C1, n1: out, n2: 0, value: C1}
+
+load: {name: none}
+measurement: {voltage_node: out, current_source: Vsrc}
+solver:
+  name: dummy
+  tran: {step_s: 2.0e-9, stop_s: 2.0e-6}
+target:
+  waveform_file: target_rc.csv
+  objective: waveform_l2
+optimizer: {name: random, seed: 3}
