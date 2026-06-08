@@ -1,0 +1,54 @@
+{
+  "schema": "simulation_record.v2",
+  "case_id": "ccp_gec_level2_timevarying_plasma",
+  "run_dir": "C:\\Users\\user\\Desktop\\circuit_design_platform_v6_final\\runs\\ccp_benchmark_eval\\level2_timevarying_plasma\\trial_0028",
+  "status": "ok",
+  "created_at": "2026-06-07T23:18:18+00:00",
+  "run_seconds": 0.039268599823117256,
+  "params": {
+    "Vsrc_amp": 742.207839790633,
+    "Vsrc_dc": -22.65288495559257,
+    "C1": 3.702385783860375e-11,
+    "L1": 1.3303660171694732e-06,
+    "C2": 9.298142313154197e-11,
+    "Lh": 9.890619698982054e-08,
+    "Ch": 1.2206937363983545e-09
+  },
+  "circuit": "pi_match_harmonic",
+  "load": "plasma_table_rlcq",
+  "solver": "dummy",
+  "measurement": {
+    "voltage_node": "electrode",
+    "current_source": "Vsrc"
+  },
+  "artifacts": {
+    "netlist": "netlist.cir",
+    "waveform": "waveform.csv",
+    "solver_log": "solver.log"
+  },
+  "netlist_file": "netlist.cir",
+  "waveform_file": "waveform.csv",
+  "solver_log_file": "solver.log",
+  "warnings": [],
+  "error": null,
+  "diagnostics": {},
+  "provenance": {
+    "platform_version": "0.6.0",
+    "python_version": "3.13.12",
+    "case_path": "C:\\Users\\user\\Desktop\\circuit_design_platform_v6_final\\ccp_benchmark_pack\\ccp_gec_level2_timevarying_plasma.yaml",
+    "case_data_sha256": "3f62eab6f300bfd7ef5d05f6d5e6eb32b957dcb9ad53d4edec615f009cb66f97",
+    "params_sha256": "6234e014344168fb460e99dea589faeb05e19a2d67f78f7efbdd0e47212dda2f",
+    "plugins": [
+      {
+        "path": "C:\\Users\\user\\Desktop\\circuit_design_platform_v6_final\\ccp_benchmark_pack\\plugins\\ccp_metrics.py",
+        "sha256": "f5cd4ede96c6e410cc036305631ee3c51f54fa9aa5e5069648b861419d79bace",
+        "exists": true
+      }
+    ],
+    "solver": {
+      "name": "dummy",
+      "executable": null,
+      "timeout_s": 300.0
+    }
+  }
+}

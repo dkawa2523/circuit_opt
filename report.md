@@ -1,46 +1,62 @@
-# CCP Benchmark Pack Execution Report
+# CCP Benchmark Pack 実行・可視化・評価レポート
 
-## Overview
+## 結論
 
-`ccp_benchmark_pack` contains a three-level GEC-like argon CCP benchmark:
+今回実行した内容は、`ccp_benchmark_pack` の3ケースに対する次の検証です。
 
-- **Level 1: fixed/state RLC** (`ccp_gec_level1_fixed_match.yaml`)  
-  Fixed matching topology with a state-derived plasma RLC load.
-- **Level 2: time-varying plasma table** (`ccp_gec_level2_timevarying_plasma.yaml`)  
-  Harmonic matching topology with `plasma_table_rlcq` driven by the synthetic plasma table.
-- **Level 3: topology/load choice** (`ccp_gec_level3_topology_and_load_choice.yaml`)  
-  Mixed categorical/continuous search over topology, load model, and component/process parameters.
+- YAMLケース定義の検証
+- dummyソルバによる最適化ワークフローの実行
+- 波形・メトリクス・最適化履歴・サロゲート学習の生成
+- ngspice向けネットリスト生成
+- Schemdrawベースの回路図可視化
+- `ngspice_cli` による実行試行
 
-All three cases validated successfully in non-strict mode.  The only validation warning was the expected `dummy` solver warning: this run evaluates the workflow and screening behavior, not physical plasma fidelity.
+重要な点として、この環境では `ngspice` 実行ファイルが見つからなかったため、実回路シミュレーションとしてのngspice過渡解析は完了していません。ngspice試行はすべて `missing_executable=True` として失敗runに記録され、`loss=1e30`、`metrics_status=failed`、`metrics_reason=simulation_failed` が保存されています。
 
-## Execution
+したがって、今回の評価結果は「製品基盤としてワークフロー、記録、可視化、失敗検出が動作するか」の評価であり、「物理的なプラズマ回路設計として妥当な最適解が得られたか」の評価ではありません。
 
-Evaluation output root:
+## 対象ベンチマーク
+
+`ccp_benchmark_pack` には GEC 風のアルゴンCCP回路ベンチマークが3段階で含まれています。
+
+| Level | YAML | 目的 |
+|---|---|---|
+| Level 1 | `ccp_gec_level1_fixed_match.yaml` | 固定マッチング回路と状態由来RLCプラズマ負荷の基本確認 |
+| Level 2 | `ccp_gec_level2_timevarying_plasma.yaml` | 合成プラズマテーブルを用いた時変負荷ケース |
+| Level 3 | `ccp_gec_level3_topology_and_load_choice.yaml` | トポロジ、負荷モデル、連続パラメータを含む混合探索 |
+
+すべてのケースは非strict validationでは通過しました。警告として `dummy` ソルバ使用が検出されています。これは研究・スクリーニング用途では許容されますが、製品安全モードや物理検証では `ngspice_cli` などの実ソルバに置き換える必要があります。
+
+## dummyベンチマーク実行
+
+出力ルート:
 
 ```text
 runs/ccp_benchmark_eval
 ```
 
-Each benchmark was run with:
+実行条件:
 
-- optimizer: `random`
-- solver: `dummy`
-- trials per case: `30`
-- failed trials: `0` for all cases
+| 項目 | 内容 |
+|---|---|
+| optimizer | `random` |
+| solver | `dummy` |
+| trials | 各ケース30 |
+| failed trials | 全ケース0 |
 
-Generated artifacts:
+生成物:
 
-- Summary CSV: `runs/ccp_benchmark_eval/benchmark_summary.csv`
-- Surrogate CSV: `runs/ccp_benchmark_eval/surrogate_summary.csv`
-- Per-case summaries: `runs/ccp_benchmark_eval/<level>/summary.csv`
-- Figures:
-  - `runs/ccp_benchmark_eval/figures/plasma_table_rlc.png`
-  - `runs/ccp_benchmark_eval/figures/loss_curves.png`
-  - `runs/ccp_benchmark_eval/figures/best_waveform_overlays.png`
-  - `runs/ccp_benchmark_eval/figures/best_metric_summary.png`
-  - `runs/ccp_benchmark_eval/figures/level3_category_performance.png`
+- `runs/ccp_benchmark_eval/benchmark_summary.csv`
+- `runs/ccp_benchmark_eval/surrogate_summary.csv`
+- `runs/ccp_benchmark_eval/<case>/summary.csv`
+- `runs/ccp_benchmark_eval/<case>/trial_*/`
+- `runs/ccp_benchmark_eval/figures/plasma_table_rlc.png`
+- `runs/ccp_benchmark_eval/figures/loss_curves.png`
+- `runs/ccp_benchmark_eval/figures/best_waveform_overlays.png`
+- `runs/ccp_benchmark_eval/figures/best_metric_summary.png`
+- `runs/ccp_benchmark_eval/figures/level3_category_performance.png`
 
-## Results
+## dummyベンチマーク評価結果
 
 | Case | Trials | Failed | Best loss | Norm. RMSE | Harmonic error | Power error | Best peak V |
 |---|---:|---:|---:|---:|---:|---:|---:|
@@ -48,7 +64,13 @@ Generated artifacts:
 | Level 2 time-varying plasma | 30 | 0 | 0.491199 | 0.271650 | 0.678226 | 0.999847 | 315.83 V |
 | Level 3 topology/load choice | 30 | 0 | 0.501831 | 0.284901 | 0.667723 | 0.999998 | 280.68 V |
 
-Surrogate diagnostics:
+解釈:
+
+- Level 1は波形RMSEと高調波誤差が小さく、基盤のスモークテストとして最も良好です。
+- Level 2とLevel 3は、dummyソルバでは時変プラズマ負荷やトポロジ差を物理的に解けないため、目標波形への一致度は限定的です。
+- Power errorが全ケースでほぼ1.0です。これはdummyソルバの電流・電力 proxy が物理評価には不十分であることを示しています。
+
+## サロゲート評価
 
 | Case | Train rows | Features | Train RMSE | Train R2 | CV RMSE |
 |---|---:|---:|---:|---:|---:|
@@ -56,7 +78,9 @@ Surrogate diagnostics:
 | Level 2 time-varying plasma | 30 | 7 | 0.122149 | 0.319327 | 0.225863 |
 | Level 3 topology/load choice | 30 | 18 | 0.093336 | 0.540628 | 0.214386 |
 
-Level 3 categorical trends:
+Level 3はカテゴリ特徴量を含むため、特徴量数が18に増えています。学習R2は最も高いものの、CV RMSEはまだ大きく、30試行だけでは設計順位を確定するには不十分です。現状のサロゲートは候補絞り込み支援として扱うべきです。
+
+## Level 3カテゴリ傾向
 
 | Category | Count | Min loss | Mean loss |
 |---|---:|---:|---:|
@@ -67,57 +91,43 @@ Level 3 categorical trends:
 | load `plasma_state_rlc` | 5 | 0.511038 | 0.611989 |
 | load `electrode_stray` | 9 | 0.512192 | 0.613293 |
 
-## Evaluation
+今回の最小lossは `l_match` と `plasma_fixed_rlc` の組み合わせで得られました。ただし、カテゴリ間の平均差は大きくなく、ランダム30試行だけでトポロジ優劣を断定するべきではありません。
 
-Level 1 is the strongest result in this screening run.  Its best normalized RMSE is about `0.038`, and harmonic error is also low.  The fixed/state-derived RLC case is therefore a good smoke test for the platform: netlist generation, scoring, optimization history, manifest provenance, and surrogate fitting all complete cleanly.
+## ngspiceネットリスト生成と回路図可視化
 
-Level 2 is materially harder.  The time-varying plasma table is generated and plotted successfully, but the best dummy-solver waveform remains far from the tailored target in harmonic content.  This is expected: the dummy solver does not actually solve the time-varying plasma load dynamics.  This level is useful as an integration and boundary-artifact test, not as a physical validation result.
-
-Level 3 exercises the data-science path most strongly.  It produces the widest feature schema (`18` encoded features), including topology and load categories.  The best categorical result came from `l_match` with `plasma_fixed_rlc`, but the category means are close enough that 30 random trials are not sufficient for a robust design conclusion.  The surrogate has better train R2 than Levels 1/2, but CV RMSE remains large relative to best-loss differences, so it should be used for ranking support only.
-
-Power error is approximately `1.0` in all three cases.  This indicates that the current dummy-solver current proxy is not suitable for power-delivery evaluation.  The voltage waveform terms can still support workflow screening, but power-related conclusions require `ngspice_cli` or a higher-fidelity coupled solver.
-
-## Recommendation
-
-Use this benchmark pack in two modes:
-
-1. **Workflow regression / platform QA**  
-   Run the same dummy-solver benchmark to verify validation, records, metrics, plots, surrogate outputs, and categorical handling.
-
-2. **Physical design evaluation**  
-   Replace `dummy` with `ngspice_cli`, keep `--strict-exit`, inspect solver diagnostics, and compare against measured, fluid, global-model, or PIC/MCC plasma outputs.  Do not use the dummy-solver power proxy for physical design decisions.
-
-## Ngspice Netlist And Circuit Visualization Check
-
-Additional output root:
+出力ルート:
 
 ```text
 runs/ccp_ngspice_visual_eval
 ```
 
-This check generated ngspice-ready netlists, expanded the `load_model` subcircuits into Schemdraw-based schematic diagrams, and attempted `ngspice_cli` execution for each CCP case.
+実行したこと:
 
-Generated artifacts:
+- 各CCPケースからngspice向けネットリストを生成
+- `load_model` を展開し、プラズマ負荷のRLC要素を回路図へ反映
+- Schemdrawで通常の回路記号に近い図を生成
+- `ngspice_cli` 実行を試行し、失敗状態をmanifestとmetricsに記録
 
-- Netlists: `runs/ccp_ngspice_visual_eval/netlists/*.cir`
-- Netlist summaries: `runs/ccp_ngspice_visual_eval/netlists/*_netlist_summary.json`
-- Schematics:
-  - `runs/ccp_ngspice_visual_eval/figures/level1_fixed_match_schematic.png`
-  - `runs/ccp_ngspice_visual_eval/figures/level2_timevarying_plasma_schematic.png`
-  - `runs/ccp_ngspice_visual_eval/figures/level3_topology_load_choice_schematic.png`
-- Component count plot: `runs/ccp_ngspice_visual_eval/figures/component_counts.png`
-- Ngspice attempt status plot: `runs/ccp_ngspice_visual_eval/figures/ngspice_attempt_status.png`
-- Attempt summary: `runs/ccp_ngspice_visual_eval/ngspice_attempt_summary.csv`
+生成物:
 
-Ngspice execution status:
+- `runs/ccp_ngspice_visual_eval/netlists/*.cir`
+- `runs/ccp_ngspice_visual_eval/netlists/*_netlist_summary.json`
+- `runs/ccp_ngspice_visual_eval/figures/level1_fixed_match_schematic.png`
+- `runs/ccp_ngspice_visual_eval/figures/level2_timevarying_plasma_schematic.png`
+- `runs/ccp_ngspice_visual_eval/figures/level3_topology_load_choice_schematic.png`
+- `runs/ccp_ngspice_visual_eval/figures/component_counts.png`
+- `runs/ccp_ngspice_visual_eval/figures/ngspice_attempt_status.png`
+- `runs/ccp_ngspice_visual_eval/ngspice_attempt_summary.csv`
 
-| Case | Circuit | Load | Nodes | Expanded components | ngspice status | Cause |
+## ngspice試行結果
+
+| Case | Circuit | Load | Nodes | Expanded components | ngspice status | 原因 |
 |---|---|---|---:|---:|---|---|
-| Level 1 fixed/state RLC | `pi_match` | `plasma_state_rlc` | 5 | 8 | failed | `ngspice` executable not found |
-| Level 2 time-varying plasma | `pi_match_harmonic` | `plasma_table_rlcq` | 6 | 10 | failed | `ngspice` executable not found |
-| Level 3 topology/load choice | `pi_match` | `plasma_state_rlc` | 5 | 8 | failed | `ngspice` executable not found |
+| Level 1 fixed/state RLC | `pi_match` | `plasma_state_rlc` | 5 | 8 | failed | `ngspice` 実行ファイルなし |
+| Level 2 time-varying plasma | `pi_match_harmonic` | `plasma_table_rlcq` | 6 | 10 | failed | `ngspice` 実行ファイルなし |
+| Level 3 topology/load choice | `pi_match` | `plasma_state_rlc` | 5 | 8 | failed | `ngspice` 実行ファイルなし |
 
-Expanded component counts:
+展開後の部品数:
 
 | Case | V source | Capacitors | Inductors | Resistors |
 |---|---:|---:|---:|---:|
@@ -125,10 +135,32 @@ Expanded component counts:
 | Level 2 time-varying plasma | 1 | 4 | 3 | 2 |
 | Level 3 topology/load choice | 1 | 3 | 2 | 2 |
 
-Evaluation:
+## 製品基盤としての評価
 
-- The platform can generate ngspice-ready netlists for all three CCP cases.
-- The visualization path can parse the netlist, expand the `load_model` subcircuit, and render conventional schematic symbols for the RF source, matching network, electrode node, ground-referenced branches, and plasma-load internals.
-- Actual ngspice solving was not completed in this environment because `ngspice` is not installed or not visible on `PATH`.
-- The failed ngspice attempts were recorded correctly as failed simulation records with `loss=1e30`, `metrics_status=failed`, and `metrics_reason=simulation_failed`.
-- Once ngspice is installed, the same netlists and `ngspice_cli` path can be used for physical waveform generation and scoring.
+良い点:
+
+- ケース検証、波形検証、manifest provenance、failed run記録、サロゲートschema記録が入っており、研究用途から運用寄りへ近づいています。
+- ngspice実行ファイル欠落時も黙って成功扱いにせず、failed metricsとして明示できます。
+- `runs/` 配下に、case、params、netlist、waveform、metrics、manifest、solver logが保存され、監査可能性があります。
+- 回路図可視化はmatplotlibで無理に描く方式から、Schemdrawベースの回路記号描画へ改善されています。
+
+制約:
+
+- 今回の数値最適化はdummyソルバ結果であり、物理設計の結論には使えません。
+- ngspice本体が未導入のため、過渡解析波形、電流、電力、プラズマ負荷の物理整合性は未検証です。
+- Level 2の時変プラズマ表は、現在のngspiceネットリストでは完全な時間依存素子として解かれたわけではありません。実運用ではPWL/制御電源/外部結合など、ngspiceで解釈可能な表現へ落とす必要があります。
+- サロゲートの訓練データは各ケース30点で少なく、CV RMSEも大きいため、製品判断には追加試行と外部検証が必要です。
+
+## 推奨される次ステップ
+
+1. `ngspice` をインストールし、PATHへ追加する。
+2. `pcd sim-run ccp_benchmark_pack/ccp_gec_level1_fixed_match.yaml --solver ngspice_cli --strict-exit` で実ソルバ経路を確認する。
+3. Level 2の時変プラズマ負荷を、ngspiceで解けるPWLまたは制御素子表現へ明示的に変換する。
+4. dummy結果とngspice結果を分離して集計し、物理評価レポートではdummy結果を除外する。
+5. 試行数を増やし、外部測定、流体モデル、global model、PIC/MCCなどの参照データで物理妥当性を確認する。
+
+## 最終判定
+
+このコードベースは、製品基盤として必要な「検証、記録、失敗runの明示、ネットリスト入出力、回路図可視化、サロゲート学習」の土台を備えています。
+
+一方で、今回の環境ではngspiceが実行できていないため、CCPプラズマ回路の物理設計プラットフォームとして完成と判断するにはまだ早いです。現時点の到達点は、製品運用へ進めるための基盤検証と、ngspice導入後に物理検証へ進む準備ができた段階です。

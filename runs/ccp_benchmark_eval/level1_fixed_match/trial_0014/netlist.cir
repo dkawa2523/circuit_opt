@@ -1,0 +1,34 @@
+* Auto-generated simulation netlist for case: ccp_gec_level1_fixed_match
+.param C1=1.86970591258e-10
+.param C2=5.38413622555e-10
+.param Csh=6.07095776617e-11
+.param L1=5.12435856086e-07
+.param Vsrc_amp=795.16230341
+.param ne=4.33161632621e+14
+.param nu_m=61913262.7564
+
+* Sources
+Vsrc src 0 SIN(0 795.16230341 13560000 0 0 0)
+
+* Circuit
+C1 src 0 {C1}
+L1 src electrode {L1}
+C2 electrode 0 {C2}
+
+* Optional load
+* load model: plasma_state_rlc
+.subckt load_model p n
+Rbulk p nb 15.8226098921
+Lbulk nb ns 2.55560911954e-07
+Csh ns n 6.07095776617e-11
+Rleak p n 1e+12
+.ends load_model
+Xload electrode 0 load_model
+
+.save v(electrode) i(Vsrc)
+.control
+tran 2e-10 7.3746e-07
+wrdata waveform.csv time v(electrode) i(Vsrc)
+quit
+.endc
+.end

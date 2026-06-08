@@ -1,0 +1,14 @@
+{
+  "loss": 0.6679467474041134,
+  "objective": "ccp_waveform_power_proxy",
+  "normalized_rmse": 0.42390555227256793,
+  "rmse_V": 87.54926674061448,
+  "harmonic_error": 0.7761655353428708,
+  "avg_power_proxy_W": -0.00030192667562127545,
+  "power_error": 0.9999962259165548,
+  "dc_bias_proxy_V": -5.161193247799031e-06,
+  "v_rms_V": 262.80117670521196,
+  "v_peak_abs_V": 371.69881903606023,
+  "i_rms_A": 2.2393730948739723,
+  "constraint_penalty": 0.0
+}

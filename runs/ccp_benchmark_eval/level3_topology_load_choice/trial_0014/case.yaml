@@ -1,0 +1,140 @@
+case_id: ccp_gec_level3_topology_and_load_choice
+run:
+  root: runs/ccp_level3_topology
+variables:
+  topology_choice:
+    choices:
+    - l_match
+    - pi_match
+    - pi_match_harmonic
+    default: pi_match
+  load_model:
+    choices:
+    - electrode_stray
+    - plasma_fixed_rlc
+    - plasma_state_rlc
+    default: plasma_state_rlc
+  Vsrc_amp:
+    bounds:
+    - 100
+    - 900
+    scale: linear
+    default: 500
+source:
+  type: sine_voltage
+  name: Vsrc
+  p: src
+  n: 0
+  amplitude_V: Vsrc_amp
+  frequency_Hz: 13560000
+circuit:
+  builder: $topology_choice
+  output_node: electrode
+  variables:
+    C1:
+      bounds:
+      - 5.0e-12
+      - 2.0e-09
+      scale: log
+      default: 2.0e-10
+    L1:
+      bounds:
+      - 2.0e-08
+      - 5.0e-06
+      scale: log
+      default: 8.0e-07
+    C2:
+      bounds:
+      - 5.0e-12
+      - 2.0e-09
+      scale: log
+      default: 2.0e-10
+    Lh:
+      bounds:
+      - 2.0e-08
+      - 5.0e-06
+      scale: log
+      default: 3.0e-07
+    Ch:
+      bounds:
+      - 5.0e-12
+      - 2.0e-09
+      scale: log
+      default: 1.0e-10
+load:
+  name: $load_model
+  ports:
+    p: electrode
+    n: 0
+  C_F: Ce
+  Rp_ohm: Rp
+  Lp_H: Lp
+  Csh_F: Csh
+  electron_density_m3: ne
+  momentum_collision_Hz: nu_m
+  bulk_length_m: 0.0245
+  area_m2: 0.00785398163397
+  variables:
+    Ce:
+      bounds:
+      - 1.0e-12
+      - 2.0e-10
+      scale: log
+      default: 5.0e-11
+    Rp:
+      bounds:
+      - 2
+      - 120
+      scale: log
+      default: 20
+    Lp:
+      bounds:
+      - 1.0e-08
+      - 8.0e-07
+      scale: log
+      default: 2.0e-07
+    Csh:
+      bounds:
+      - 1.0e-11
+      - 2.0e-10
+      scale: log
+      default: 5.0e-11
+    ne:
+      bounds:
+      - 2.0e14
+      - 1.5e15
+      scale: log
+      default: 5.0e14
+    nu_m:
+      bounds:
+      - 5.0e7
+      - 2.0e8
+      scale: log
+      default: 1.0e8
+measurement:
+  voltage_node: electrode
+  current_source: Vsrc
+solver:
+  name: dummy
+  tran:
+    step_s: 2.0e-10
+    stop_s: 7.3746e-07
+target:
+  waveform_file: target_gec_tailored.csv
+  objective: ccp_waveform_power_proxy
+  fundamental_Hz: 13560000
+  harmonics:
+  - 1
+  - 2
+  - 3
+  harmonic_weight: 0.25
+  power_target_W: 80
+  power_weight: 0.05
+  constraints:
+    max_abs_voltage_V: 1000
+    max_abs_current_A: 25
+plugins:
+- plugins/ccp_metrics.py
+optimizer:
+  name: random
+  seed: 303

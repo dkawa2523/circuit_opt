@@ -1,0 +1,52 @@
+{
+  "schema": "circuit_to_plasma.v3",
+  "created_at": "2026-06-07T23:18:17+00:00",
+  "case_id": "ccp_gec_level2_timevarying_plasma",
+  "simulation_record": "sim_manifest.json",
+  "waveform_file": "waveform.csv",
+  "waveform_columns": [
+    "time_s",
+    "voltage_V",
+    "current_A"
+  ],
+  "voltage_node": "electrode",
+  "current_source": "Vsrc",
+  "source": {
+    "type": "sine_voltage",
+    "name": "Vsrc",
+    "p": "src",
+    "n": 0,
+    "amplitude_V": "Vsrc_amp",
+    "dc_V": "Vsrc_dc",
+    "frequency_Hz": 13560000
+  },
+  "circuit": "pi_match_harmonic",
+  "load": "plasma_table_rlcq",
+  "params": {
+    "Vsrc_amp": 457.4222969734548,
+    "Vsrc_dc": -51.932818940240836,
+    "C1": 2.7032512520834704e-11,
+    "L1": 3.5438682366634822e-06,
+    "C2": 3.074304755149047e-11,
+    "Lh": 1.8863764398359898e-07,
+    "Ch": 1.0955921176995018e-11
+  },
+  "process_condition": {
+    "gas": "Ar",
+    "pressure_Pa": 13.3,
+    "frequency_Hz": 13560000
+  },
+  "geometry": {
+    "electrode_diameter_m": 0.1,
+    "electrode_area_m2": 0.00785398163397,
+    "gap_m": 0.0245
+  },
+  "requested_outputs": [
+    "Rp_ohm",
+    "Lp_H",
+    "Csh_F",
+    "ion_flux_m2_s",
+    "ion_energy_distribution",
+    "dc_self_bias_V"
+  ]
+}

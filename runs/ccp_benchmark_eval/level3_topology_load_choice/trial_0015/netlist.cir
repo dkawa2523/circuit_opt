@@ -1,0 +1,37 @@
+* Auto-generated simulation netlist for case: ccp_gec_level3_topology_and_load_choice
+.param C1=5.29952819589e-10
+.param C2=7.51242657198e-11
+.param Ce=6.88054511827e-11
+.param Ch=3.75197119903e-10
+.param Csh=1.89067493455e-10
+.param L1=1.19080511556e-06
+.param Lh=5.13342862585e-08
+.param Lp=1.86028304435e-07
+.param Rp=2.62538048382
+.param Vsrc_amp=696.666813228
+.param ne=1.05669681299e+15
+.param nu_m=57625048.1007
+
+* Sources
+Vsrc src 0 SIN(0 696.666813228 13560000 0 0 0)
+
+* Circuit
+C1 src 0 {C1}
+L1 src electrode {L1}
+C2 electrode 0 {C2}
+
+* Optional load
+* load model: electrode_stray
+.subckt load_model p n
+Rleak p n 1e+12
+Celectrode p n 6.88054511827e-11
+.ends load_model
+Xload electrode 0 load_model
+
+.save v(electrode) i(Vsrc)
+.control
+tran 2e-10 7.3746e-07
+wrdata waveform.csv time v(electrode) i(Vsrc)
+quit
+.endc
+.end

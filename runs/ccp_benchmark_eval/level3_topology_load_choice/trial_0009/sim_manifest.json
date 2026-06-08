@@ -1,0 +1,61 @@
+{
+  "schema": "simulation_record.v2",
+  "case_id": "ccp_gec_level3_topology_and_load_choice",
+  "run_dir": "C:\\Users\\user\\Desktop\\circuit_design_platform_v6_final\\runs\\ccp_benchmark_eval\\level3_topology_load_choice\\trial_0009",
+  "status": "ok",
+  "created_at": "2026-06-07T23:18:18+00:00",
+  "run_seconds": 0.01773859979584813,
+  "params": {
+    "topology_choice": "pi_match_harmonic",
+    "load_model": "plasma_fixed_rlc",
+    "Vsrc_amp": 576.7378622547019,
+    "C1": 6.895302895910174e-11,
+    "L1": 3.2306784039895833e-07,
+    "C2": 8.951726267305811e-11,
+    "Lh": 1.2873409166345553e-06,
+    "Ch": 6.754183195758876e-10,
+    "Ce": 1.178907999123694e-10,
+    "Rp": 88.51398821082141,
+    "Lp": 2.931969400627285e-07,
+    "Csh": 3.0353317396797744e-11,
+    "ne": 257939576759365.9,
+    "nu_m": 188449103.98574674
+  },
+  "circuit": "pi_match_harmonic",
+  "load": "plasma_fixed_rlc",
+  "solver": "dummy",
+  "measurement": {
+    "voltage_node": "electrode",
+    "current_source": "Vsrc"
+  },
+  "artifacts": {
+    "netlist": "netlist.cir",
+    "waveform": "waveform.csv",
+    "solver_log": "solver.log"
+  },
+  "netlist_file": "netlist.cir",
+  "waveform_file": "waveform.csv",
+  "solver_log_file": "solver.log",
+  "warnings": [],
+  "error": null,
+  "diagnostics": {},
+  "provenance": {
+    "platform_version": "0.6.0",
+    "python_version": "3.13.12",
+    "case_path": "C:\\Users\\user\\Desktop\\circuit_design_platform_v6_final\\ccp_benchmark_pack\\ccp_gec_level3_topology_and_load_choice.yaml",
+    "case_data_sha256": "8a7f155c86f74687b62a86204e6fdf5b5c4ffdde3c1191eb2cd842df26451e9e",
+    "params_sha256": "08064df667c5f700e8a63a95babaa17d7e964a9562f195b6d843b230af5e187b",
+    "plugins": [
+      {
+        "path": "C:\\Users\\user\\Desktop\\circuit_design_platform_v6_final\\ccp_benchmark_pack\\plugins\\ccp_metrics.py",
+        "sha256": "f5cd4ede96c6e410cc036305631ee3c51f54fa9aa5e5069648b861419d79bace",
+        "exists": true
+      }
+    ],
+    "solver": {
+      "name": "dummy",
+      "executable": null,
+      "timeout_s": 300.0
+    }
+  }
+}

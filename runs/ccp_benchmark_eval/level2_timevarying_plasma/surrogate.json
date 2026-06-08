@@ -1,0 +1,79 @@
+{
+  "schema": "ridge_surrogate.v1",
+  "target_col": "loss",
+  "feature_columns": [
+    "param.Vsrc_amp",
+    "param.Vsrc_dc",
+    "param.C1",
+    "param.L1",
+    "param.C2",
+    "param.Lh",
+    "param.Ch"
+  ],
+  "feature_schema": {
+    "raw_columns": [
+      "param.Vsrc_amp",
+      "param.Vsrc_dc",
+      "param.C1",
+      "param.L1",
+      "param.C2",
+      "param.Lh",
+      "param.Ch"
+    ],
+    "numeric_columns": [
+      "param.Vsrc_amp",
+      "param.Vsrc_dc",
+      "param.C1",
+      "param.L1",
+      "param.C2",
+      "param.Lh",
+      "param.Ch"
+    ],
+    "categorical_columns": {},
+    "encoded_columns": [
+      "param.Vsrc_amp",
+      "param.Vsrc_dc",
+      "param.C1",
+      "param.L1",
+      "param.C2",
+      "param.Lh",
+      "param.Ch"
+    ]
+  },
+  "x_mean": [
+    522.9030263129949,
+    -23.33107099536861,
+    3.2181688769939987e-10,
+    1.1943956240672855e-06,
+    2.7609212990939984e-10,
+    7.636419219750697e-07,
+    3.7886325586687825e-10
+  ],
+  "x_std": [
+    199.82759461623425,
+    27.31207443705427,
+    4.917219570266003e-10,
+    1.4403285543578962e-06,
+    3.3226120029787556e-10,
+    1.161215549121688e-06,
+    5.70445665585214e-10
+  ],
+  "weights": [
+    0.6827825144130962,
+    -0.003832945008648565,
+    -0.009314044140016941,
+    0.03263971924747297,
+    -0.07607176735114221,
+    -0.06465340157724972,
+    0.07392427243034734,
+    0.03201221148457631
+  ],
+  "training_rmse": 0.12214856576014661,
+  "training_mae": 0.09665716708596181,
+  "training_r2": 0.31932718423391815,
+  "cv_rmse": 0.2258627816825333,
+  "n_train": 30,
+  "n_samples": 30,
+  "n_features": 7,
+  "dropped_rows": 0
+}
