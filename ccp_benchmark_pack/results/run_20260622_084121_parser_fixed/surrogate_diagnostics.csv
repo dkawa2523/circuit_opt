@@ -1,0 +1,7 @@
+case,variant,schema,n_train,n_features,training_rmse,training_r2,cv_rmse,dropped_rows,clipped_rows,target_transform
+level2_timevarying_plasma,all,ridge_surrogate.v2,30,7,135.30456980530232,0.30446570397962924,198.846970931986,0,0,none
+level2_timevarying_plasma,feasible_only,ridge_surrogate.v2,13,7,0.3446397727918457,0.7324309747323707,2.2146647651282434,17,0,none
+level2_timevarying_plasma,log1p_clip_p90,ridge_surrogate.v2,30,7,34.9329118642267,0.22848145454531188,44.387374275070336,0,3,log1p
+level3_topology_load_choice,all,ridge_surrogate.v2,30,18,585.5594030952388,0.760703962909616,2344.0243409381806,0,0,none
+level3_topology_load_choice,feasible_only,ridge_surrogate.v2,12,18,7.185169686355564e-08,0.9999999999999916,1.0095202861330923,18,0,none
+level3_topology_load_choice,log1p_clip_p90,ridge_surrogate.v2,30,18,191.33300725297173,0.4087666991741751,292001.4256899718,0,3,log1p

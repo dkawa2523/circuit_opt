@@ -10,6 +10,41 @@ from pcd.ml_registry import register as ml_register
 
 @ml_register("objective", "ccp_waveform_power_proxy")
 def ccp_waveform_power_proxy(case, record, waveform):
+    return _ccp_waveform_power_proxy(case, record, waveform, "ccp_waveform_power_proxy")
+
+
+@ml_register("objective", "ccp_waveform_feasible_first")
+def ccp_waveform_feasible_first(case, record, waveform):
+    cfg = case.data.get("target", {}) or {}
+    return _ccp_waveform_power_proxy(
+        case,
+        record,
+        waveform,
+        "ccp_waveform_feasible_first",
+        constraint_scale=float(cfg.get("feasible_first_constraint_scale", 4.0)),
+    )
+
+
+@ml_register("objective", "ccp_waveform_harmonic_focused")
+def ccp_waveform_harmonic_focused(case, record, waveform):
+    cfg = case.data.get("target", {}) or {}
+    return _ccp_waveform_power_proxy(
+        case,
+        record,
+        waveform,
+        "ccp_waveform_harmonic_focused",
+        harmonic_weight_override=float(cfg.get("harmonic_focused_weight", 1.0)),
+    )
+
+
+def _ccp_waveform_power_proxy(
+    case,
+    record,
+    waveform,
+    objective_name: str,
+    constraint_scale: float = 1.0,
+    harmonic_weight_override: float | None = None,
+):
     """Compact CCP benchmark objective.
 
     It intentionally uses only saved waveform data, so it remains in the ML layer.
@@ -58,16 +93,18 @@ def ccp_waveform_power_proxy(case, record, waveform):
         penalty += max(0.0, float(np.nanmax(np.abs(ii))) / float(imax) - 1.0) ** 2 * 10.0
 
     loss = normalized_rmse
-    loss += float(cfg.get("harmonic_weight", 0.2)) * harmonic_error
+    harmonic_weight = float(cfg.get("harmonic_weight", 0.2)) if harmonic_weight_override is None else harmonic_weight_override
+    loss += harmonic_weight * harmonic_error
     loss += float(cfg.get("power_weight", 0.0)) * power_error
-    loss += penalty
+    loss += float(constraint_scale) * penalty
 
     return {
         "loss": float(loss),
-        "objective": "ccp_waveform_power_proxy",
+        "objective": objective_name,
         "normalized_rmse": float(normalized_rmse),
         "rmse_V": float(rmse),
         "harmonic_error": float(harmonic_error),
+        "harmonic_weight": float(harmonic_weight),
         "avg_power_proxy_W": float(p_avg),
         "power_error": float(power_error),
         "dc_bias_proxy_V": float(np.mean(v)),
@@ -75,4 +112,5 @@ def ccp_waveform_power_proxy(case, record, waveform):
         "v_peak_abs_V": float(np.nanmax(np.abs(v))),
         "i_rms_A": float(np.sqrt(np.mean(ii ** 2))) if len(ii) else 0.0,
         "constraint_penalty": float(penalty),
+        "constraint_scale": float(constraint_scale),
     }

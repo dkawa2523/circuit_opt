@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+import numpy as np
 
 from .common import Case, read_json, utc_now, write_json
 
@@ -94,6 +95,98 @@ def summary_dataframe(run_root: str | Path, include_metrics: bool = True) -> pd.
     if not df.empty and "loss" in df.columns:
         df = df.sort_values("loss", na_position="last").reset_index(drop=True)
     return df
+
+
+def _first_existing_col(df: pd.DataFrame, name: str) -> str | None:
+    for col in (name, f"metric.{name}"):
+        if col in df.columns:
+            return col
+    return None
+
+
+def _finite_series(df: pd.DataFrame, name: str) -> pd.Series:
+    col = _first_existing_col(df, name)
+    if col is None:
+        return pd.Series(float("nan"), index=df.index, dtype=float)
+    return pd.to_numeric(df[col], errors="coerce")
+
+
+def _status_failed(df: pd.DataFrame) -> pd.Series:
+    failed = pd.Series(False, index=df.index)
+    if "status" in df.columns:
+        failed = failed | df["status"].astype(str).ne("ok")
+    metric_status = _first_existing_col(df, "status")
+    if metric_status and metric_status != "status":
+        failed = failed | df[metric_status].astype(str).eq("failed")
+    return failed
+
+
+def metric_summary_dataframe(
+    df: pd.DataFrame,
+    loss_col: str = "loss",
+    constraint_col: str = "metric.constraint_penalty",
+) -> pd.DataFrame:
+    """Summarize loss distributions with a generic feasible/infeasible split."""
+
+    if df.empty:
+        return pd.DataFrame([{
+            "count": 0,
+            "failed_count": 0,
+            "loss_min": None,
+            "loss_p10": None,
+            "loss_p25": None,
+            "loss_median": None,
+            "loss_p75": None,
+            "loss_p90": None,
+            "loss_max": None,
+            "feasible_count": 0,
+            "infeasible_count": 0,
+            "feasible_median": None,
+            "infeasible_median": None,
+        }])
+    loss = _finite_series(df, loss_col)
+    constraint = _finite_series(df, constraint_col).fillna(0.0)
+    finite_loss = loss[np.isfinite(loss)]
+    feasible_mask = constraint <= 0.0
+    failed = _status_failed(df)
+
+    def stat(series: pd.Series, op: str) -> float | None:
+        vals = pd.to_numeric(series, errors="coerce")
+        vals = vals[np.isfinite(vals)]
+        if vals.empty:
+            return None
+        if op == "min":
+            return float(vals.min())
+        if op == "max":
+            return float(vals.max())
+        if op == "mean":
+            return float(vals.mean())
+        if op == "median":
+            return float(vals.median())
+        if op.startswith("p"):
+            return float(vals.quantile(float(op[1:]) / 100.0))
+        raise ValueError(op)
+
+    row = {
+        "count": int(len(df)),
+        "failed_count": int(failed.sum()),
+        "loss_min": stat(finite_loss, "min"),
+        "loss_p10": stat(finite_loss, "p10"),
+        "loss_p25": stat(finite_loss, "p25"),
+        "loss_median": stat(finite_loss, "median"),
+        "loss_p75": stat(finite_loss, "p75"),
+        "loss_p90": stat(finite_loss, "p90"),
+        "loss_max": stat(finite_loss, "max"),
+        "feasible_count": int(feasible_mask.sum()),
+        "infeasible_count": int((~feasible_mask).sum()),
+        "feasible_best": stat(loss[feasible_mask], "min"),
+        "feasible_median": stat(loss[feasible_mask], "median"),
+        "feasible_mean": stat(loss[feasible_mask], "mean"),
+        "infeasible_best": stat(loss[~feasible_mask], "min"),
+        "infeasible_median": stat(loss[~feasible_mask], "median"),
+        "infeasible_mean": stat(loss[~feasible_mask], "mean"),
+    }
+    return pd.DataFrame([row])
 
 
 def save_summary(run_root: str | Path, out: str | Path | None = None) -> pd.DataFrame:

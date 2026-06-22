@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import argparse
 import subprocess
 from pathlib import Path
 
@@ -21,6 +22,7 @@ from pcd.ml_core import (
 )
 from pcd.ml_registry import available as ml_available
 from pcd.records import find_sim_records, import_external_waveform, summary_dataframe
+from pcd.records import metric_summary_dataframe
 from pcd.sim_core import build_circuit, build_load_subckt, ngspice_cli, parse_wrdata, render_ngspice_netlist, simulate_case
 from pcd.sim_registry import available as sim_available
 from pcd.netlist_viz import netlist_summary, render_netlist_schematic
@@ -122,7 +124,7 @@ def test_sim_batch_then_score_then_fit_surrogate(tmp_path):
     assert "loss" in scored.columns
     table = build_learning_table(tmp_path)
     model = fit_ridge_surrogate(table, target_col="loss")
-    assert model["schema"] == "ridge_surrogate.v1"
+    assert model["schema"] == "ridge_surrogate.v2"
     assert model["n_train"] == 4
 
 
@@ -144,12 +146,24 @@ def test_plugin_can_add_sim_and_ml_methods(tmp_path):
     assert metrics["objective"] == "peak_voltage"
 
 
-def test_wrdata_parser_handles_ngspice_repeated_time_columns(tmp_path):
+def test_wrdata_parser_handles_legacy_repeated_time_columns(tmp_path):
     path = tmp_path / "raw_wrdata.csv"
     t = np.array([0.0, 1e-9, 2e-9])
     v = np.array([0.0, 1.0, 0.0])
     i = np.array([0.0, 0.1, 0.0])
     np.savetxt(path, np.column_stack([t, t, v, t, i]))
+    result = parse_wrdata(path)
+    assert np.allclose(result.time_s, t)
+    assert np.allclose(result.voltage_V, v)
+    assert np.allclose(result.current_A, i)
+
+
+def test_wrdata_parser_handles_ngspice46_pair_columns(tmp_path):
+    path = tmp_path / "raw_wrdata_ng46.csv"
+    t = np.array([0.0, 1e-9, 2e-9])
+    v = np.array([0.0, 1.0, 0.0])
+    i = np.array([0.0, 0.1, 0.0])
+    np.savetxt(path, np.column_stack([t, t, t, v, t, i]))
     result = parse_wrdata(path)
     assert np.allclose(result.time_s, t)
     assert np.allclose(result.voltage_V, v)
@@ -264,6 +278,86 @@ def test_ngspice_diagnostics_for_missing_executable_and_timeout(tmp_path, monkey
     assert timed_out.diagnostics["timed_out"] is True
 
 
+def test_ngspice_default_prefers_windows_console_binary(tmp_path, monkeypatch):
+    monkeypatch.setattr(sim_core_module.sys, "platform", "win32")
+    monkeypatch.setattr(
+        sim_core_module.shutil,
+        "which",
+        lambda exe: r"C:\ngspice\ngspice_con.exe" if exe == "ngspice_con.exe" else None,
+    )
+    observed = {}
+
+    def fake_run(cmd, **kwargs):
+        observed["cmd"] = cmd
+        observed["kwargs"] = kwargs
+        t = np.array([0.0, 1e-9, 2e-9])
+        v = np.array([0.0, 1.0, 0.0])
+        i = np.array([0.0, 0.1, 0.0])
+        np.savetxt(Path(kwargs["cwd"]) / "waveform.csv", np.column_stack([t, t, t, v, t, i]))
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(sim_core_module.subprocess, "run", fake_run)
+    result = sim_core_module.ngspice_cli(tmp_path / "netlist.cir", tmp_path, Case(path=EX / "generic_rc_filter.yaml", data={}), {})
+    assert result.status == "ok"
+    assert observed["cmd"][0] == "ngspice_con.exe"
+    assert "creationflags" in observed["kwargs"]
+
+
+def test_ngspice_provenance_uses_windows_console_default(tmp_path, monkeypatch):
+    monkeypatch.setattr(sim_core_module.sys, "platform", "win32")
+    monkeypatch.setattr(
+        sim_core_module.shutil,
+        "which",
+        lambda exe: r"C:\ngspice\ngspice_con.exe" if exe == "ngspice_con.exe" else None,
+    )
+
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(cmd, 0, stdout="ngspice-46\n", stderr="")
+
+    monkeypatch.setattr(sim_core_module.subprocess, "run", fake_run)
+    rec = sim_core_module.prepare_case(load_case(EX / "generic_rc_filter.yaml"), run_root=tmp_path, solver_name="ngspice_cli")
+    solver = rec.provenance["solver"]
+    assert solver["executable"] == "ngspice_con.exe"
+    assert solver["resolved_executable"] == r"C:\ngspice\ngspice_con.exe"
+    assert solver["version"] == "ngspice-46"
+
+
+def test_solver_diagnostic_reports_windows_console_default(monkeypatch):
+    monkeypatch.setattr(sim_core_module.sys, "platform", "win32")
+    monkeypatch.setattr(
+        sim_core_module.shutil,
+        "which",
+        lambda exe: r"C:\ngspice\ngspice_con.exe" if exe == "ngspice_con.exe" else None,
+    )
+
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(cmd, 0, stdout="ngspice-46\n", stderr="")
+
+    monkeypatch.setattr(sim_core_module.subprocess, "run", fake_run)
+    diag = sim_core_module.diagnose_solver("ngspice_cli")
+    assert diag["schema"] == "solver_diagnostic.v1"
+    assert diag["executable"] == "ngspice_con.exe"
+    assert diag["resolved_executable"] == r"C:\ngspice\ngspice_con.exe"
+    assert diag["version"] == "ngspice-46"
+    assert diag["batch_runnable"] is True
+
+
+def test_metric_summary_dataframe_splits_feasible_rows():
+    df = pd.DataFrame({
+        "status": ["ok", "ok", "failed", "ok"],
+        "loss": [1.0, 2.0, 100.0, 4.0],
+        "metric.constraint_penalty": [0.0, 0.5, 0.0, 3.0],
+    })
+    row = metric_summary_dataframe(df).iloc[0]
+    assert row["count"] == 4
+    assert row["failed_count"] == 1
+    assert row["feasible_count"] == 2
+    assert row["infeasible_count"] == 2
+    assert row["loss_median"] == 3.0
+    assert row["feasible_median"] == 50.5
+    assert row["infeasible_median"] == 3.0
+
+
 def test_surrogate_schema_warns_and_can_be_strict():
     table = pd.DataFrame({
         "param.choice": ["a", "b", "a"],
@@ -277,6 +371,99 @@ def test_surrogate_schema_warns_and_can_be_strict():
     assert "unknown categories" in pred["prediction_warning"].iloc[0]
     with pytest.raises(ValueError):
         predict_candidates_with_surrogate(model, pd.DataFrame({"choice": ["c"], "x": [1.0]}), strict_schema=True)
+
+
+def test_surrogate_v2_can_exclude_infeasible_and_transform_targets():
+    table = pd.DataFrame({
+        "param.choice": ["a", "b", "a", "b"],
+        "param.x": [1.0, 2.0, 3.0, 4.0],
+        "loss": [1.0, 100.0, 2.0, 200.0],
+        "constraint_penalty": [0.0, 1.0, 0.0, 2.0],
+    })
+    model = fit_ridge_surrogate(
+        table,
+        exclude_infeasible=True,
+        target_transform="log1p",
+        clip_target_quantile=0.9,
+    )
+    assert model["schema"] == "ridge_surrogate.v2"
+    assert model["n_train"] == 2
+    assert model["exclude_infeasible"] is True
+    pred = predict_candidates_with_surrogate(model, pd.DataFrame({"choice": ["a"], "x": [2.0]}))
+    assert "predicted_loss" in pred.columns
+    assert "predicted_loss_model_space" in pred.columns
+
+
+def test_surrogate_prediction_accepts_v1_models():
+    model = {
+        "schema": "ridge_surrogate.v1",
+        "feature_columns": ["param.x"],
+        "feature_schema": {"raw_columns": ["param.x"], "categorical_columns": {}},
+        "x_mean": [0.0],
+        "x_std": [1.0],
+        "weights": [1.0, 2.0],
+    }
+    pred = predict_candidates_with_surrogate(model, pd.DataFrame({"x": [3.0]}))
+    assert pred["predicted_loss"].iloc[0] == 7.0
+
+
+def test_ccp_analyzer_writes_v2_outputs(tmp_path):
+    from ccp_benchmark_pack import analyze_ngspice_benchmark as analyzer
+
+    run_root = tmp_path / "ng"
+    dummy_root = tmp_path / "dummy"
+    case_dir = run_root / "level3_topology_load_choice"
+    dummy_case_dir = dummy_root / "level3_topology_load_choice"
+    case_dir.mkdir(parents=True)
+    dummy_case_dir.mkdir(parents=True)
+
+    rows = []
+    t = np.linspace(0.0, 1e-6, 64)
+    for i, penalty in enumerate([0.0, 0.5, 0.0]):
+        trial = case_dir / f"trial_{i:04d}"
+        trial.mkdir()
+        pd.DataFrame({
+            "time_s": t,
+            "voltage_V": np.sin(2 * np.pi * 13.56e6 * t) * (100 + 10 * i),
+            "current_A": np.cos(2 * np.pi * 13.56e6 * t),
+        }).to_csv(trial / "waveform.csv", index=False)
+        rows.append({
+            "case_id": "ccp_gec_level3_topology_and_load_choice",
+            "status": "ok",
+            "run_dir": str(trial),
+            "param.topology_choice": ["l_match", "pi_match", "l_match"][i],
+            "param.load_model": ["plasma_state_rlc", "electrode_stray", "plasma_fixed_rlc"][i],
+            "param.x": float(i + 1),
+            "loss": [1.0, 5.0, 2.0][i],
+            "metric.constraint_penalty": penalty,
+            "metric.normalized_rmse": 0.1 + i,
+            "metric.harmonic_error": 0.2 + i,
+            "metric.v_peak_abs_V": 100.0 + i,
+            "metric.i_rms_A": 1.0 + i,
+        })
+    pd.DataFrame(rows).to_csv(case_dir / "summary.csv", index=False)
+    pd.DataFrame(rows).assign(loss=[0.8, 0.9, 1.0], **{"metric.constraint_penalty": [0.0, 0.0, 0.0]}).to_csv(dummy_case_dir / "summary.csv", index=False)
+
+    out_dir = tmp_path / "out"
+    manifest = analyzer.analyze(argparse.Namespace(
+        ngspice_run_root=str(run_root),
+        profile_file=str(ROOT / "ccp_benchmark_pack" / "ngspice_benchmark_profiles.json"),
+        dummy_root=str(dummy_root),
+        out_dir=str(out_dir),
+    ))
+    assert manifest["schema"] == "ccp_ngspice_benchmark_analysis.v2"
+    for name in [
+        "comparison_summary.csv",
+        "feasibility_summary.csv",
+        "category_stats.csv",
+        "top_candidates.csv",
+        "harmonic_amplitudes.csv",
+        "surrogate_diagnostics.csv",
+        "analysis.md",
+    ]:
+        assert (out_dir / name).exists()
+    feasibility = pd.read_csv(out_dir / "feasibility_summary.csv")
+    assert set(feasibility["bucket"]) == {"all", "feasible", "infeasible"}
 
 
 def test_validate_case_cli_strict_exits_on_warnings():

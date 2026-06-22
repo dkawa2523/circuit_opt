@@ -118,15 +118,23 @@ def build_learning_table(run_root: str | Path, include_failed: bool = True) -> p
     return pd.DataFrame(rows)
 
 
-def fit_ridge_surrogate(table: pd.DataFrame, target_col: str = "loss", alpha: float = 1e-6) -> dict[str, Any]:
+def fit_ridge_surrogate(
+    table: pd.DataFrame,
+    target_col: str = "loss",
+    alpha: float = 1e-6,
+    exclude_infeasible: bool = False,
+    constraint_col: str = "constraint_penalty",
+    target_transform: str = "none",
+    clip_target_quantile: float | None = None,
+) -> dict[str, Any]:
     if table.empty:
         raise ValueError("learning table is empty")
-    if target_col not in table.columns:
-        alt = "metric." + target_col
-        if alt in table.columns:
-            target_col = alt
-        else:
-            raise ValueError(f"target column not found: {target_col}")
+    target_col = _resolve_table_col(table, target_col)
+    if target_col is None:
+        raise ValueError(f"target column not found: {target_col}")
+    target_transform = str(target_transform)
+    if target_transform not in {"none", "log1p"}:
+        raise ValueError("target_transform must be 'none' or 'log1p'")
     feature_cols = [c for c in table.columns if c.startswith("param.")]
     if not feature_cols:
         raise ValueError("no param.* columns found")
@@ -135,22 +143,47 @@ def fit_ridge_surrogate(table: pd.DataFrame, target_col: str = "loss", alpha: fl
     feature_schema = _feature_schema(feature_source, Xdf)
     y = pd.to_numeric(table[target_col], errors="coerce")
     mask = y.notna() & np.isfinite(y.to_numpy(float))
+    constraint_resolved_col = _resolve_table_col(table, constraint_col)
+    if exclude_infeasible:
+        if constraint_resolved_col is None:
+            raise ValueError(f"constraint column not found: {constraint_col}")
+        constraint = pd.to_numeric(table[constraint_resolved_col], errors="coerce").fillna(0.0)
+        mask = mask & (constraint <= 0.0)
+    if target_transform == "log1p":
+        mask = mask & (y >= -1.0)
     X = Xdf.loc[mask].to_numpy(float)
-    yv = y.loc[mask].to_numpy(float)
-    if len(yv) == 0:
+    yv_original = y.loc[mask].to_numpy(float)
+    if len(yv_original) == 0:
         raise ValueError("no finite target values")
-    x_mean, x_std, weights = _fit_ridge_arrays(X, yv, alpha=float(alpha))
+    yv_fit = yv_original.copy()
+    clipped_rows = 0
+    clip_value = None
+    if clip_target_quantile is not None:
+        q = float(clip_target_quantile)
+        if not 0.0 < q <= 1.0:
+            raise ValueError("clip_target_quantile must be in (0, 1]")
+        clip_value = float(np.quantile(yv_fit, q))
+        clipped_rows = int((yv_fit > clip_value).sum())
+        yv_fit = np.minimum(yv_fit, clip_value)
+    y_model = _transform_target(yv_fit, target_transform)
+    x_mean, x_std, weights = _fit_ridge_arrays(X, y_model, alpha=float(alpha))
     Xn = (X - x_mean) / x_std
     X1 = np.column_stack([np.ones(len(Xn)), Xn])
-    pred = X1 @ weights
-    rmse = float(np.sqrt(np.mean((pred - yv) ** 2)))
-    mae = float(np.mean(np.abs(pred - yv)))
-    denom = float(np.sum((yv - yv.mean()) ** 2))
-    r2 = float(1.0 - np.sum((pred - yv) ** 2) / denom) if denom > 0 else 1.0
-    cv_rmse = _cross_validated_rmse(X, yv, alpha=float(alpha))
+    pred_model = X1 @ weights
+    pred = _inverse_transform_target(pred_model, target_transform)
+    rmse = float(np.sqrt(np.mean((pred - yv_fit) ** 2)))
+    mae = float(np.mean(np.abs(pred - yv_fit)))
+    denom = float(np.sum((yv_fit - yv_fit.mean()) ** 2))
+    r2 = float(1.0 - np.sum((pred - yv_fit) ** 2) / denom) if denom > 0 else 1.0
+    cv_rmse = _cross_validated_rmse(X, yv_fit, alpha=float(alpha), target_transform=target_transform)
     return {
-        "schema": "ridge_surrogate.v1",
+        "schema": "ridge_surrogate.v2",
         "target_col": target_col,
+        "constraint_col": constraint_resolved_col,
+        "exclude_infeasible": bool(exclude_infeasible),
+        "target_transform": target_transform,
+        "clip_target_quantile": clip_target_quantile,
+        "clip_target_value": clip_value,
         "feature_columns": list(Xdf.columns),
         "feature_schema": feature_schema,
         "x_mean": x_mean.tolist(),
@@ -160,10 +193,14 @@ def fit_ridge_surrogate(table: pd.DataFrame, target_col: str = "loss", alpha: fl
         "training_mae": mae,
         "training_r2": r2,
         "cv_rmse": cv_rmse,
-        "n_train": int(len(yv)),
-        "n_samples": int(len(yv)),
+        "n_train": int(len(yv_fit)),
+        "n_samples": int(len(yv_fit)),
         "n_features": int(X.shape[1]),
-        "dropped_rows": int(len(table) - len(yv)),
+        "dropped_rows": int(len(table) - len(yv_fit)),
+        "clipped_rows": clipped_rows,
+        "target_min": float(np.min(yv_fit)),
+        "target_median": float(np.median(yv_fit)),
+        "target_max": float(np.max(yv_fit)),
     }
 
 
@@ -186,11 +223,41 @@ def predict_candidates_with_surrogate(model: dict[str, Any], candidates: pd.Data
     x_std = np.asarray(model["x_std"], dtype=float)
     weights = np.asarray(model["weights"], dtype=float)
     Xn = (X - x_mean) / x_std
-    pred = np.column_stack([np.ones(len(Xn)), Xn]) @ weights
-    df["predicted_loss"] = pred
+    pred_model = np.column_stack([np.ones(len(Xn)), Xn]) @ weights
+    df["predicted_loss_model_space"] = pred_model
+    df["predicted_loss"] = _inverse_transform_target(pred_model, str(model.get("target_transform", "none")))
     if warnings:
         df["prediction_warning"] = "; ".join(warnings)
     return df.sort_values("predicted_loss").reset_index(drop=True)
+
+
+def _resolve_table_col(table: pd.DataFrame, col: str) -> str | None:
+    if col in table.columns:
+        return col
+    alt = "metric." + col
+    if alt in table.columns:
+        return alt
+    if col.startswith("metric."):
+        raw = col[len("metric."):]
+        if raw in table.columns:
+            return raw
+    return None
+
+
+def _transform_target(y: np.ndarray, transform: str) -> np.ndarray:
+    if transform == "none":
+        return y
+    if transform == "log1p":
+        return np.log1p(np.maximum(y, -1.0))
+    raise ValueError(transform)
+
+
+def _inverse_transform_target(y: np.ndarray, transform: str) -> np.ndarray:
+    if transform == "none":
+        return y
+    if transform == "log1p":
+        return np.expm1(y)
+    raise ValueError(transform)
 
 
 def _candidate_feature_frame(df: pd.DataFrame) -> pd.DataFrame:
@@ -250,7 +317,7 @@ def _fit_ridge_arrays(X: np.ndarray, y: np.ndarray, alpha: float) -> tuple[np.nd
     return x_mean, x_std, weights
 
 
-def _cross_validated_rmse(X: np.ndarray, y: np.ndarray, alpha: float) -> float | None:
+def _cross_validated_rmse(X: np.ndarray, y: np.ndarray, alpha: float, target_transform: str = "none") -> float | None:
     if len(y) < 3:
         return None
     k = min(5, len(y))
@@ -259,9 +326,9 @@ def _cross_validated_rmse(X: np.ndarray, y: np.ndarray, alpha: float) -> float |
         train = np.setdiff1d(np.arange(len(y)), fold)
         if len(train) == 0 or len(fold) == 0:
             continue
-        x_mean, x_std, weights = _fit_ridge_arrays(X[train], y[train], alpha=alpha)
+        x_mean, x_std, weights = _fit_ridge_arrays(X[train], _transform_target(y[train], target_transform), alpha=alpha)
         Xn = (X[fold] - x_mean) / x_std
-        preds[fold] = np.column_stack([np.ones(len(Xn)), Xn]) @ weights
+        preds[fold] = _inverse_transform_target(np.column_stack([np.ones(len(Xn)), Xn]) @ weights, target_transform)
     mask = np.isfinite(preds)
     if not mask.any():
         return None

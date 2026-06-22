@@ -76,6 +76,18 @@ pcd ml-fit-surrogate runs/prod_sim --exclude-failed --out runs/prod_sim/surrogat
 Set `solver.timeout_s` in the case file to override the default 300 second
 timeout used by `ngspice_cli`.
 
+Diagnose an external solver before long runs:
+
+```bash
+pcd solver-diagnose --solver ngspice_cli --json
+```
+
+The diagnostic reports `solver_diagnostic.v1` with the executable name, resolved
+path, version, timeout, and whether the solver appears batch-runnable.  On
+Windows, `ngspice_cli` prefers `ngspice_con.exe` when it is on `PATH` so batch
+runs do not open a visible ngspice window.  Machine-specific executable paths
+belong in the run configuration, not in the platform core.
+
 ## ML/data only
 
 ```bash
@@ -86,6 +98,23 @@ pcd ml-predict surrogate.json candidates.csv --out predicted_candidates.csv
 ```
 
 External measured or plasma-coupled waveforms can be imported with `pcd.records.import_external_waveform()` and then scored by the ML layer without running ngspice.
+
+For constrained studies, surrogate fitting can ignore infeasible rows or use a
+robust target transform:
+
+```bash
+pcd ml-fit-surrogate runs/sim_only \
+  --exclude-infeasible \
+  --constraint-col constraint_penalty \
+  --target-transform log1p \
+  --clip-target-quantile 0.9 \
+  --out surrogate_feasible.json
+```
+
+Objectives must return `loss`.  Recommended optional metric names are
+`normalized_rmse`, `harmonic_error`, `constraint_penalty`, `v_peak_abs_V`,
+`i_rms_A`, `avg_power_proxy_W`, and `power_error`; downstream summaries use
+these names when present but do not require them.
 
 ## Explicit closed-loop workflow
 

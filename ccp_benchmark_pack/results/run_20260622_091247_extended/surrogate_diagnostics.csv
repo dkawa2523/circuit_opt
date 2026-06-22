@@ -1,0 +1,4 @@
+case,variant,schema,n_train,n_features,training_rmse,training_r2,cv_rmse,dropped_rows,clipped_rows,target_transform
+level3_topology_load_choice,all,ridge_surrogate.v2,100,18,3013.2783280608187,0.21658449176630135,4065.9876227726813,0,0,none
+level3_topology_load_choice,feasible_only,ridge_surrogate.v2,50,18,0.4770423610899262,0.5374699382211645,0.8106434607858637,50,0,none
+level3_topology_load_choice,log1p_clip_p90,ridge_surrogate.v2,100,18,71.2531532258215,0.11108237648369745,82.29070270382879,0,10,log1p

@@ -41,6 +41,73 @@ Use `pcd validate-case <case> --strict` before production runs, and add
 batch automation.  The `dummy` solver is intentionally a screening tool only; it
 does not validate plasma physics, matching behavior, or power delivery.
 
+## ngspice benchmark profiles
+
+The ngspice rerun settings are kept outside the platform core in
+`ngspice_benchmark_profiles.json`.
+
+Profiles:
+
+- `smoke`: 3 trials per Level 2/3 case, for connectivity checks.
+- `standard`: 30 trials per Level 2/3 case, for dummy-vs-ngspice comparison.
+- `category_extended`: 100 Level 3 trials, for topology/load risk analysis.
+- `harmonic_focused`: 50 Level 2/3 trials with stronger A2/A3 weighting.
+- `surrogate_feasible`: 100 Level 3 trials with a feasible-first objective.
+- `extended`: compatibility alias for `category_extended`.
+
+Run a smoke check:
+
+```bash
+py ccp_benchmark_pack/run_ngspice_benchmark.py --profile smoke --strict-exit
+```
+
+Run the standard profile:
+
+```bash
+py ccp_benchmark_pack/run_ngspice_benchmark.py --profile standard
+```
+
+The runner uses `ngspice_cli` and normally leaves `solver.executable` unset.  On
+Windows, the platform core prefers `ngspice_con.exe` when it is on `PATH` so the
+solver can run without a visible ngspice console window.  Use `--executable` only
+for machine-specific overrides.
+
+If the installer updated the user `PATH` but the current shell has not picked it
+up yet, pass the console executable explicitly:
+
+```powershell
+py ccp_benchmark_pack/run_ngspice_benchmark.py --profile smoke --strict-exit `
+  --executable "$env:LOCALAPPDATA\\Programs\\ngspice-46\\Spice64\\bin\\ngspice_con.exe"
+```
+
+Raw profile outputs go under `runs/ccp_ngspice_reeval/`, which is ignored by git.
+Keep only reproducible settings, scripts, and compact curated summaries in this
+benchmark pack.
+
+Analyze an ngspice run against the tracked dummy benchmark output:
+
+```bash
+py ccp_benchmark_pack/analyze_ngspice_benchmark.py runs/ccp_ngspice_reeval/<run-id>
+```
+
+The analyzer writes compact CSV and Markdown summaries under
+`ccp_benchmark_pack/results/<run-id>/`, including:
+
+- dummy vs ngspice best/median/p90/max loss and penalty rate
+- feasible/infeasible summaries and voltage/current risk
+- Level 3 topology/load/combo category risk statistics
+- feasible top candidates and low-loss infeasible candidates
+- best-waveform harmonic amplitudes, target ratios, and phase errors
+- Spearman correlations against loss
+- all-trial, feasible-only, and robust-transform surrogate diagnostics
+
+Interpretation rules:
+
+- Treat best loss as secondary.
+- Prefer feasible median, penalty rate, p90/max, and topology/load risk profile.
+- Do not call waveform tailoring successful when A2/A3 target ratios remain low.
+- Treat surrogate output as diagnostic until feasible-only CV performance is good.
+
 The synthetic plasma table is generated from the simple reduced relations:
 
 Lp = ell * m_e / (A * n_e * e^2)

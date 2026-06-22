@@ -12,6 +12,9 @@ def main(argv: list[str] | None = None) -> None:
 
     sub.add_parser("list", help="list simulation and ML methods")
 
+    p = sub.add_parser("solver-diagnose", help="diagnose an external solver environment")
+    p.add_argument("--solver", default="ngspice_cli"); p.add_argument("--executable"); p.add_argument("--timeout-s", type=float, default=300.0); p.add_argument("--json", action="store_true")
+
     p = sub.add_parser("validate-case", help="validate a case file without running simulation or ML")
     p.add_argument("case"); p.add_argument("--strict", action="store_true"); p.add_argument("--json", action="store_true")
 
@@ -38,6 +41,8 @@ def main(argv: list[str] | None = None) -> None:
 
     p = sub.add_parser("ml-fit-surrogate", help="fit a lightweight ridge surrogate from existing records")
     p.add_argument("run_root"); p.add_argument("--target-col", default="loss"); p.add_argument("--out", default="surrogate.json"); p.add_argument("--exclude-failed", action="store_true")
+    p.add_argument("--exclude-infeasible", action="store_true"); p.add_argument("--constraint-col", default="constraint_penalty")
+    p.add_argument("--target-transform", choices=["none", "log1p"], default="none"); p.add_argument("--clip-target-quantile", type=float)
 
     p = sub.add_parser("ml-predict", help="predict candidate loss using a saved surrogate")
     p.add_argument("surrogate_json"); p.add_argument("candidates_csv"); p.add_argument("--out", default="predicted_candidates.csv"); p.add_argument("--strict-schema", action="store_true")
@@ -54,6 +59,18 @@ def main(argv: list[str] | None = None) -> None:
         from .ml_registry import available as ml_available
         from .sim_registry import available as sim_available
         print(json.dumps({"simulation": sim_available(), "ml": ml_available()}, indent=2, ensure_ascii=False)); return
+
+    if args.cmd == "solver-diagnose":
+        from .sim_core import diagnose_solver
+        diag = diagnose_solver(args.solver, executable=args.executable, timeout_s=args.timeout_s)
+        if args.json:
+            print(json.dumps(diag, indent=2, ensure_ascii=False))
+        else:
+            for key, val in diag.items():
+                print(f"{key}: {val}")
+        if not diag.get("batch_runnable", False):
+            sys.exit(1)
+        return
 
     if args.cmd == "validate-case":
         from .common import load_case
@@ -127,7 +144,14 @@ def main(argv: list[str] | None = None) -> None:
         from .common import write_json
         from .ml_core import build_learning_table, fit_ridge_surrogate
         table = build_learning_table(args.run_root, include_failed=not args.exclude_failed)
-        write_json(args.out, fit_ridge_surrogate(table, target_col=args.target_col)); print(args.out); return
+        write_json(args.out, fit_ridge_surrogate(
+            table,
+            target_col=args.target_col,
+            exclude_infeasible=args.exclude_infeasible,
+            constraint_col=args.constraint_col,
+            target_transform=args.target_transform,
+            clip_target_quantile=args.clip_target_quantile,
+        )); print(args.out); return
 
     if args.cmd == "ml-predict":
         import pandas as pd

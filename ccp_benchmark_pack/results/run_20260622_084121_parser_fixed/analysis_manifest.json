@@ -1,0 +1,17 @@
+{
+  "schema": "ccp_ngspice_benchmark_analysis.v2",
+  "ngspice_run_root": "C:\\Users\\user\\Desktop\\circuit_design_platform_v6_final\\runs\\ccp_ngspice_reeval\\run_20260622_084121_parser_fixed",
+  "dummy_root": "C:\\Users\\user\\Desktop\\circuit_design_platform_v6_final\\runs\\ccp_benchmark_eval",
+  "out_dir": "C:\\Users\\user\\Desktop\\circuit_design_platform_v6_final\\ccp_benchmark_pack\\results\\run_20260622_084121_parser_fixed",
+  "files": [
+    "comparison_summary.csv",
+    "feasibility_summary.csv",
+    "category_stats.csv",
+    "level3_category_stats.csv",
+    "top_candidates.csv",
+    "spearman_correlations.csv",
+    "harmonic_amplitudes.csv",
+    "surrogate_diagnostics.csv",
+    "analysis.md"
+  ]
+}

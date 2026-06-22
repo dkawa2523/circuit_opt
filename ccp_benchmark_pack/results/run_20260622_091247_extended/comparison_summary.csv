@@ -1,0 +1,2 @@
+case,dummy_best_loss,dummy_median_loss,dummy_p90_loss,dummy_penalty_rate,ngspice_best_loss,ngspice_median_loss,ngspice_p90_loss,ngspice_mean_loss,ngspice_max_loss,ngspice_failed,ngspice_penalty_rate,feasible_median_loss,infeasible_median_loss,v_peak_gt_1000,i_rms_gt_20,i_rms_gt_25,loss_lt_1,loss_lt_2
+level3_topology_load_choice,0.5018312631731199,0.6349287871913957,0.7915122724358151,0.0,0.5027647230506987,2.5319814403278906,236.8867760747086,609.2868372832972,32321.60816349108,0,0.5,1.3986748914397622,14.612080031884023,31,35,28,17,39

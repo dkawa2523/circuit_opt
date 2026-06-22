@@ -18,3 +18,6 @@ report.html
 
 .env
 .env.*
+
+# Reproducible benchmark raw runs; keep curated summaries under ccp_benchmark_pack/results/.
+runs/ccp_ngspice_reeval/

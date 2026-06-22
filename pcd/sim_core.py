@@ -291,7 +291,12 @@ def render_ngspice_netlist(
 
 def _build_provenance(case: Case, params: dict[str, Any], solver_name: str) -> dict[str, Any]:
     solver_cfg = case.data.get("solver", {}) or {}
-    executable = solver_cfg.get("executable", "ngspice" if solver_name == "ngspice_cli" else None)
+    if "executable" in solver_cfg:
+        executable = solver_cfg.get("executable")
+    elif solver_name == "ngspice_cli":
+        executable = _default_ngspice_executable()
+    else:
+        executable = None
     timeout_s = _solver_timeout_s(case)
     solver_info: dict[str, Any] = {
         "name": solver_name,
@@ -372,6 +377,58 @@ def _solver_version(executable: str) -> str | None:
         return None
     text = (completed.stdout or completed.stderr or "").strip()
     return text.splitlines()[0] if text else None
+
+
+def diagnose_solver(solver_name: str = "ngspice_cli", executable: str | None = None, timeout_s: float = 300.0) -> dict[str, Any]:
+    """Return a small, generic solver environment diagnostic."""
+
+    solver_name = str(solver_name)
+    if solver_name == "dummy":
+        return {
+            "schema": "solver_diagnostic.v1",
+            "solver": "dummy",
+            "executable": None,
+            "resolved_executable": None,
+            "version": None,
+            "timeout_s": float(timeout_s),
+            "batch_runnable": True,
+            "windows_prefers_console_binary": False,
+            "notes": ["dummy solver does not use an external executable"],
+        }
+    if solver_name != "ngspice_cli":
+        return {
+            "schema": "solver_diagnostic.v1",
+            "solver": solver_name,
+            "executable": executable,
+            "resolved_executable": shutil.which(str(executable)) if executable else None,
+            "version": None,
+            "timeout_s": float(timeout_s),
+            "batch_runnable": False,
+            "windows_prefers_console_binary": False,
+            "notes": [f"no built-in diagnostic for solver '{solver_name}'"],
+        }
+
+    default_exe = _default_ngspice_executable()
+    exe = str(executable or default_exe)
+    resolved = shutil.which(exe)
+    version = _solver_version(exe) if resolved else None
+    notes: list[str] = []
+    if not resolved:
+        notes.append(f"executable not found on PATH: {exe}")
+    if sys.platform == "win32" and not executable and exe == "ngspice":
+        notes.append("ngspice_con.exe was not found on PATH; a GUI-capable ngspice.exe may open a window if used explicitly")
+    return {
+        "schema": "solver_diagnostic.v1",
+        "solver": "ngspice_cli",
+        "executable": exe,
+        "resolved_executable": resolved,
+        "version": version,
+        "timeout_s": float(timeout_s),
+        "batch_runnable": bool(resolved),
+        "windows_prefers_console_binary": bool(sys.platform == "win32" and default_exe == "ngspice_con.exe"),
+        "batch_command": [exe, "-b", "-o", "solver.log", "netlist.cir"],
+        "notes": notes,
+    }
 
 
 def prepare_case(
@@ -606,7 +663,12 @@ def parse_wrdata(path: str | Path) -> SimulationResult:
     arr = np.loadtxt(path)
     if arr.ndim == 1:
         arr = arr.reshape(1, -1)
-    if arr.shape[1] >= 5:
+    if arr.shape[1] >= 6:
+        # ngspice 46 writes pairs of (scale, vector).  For
+        # ``wrdata file time v(node) i(src)`` this becomes
+        # time,time,time,V,time,I.
+        t, v, i = arr[:, 0], arr[:, 3], arr[:, 5]
+    elif arr.shape[1] == 5:
         t, v, i = arr[:, 0], arr[:, 2], arr[:, 4]
     elif arr.shape[1] == 4:
         t, v, i = arr[:, 0], arr[:, 1], arr[:, 3]
@@ -619,9 +681,15 @@ def parse_wrdata(path: str | Path) -> SimulationResult:
     return SimulationResult(time_s=t, voltage_V=v, current_A=i, status="ok", log="")
 
 
+def _default_ngspice_executable() -> str:
+    if sys.platform == "win32" and shutil.which("ngspice_con.exe"):
+        return "ngspice_con.exe"
+    return "ngspice"
+
+
 def ngspice_cli(netlist_path: str | Path, run_dir: str | Path, case: Case, params: dict[str, Any]) -> SimulationResult:
     run_dir = Path(run_dir)
-    exe = str(case.data.get("solver", {}).get("executable", "ngspice"))
+    exe = str(case.data.get("solver", {}).get("executable") or _default_ngspice_executable())
     timeout_s = _solver_timeout_s(case)
     diagnostics: dict[str, Any] = {"executable": exe, "timeout_s": timeout_s}
     if shutil.which(exe) is None:
@@ -635,6 +703,9 @@ def ngspice_cli(netlist_path: str | Path, run_dir: str | Path, case: Case, param
             diagnostics=diagnostics,
         )
     log_path = run_dir / "solver.log"
+    creationflags = 0
+    if sys.platform == "win32":
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     try:
         completed = subprocess.run(
             [exe, "-b", "-o", str(log_path), str(netlist_path)],
@@ -643,6 +714,7 @@ def ngspice_cli(netlist_path: str | Path, run_dir: str | Path, case: Case, param
             capture_output=True,
             check=False,
             timeout=timeout_s,
+            creationflags=creationflags,
         )
     except subprocess.TimeoutExpired as exc:
         diagnostics["timed_out"] = True
