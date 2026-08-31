@@ -5,6 +5,12 @@ __pycache__/
 .coverage
 htmlcov/
 
+# Tool caches.  quality/coverage-floor.txt is committed on purpose.
+.ruff_cache/
+.import_linter_cache/
+.hypothesis/
+.nox/
+
 .venv/
 venv/
 env/
@@ -19,5 +25,8 @@ report.html
 .env
 .env.*
 
-# Reproducible benchmark raw runs; keep curated summaries under ccp_benchmark_pack/results/.
-runs/ccp_ngspice_reeval/
+# Runtime artifacts are content-addressed and reproducible; never version them.
+/runs/
+/tmp/
+/review_tmp/
+*.tmp

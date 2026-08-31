@@ -1,0 +1,53 @@
+benchmark_id: p0_lee2021_bias
+priority: P0
+source:
+  title: Correlation of RF impedance with Ar plasma parameters in semiconductor etch equipment using inductively coupled plasma
+  authors: [S. Lee, J. Kwon, C. W. Chung]
+  journal: AIP Advances
+  year: 2021
+  doi: 10.1063/6.0000883
+  doi_url: https://doi.org/10.1063/6.0000883
+  institutional_full_text: https://hanyang.scholarworks.kr/api/assets/0ab0c907-0fb0-45bf-8c65-c5e53790a55e/download
+  extraction: exact values transcribed from Table I
+
+operating_condition:
+  frequency_Hz: 13560000
+  gas: Ar
+  flow_sccm: 200
+  pressure_mTorr: 5
+  source_power_W: 400
+  bias_power_W: 100
+  wafer_diameter_mm: 300
+
+# This paper studies the 13.56 MHz ESC bias path.  The reactor also has an
+# ICP source, but these values are not the ICP source-coil terminal impedance.
+table_i:
+  vacuum:
+    probe_plane_ohm: {resistance: 0.3, reactance: -15.9}
+    post_coax_plane_ohm: {resistance: 0.3, reactance: -36.0}
+  plasma:
+    probe_plane_ohm: {resistance: 2.41, reactance: -7.45}
+    post_coax_plane_ohm: {resistance: 2.47, reactance: -14.3}
+    corrected_plasma_terminal_ohm: {resistance: 2.69, reactance: -12.8}
+  equivalent_circuit:
+    fixed_structure_capacitance_F: 2.58e-10
+    sheath_capacitance_F: 9.19e-10
+    plasma_resistance_ohm: 2.68
+    plasma_inductance_H: 1.86e-9
+    topology: C_sheath series with [C_fixed parallel (R_plasma series L_plasma)]
+
+reference_planes:
+  probe_plane:
+    meaning: VI probe behind the bias matcher and before the 720 mm coaxial RF rod
+    use_in_this_benchmark: correct load plane for the matcher-output fixture
+  post_coax_plane:
+    meaning: end of the 720 mm transmission-line correction
+    use_in_this_benchmark: plane-misuse sensitivity with the matcher-output fixture held fixed
+  corrected_plasma_terminal:
+    meaning: plasma-side terminal after subtracting the fixed chamber/ESC structure
+    use_in_this_benchmark: circuit-closure target and plane-misuse sensitivity with the matcher-output fixture held fixed
+
+scope_limits:
+  - The code consumes already de-embedded impedance; it does not reproduce the unpublished distributed-line parameters.
+  - A one-condition table cannot validate nonlinear sheath dynamics, harmonics, microscopic collision rates, or ICP coil coupling.
+  - The equivalent circuit is used only for Table-I closure; the public design case uses impedance_point at the stated plane.

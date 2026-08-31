@@ -1,0 +1,4 @@
+scenario_id,frequency_Hz,argon_pressure_mTorr,reported_rf_power_W,available_quantity,missing_quantity,source_resistance_figure,source_reactance_figure,qualified,reason
+colpo_p0010_w0500,13560000,10,500,R_m,X_m,2,3,false,The resistance figure has a 500 W marker but the reactance figure has no same-pressure 500 W marker; the resistance marker is also clipped by the 300 ohm plot boundary.
+colpo_p0100_w0500,13560000,100,500,R_m,X_m,2,3,false,The resistance figure has a 500 W marker but the reactance figure has no same-pressure 500 W marker.
+colpo_p1000_w0500,13560000,1000,500,R_m,X_m,2,3,false,The resistance figure has a 500 W marker but the reactance figure has no same-pressure 500 W marker.

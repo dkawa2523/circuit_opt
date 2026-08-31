@@ -1,0 +1,24 @@
+schema: case_yaml.v1
+case_id: plugin_case
+plugins:
+  - plugins/custom_methods.py
+source:
+  type: sine_voltage
+  name: Vsrc
+  p: src
+  n: 0
+  amplitude_V: 10
+  frequency_Hz: 1000000
+circuit:
+  builder: custom_series_lc
+  output_node: out
+  variables:
+    Lx: {bounds: [1.0e-9, 1.0e-6], scale: log, default: 1.0e-7}
+    Cx: {bounds: [1.0e-12, 1.0e-9], scale: log, default: 1.0e-10}
+load: {name: none}
+measurement: {voltage_node: out, current_source: Vsrc}
+solver:
+  name: dummy
+  tran: {step_s: 1.0e-9, stop_s: 1.0e-6}
+target:
+  objective: peak_voltage

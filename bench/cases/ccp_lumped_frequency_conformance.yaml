@@ -1,0 +1,29 @@
+# A4: public-schema, multi-frequency E2E for the effective CCP R-L-C port.
+# The fixed network is intentionally not optimized; the golden is its complex
+# input impedance at each frequency, not a claim that these parameters match a
+# particular chamber.
+schema: pcd.rf.v1
+case_id: benchmark_ccp_lumped_frequency_conformance
+
+network:
+  type: l_match
+  fixed:
+    L1: 2.0e-7
+    C1: 2.0e-11
+
+load:
+  type: ccp_lumped
+  reference_plane: electrode_terminal
+  evidence: {origin: analytic_benchmark, qualified_frequency_Hz: [10000000, 20000000]}
+  parameters:
+    R_eff_ohm: 25
+    L_eff_H: 2.0e-7
+    C_sheath_eq_F: 1.2e-10
+
+conditions:
+  - {id: low_frequency, frequency_Hz: 10000000}
+  - {id: nominal_frequency, frequency_Hz: 13560000}
+  - {id: high_frequency, frequency_Hz: 20000000}
+
+acceptance:
+  reflected_power_fraction_max: 0.10

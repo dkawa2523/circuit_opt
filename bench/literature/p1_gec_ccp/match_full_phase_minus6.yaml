@@ -1,0 +1,24 @@
+# Every Hargis 66 Pa central phase is shifted together by -6 degrees.
+schema: pcd.rf.v1
+case_id: literature_gec66_full_phase_minus6
+
+network:
+  type: pi_match
+  fixed:
+    L1: 1.5e-6
+  tuning:
+    C1: [4.0e-10, 4.5e-10, 5.0e-10, 5.5e-10]
+    C2: [6.5e-11, 7.0e-11, 7.5e-11, 8.0e-11]
+
+load:
+  type: impedance_table
+  file: phase_systematic_minus6.csv
+  reference_plane: powered_electrode_surface
+  evidence:
+    origin: systematic_phase_sensitivity_from_published_group_average
+    doi: 10.1063/1.1144770
+    phase_basis_doi: 10.6028/jres.100.026
+    phase_shift_deg: -6
+
+acceptance:
+  reflected_power_fraction_max: 0.10

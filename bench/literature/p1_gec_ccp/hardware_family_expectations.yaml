@@ -1,0 +1,30 @@
+schema: literature.matcher_family_comparison_expectations.v1
+candidate_count: 3
+control_state_count: 16
+total_evaluation_count: 3840
+
+families:
+  central_operating_conditions:
+    scenario_count: 32
+    candidates:
+      - {L1_H: 1.4e-6, feasible_scenarios: 17, worst_reflection_magnitude: [0.857, 0.859], by_apparatus_group: {24: 10, 34: 7}}
+      - {L1_H: 1.5e-6, feasible_scenarios: 22, worst_reflection_magnitude: [0.661, 0.663], by_apparatus_group: {24: 10, 34: 12}}
+      - {L1_H: 1.6e-6, feasible_scenarios: 26, worst_reflection_magnitude: [0.642, 0.644], by_apparatus_group: {24: 13, 34: 13}}
+  reported_apparatus_spread:
+    scenario_count: 32
+    candidates:
+      - {L1_H: 1.4e-6, feasible_scenarios: 26, worst_reflection_magnitude: [0.758, 0.760], by_apparatus_group: {24: 14, 34: 12}}
+      - {L1_H: 1.5e-6, feasible_scenarios: 30, worst_reflection_magnitude: [0.527, 0.529], by_apparatus_group: {24: 16, 34: 14}}
+      - {L1_H: 1.6e-6, feasible_scenarios: 20, worst_reflection_magnitude: [0.517, 0.520], by_apparatus_group: {24: 8, 34: 12}}
+  phase_model_minus6:
+    scenario_count: 8
+    candidates:
+      - {L1_H: 1.4e-6, feasible_scenarios: 5, worst_reflection_magnitude: [0.439, 0.441], by_apparatus_group: {24: 3, 34: 2}}
+      - {L1_H: 1.5e-6, feasible_scenarios: 7, worst_reflection_magnitude: [0.365, 0.367], by_apparatus_group: {24: 4, 34: 3}}
+      - {L1_H: 1.6e-6, feasible_scenarios: 4, worst_reflection_magnitude: [0.586, 0.589], by_apparatus_group: {24: 2, 34: 2}}
+  phase_model_plus6:
+    scenario_count: 8
+    candidates:
+      - {L1_H: 1.4e-6, feasible_scenarios: 7, worst_reflection_magnitude: [0.422, 0.425], by_apparatus_group: {24: 4, 34: 3}}
+      - {L1_H: 1.5e-6, feasible_scenarios: 8, worst_reflection_magnitude: [0.163, 0.166], by_apparatus_group: {24: 4, 34: 4}}
+      - {L1_H: 1.6e-6, feasible_scenarios: 8, worst_reflection_magnitude: [0.219, 0.222], by_apparatus_group: {24: 4, 34: 4}}

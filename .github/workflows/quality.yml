@@ -1,0 +1,45 @@
+name: quality
+
+# The gate of record: re-runs `quality-pr` from a clean checkout and judges on
+# the exit code, never on a summary written by whoever made the change.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: quality-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  quality-pr:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --group dev --frozen
+      - run: uv run nox -s quality-pr
+
+      # A check must never rewrite the floor it is supposed to hold.
+      - name: Fail if the coverage floor changed during the run
+        run: git diff --exit-code -- quality/coverage-floor.txt
+
+  # The package must stay installable the way the README documents it.
+  packaging:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: |
+          uv venv
+          uv pip install -e .
+          uv run pcd list

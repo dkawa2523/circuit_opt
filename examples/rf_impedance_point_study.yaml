@@ -1,0 +1,23 @@
+# Search one pi network over independently supplied R+jX load points.
+schema: pcd.rf.v1
+case_id: rf_impedance_point_study
+frequency_Hz: 13560000
+
+network:
+  type: pi_match
+  search:
+    C1: {range: [1.0e-11, 1.0e-9], scale: log, default: 2.6e-10}
+    L1: {range: [1.0e-7, 3.0e-6], scale: log, default: 1.2e-6}
+    C2: {range: [1.0e-12, 5.0e-10], scale: log, default: 8.0e-12}
+
+load:
+  type: impedance_table
+  file: rf_load_scenarios.csv
+  reference_plane: electrode_terminal
+  evidence: {origin: synthetic_example_table}
+
+acceptance:
+  reflected_power_fraction_max: 0.10
+
+execution:
+  seed: 7

@@ -1,0 +1,36 @@
+schema: case_yaml.v1
+case_id: literature_colpo1999_dummy_resonance
+
+source:
+  type: sine_voltage
+  name: Vsrc
+  p: src
+  n: 0
+  amplitude_V: 1
+  frequency_Hz: 13560000
+
+circuit:
+  builder: from_yaml
+  output_node: port
+  components:
+    - {raw: "Rfixture src port 1e-6"}
+
+load:
+  name: from_yaml
+  ports: {p: port, n: 0}
+  reference_plane: dummy_coil_terminal
+  characterization:
+    origin: published_component_values
+    doi: 10.1063/1.369268
+    figures: [7, 8]
+  components:
+    - {raw: "Lsection1 p middle 8.5e-6"}
+    - {raw: "Csection1 p middle 60e-12"}
+    - {raw: "Lsection2 middle n 1.5e-6"}
+    - {raw: "Csection2 middle n 43e-12"}
+
+solver:
+  name: ngspice_cli
+  ac: {sweep: lin, points: 8001, start_Hz: 3000000, stop_Hz: 25000000}
+
+target: {objective: impedance_match}

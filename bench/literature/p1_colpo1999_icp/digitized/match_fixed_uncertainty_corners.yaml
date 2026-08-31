@@ -1,0 +1,23 @@
+# Platform-only negative control: one setting chosen at the middle central point.
+schema: pcd.rf.v1
+case_id: literature_colpo1999_fixed_digitization_corners
+
+network:
+  type: pi_match
+  fixed:
+    C1: 5.75e-10
+    L1: 1.0e-6
+    C2: 2.35e-10
+
+load:
+  type: impedance_table
+  file: uncertainty_corners.csv
+  reference_plane: rfz60_global_icp_source_terminal
+  evidence:
+    origin: explicit_rectangular_digitization_only_corners
+    parent_table: qualified_impedance.csv
+    doi: 10.1063/1.369268
+    figures: [2, 3]
+
+acceptance:
+  reflected_power_fraction_max: 0.10

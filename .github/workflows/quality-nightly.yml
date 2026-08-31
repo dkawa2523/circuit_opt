@@ -1,0 +1,42 @@
+name: quality-nightly
+
+# Checks that are too slow for every PR: end-to-end journeys against the real
+# ngspice binary, property tests, and the supported Python range.
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  nightly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --group dev --frozen
+
+      # The e2e suite skips the real-solver tests when ngspice is absent;
+      # installing it here is what makes those tests actually run.
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ngspice
+      - run: uv run nox -s quality-nightly
+      - run: uv run nox -s benchmark-design
+
+  python-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --group dev --python ${{ matrix.python-version }}
+      - run: uv run --python ${{ matrix.python-version }} pytest -q -m "not e2e"

@@ -1,0 +1,9 @@
+scenario_id,frequency_Hz,resistance_ohm,reactance_ohm,weight,central_scenario_id,central_phase_deg,phase_shift_deg,shifted_phase_deg,impedance_magnitude_ohm,reference_plane
+gec66_r24_vpp075__phase_minus6,13560000,69.490355702,-280.797499305,1,gec66_r24_vpp075,-70.1,-6,-76.1,289.268292683,powered_electrode_surface
+gec66_r24_vpp100__phase_minus6,13560000,52.6388146129,-278.583054504,1,gec66_r24_vpp100,-73.3,-6,-79.3,283.512544803,powered_electrode_surface
+gec66_r24_vpp150__phase_minus6,13560000,36.1242059167,-270.738330407,1,gec66_r24_vpp150,-76.4,-6,-82.4,273.137697517,powered_electrode_surface
+gec66_r24_vpp200__phase_minus6,13560000,31.3156656643,-274.854070041,1,gec66_r24_vpp200,-77.5,-6,-83.5,276.632302405,powered_electrode_surface
+gec66_r34_vpp075__phase_minus6,13560000,107.337505876,-397.810482168,1,gec66_r34_vpp075,-68.9,-6,-74.9,412.037037037,powered_electrode_surface
+gec66_r34_vpp100__phase_minus6,13560000,70.8765527608,-330.609580605,1,gec66_r34_vpp100,-71.9,-6,-77.9,338.121546961,powered_electrode_surface
+gec66_r34_vpp150__phase_minus6,13560000,39.5131234705,-292.245363993,1,gec66_r34_vpp150,-76.3,-6,-82.3,294.904458599,powered_electrode_surface
+gec66_r34_vpp200__phase_minus6,13560000,23.6860716625,-282.069904475,1,gec66_r34_vpp200,-79.2,-6,-85.2,283.062645012,powered_electrode_surface

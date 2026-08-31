@@ -1,0 +1,1313 @@
+{
+  "schema": "pcd.benchmark_figures.v3",
+  "rendering": {
+    "layout_schema": "pcd.publication.v1",
+    "page_size_inches": [
+      7.25,
+      4.8
+    ],
+    "python": "3.12.13",
+    "matplotlib": "3.11.1",
+    "schemdraw": "0.23",
+    "symbol_standard": "IEEE"
+  },
+  "source": {
+    "path_style": "repository-relative POSIX",
+    "run_root": "runs/benchmark_suite",
+    "solver": "ngspice_cli",
+    "generated_at": "2026-08-31T01:21:05.105111+00:00",
+    "benchmark_result_sha256": "1d4ab957251563ecb252265862977c4aaff9e83a088ba28be79c5bbc4dd7d7f2",
+    "candidate_sha256": {
+      "B2": "ac22a9e69bab6933b006621fe23173594b4db797ed4e5dddac8795ce31ecc594",
+      "B3": "f66bacfc03d785a149dfce0c646ce193fce7bb4c2f29e7ffda573c811da355ac",
+      "A5": "7a8d292a762778d32e9efd9afcc731f77d94032e470551d9248d2f095d0cae1b",
+      "B5": "724998c81c7fddf6eec19516eb1db4d9965544471647e3d27541f28eb5d2dcfa",
+      "B8": "770012af064f0bc5620549041170838262771099fa39a99a7c158ea715051e18"
+    },
+    "reference_case_sha256": {
+      "D1": "b0ce3c4a5129f2bfe8cec7b5f198ab32212799cdd5b091ea6e0f7c861d6163fe",
+      "D2": "ddf0c5224c56710f5ed3068e7fea1e60746f6e3a7c68abcdebaeb142c6227c4f",
+      "D3": "7252eefa2f91085f2629d6cc24505e31c8964cc4e412e5b90d4f9910de1161da"
+    }
+  },
+  "acceptance": {
+    "metric": "reflection_magnitude",
+    "max": 0.31622776601683794
+  },
+  "reference_impedance_ohm": 50.0,
+  "benchmark_cases": [
+    {
+      "benchmark_id": "A1_topology_l_match",
+      "role": "engine_conformance",
+      "question": "Does the public L-match netlist reproduce an independent closed-form input impedance?",
+      "demonstrates": "The L-match builder, load connection, AC extraction, and reflection calculation agree with a frozen analytic oracle.",
+      "does_not_establish": "This arbitrary synthetic circuit is not a preferred topology or chamber design.",
+      "passed": true,
+      "feasible": false,
+      "n_evaluations": 1,
+      "n_failed_evaluations": 0
+    },
+    {
+      "benchmark_id": "A2_topology_pi_match",
+      "role": "engine_conformance",
+      "question": "Does the public pi-match netlist reproduce an independent closed-form input impedance?",
+      "demonstrates": "The pi-match builder, load connection, AC extraction, and reflection calculation agree with a frozen analytic oracle.",
+      "does_not_establish": "Passing the synthetic match limit does not select a universally superior topology.",
+      "passed": true,
+      "feasible": true,
+      "n_evaluations": 1,
+      "n_failed_evaluations": 0
+    },
+    {
+      "benchmark_id": "A3_topology_pi_match_harmonic",
+      "role": "engine_conformance",
+      "question": "Does the public pi-match with a series-LC shunt branch reproduce an independent closed-form input impedance?",
+      "demonstrates": "The harmonic-branch topology is electrically connected once and its fundamental-frequency impedance agrees with circuit algebra.",
+      "does_not_establish": "A one-tone linear check does not validate harmonic suppression against a nonlinear plasma.",
+      "passed": true,
+      "feasible": false,
+      "n_evaluations": 1,
+      "n_failed_evaluations": 0
+    },
+    {
+      "benchmark_id": "A4_ccp_lumped_frequency_conformance",
+      "role": "model_conformance",
+      "question": "Does the public effective CCP R-L-C load pass through planning, scenario frequency substitution, SPICE, and metric extraction at three frequencies?",
+      "demonstrates": "The declared effective CCP port follows R+jwL+1/(jwC) across frequency without inventing new plasma-state inputs.",
+      "does_not_establish": "The synthetic R-L-C values are not a physical CCP validation or parameter-identification result.",
+      "passed": true,
+      "feasible": false,
+      "n_evaluations": 3,
+      "n_failed_evaluations": 0
+    },
+    {
+      "benchmark_id": "A5_icp_transformer_frequency_conformance",
+      "role": "model_conformance",
+      "question": "Does the public effective ICP transformer load pass through planning, frequency substitution, SPICE, and metric extraction at three frequencies?",
+      "demonstrates": "The identifiable reflected loading, coil terms, optional shunt capacitance, and public frequency scenarios preserve their declared terminal equation end to end.",
+      "does_not_establish": "Synthetic terminal parameters do not validate density, collision frequency, plasma power split, or a physical ICP chamber.",
+      "passed": true,
+      "feasible": false,
+      "n_evaluations": 3,
+      "n_failed_evaluations": 0
+    },
+    {
+      "benchmark_id": "B1_fixed_nominal",
+      "role": "negative_control",
+      "question": "Can a network optimized only at the nominal load cover the operating window without retuning?",
+      "demonstrates": "A good nominal match is not evidence of a robust design.",
+      "does_not_establish": "The synthetic electrical envelope is not a qualified plasma process window.",
+      "passed": true,
+      "feasible": false,
+      "n_evaluations": 5,
+      "n_failed_evaluations": 0
+    },
+    {
+      "benchmark_id": "B2_limited_tuner",
+      "role": "negative_control",
+      "question": "Does electrical reachability remain acceptable when the selected setting must retain 20% normalized tuning headroom?",
+      "demonstrates": "The platform distinguishes an electrically reachable match from one that consumes too much actuator range.",
+      "does_not_establish": "Discrete capacitor settings model control authority, not controller dynamics.",
+      "passed": true,
+      "feasible": false,
+      "n_evaluations": 125,
+      "n_failed_evaluations": 0
+    },
+    {
+      "benchmark_id": "B3_full_tuner",
+      "role": "positive_control",
+      "question": "Can one fixed network cover the operating window when its declared capacitors may retune per scenario?",
+      "demonstrates": "Fixed hardware plus bounded control authority can satisfy the electrical window while retaining the declared tuning reserve.",
+      "does_not_establish": "This AC equivalent-circuit result does not qualify RF voltage stress, losses, controller dynamics, or plasma physics.",
+      "passed": true,
+      "feasible": true,
+      "n_evaluations": 245,
+      "n_failed_evaluations": 0
+    },
+    {
+      "benchmark_id": "B4_independent_frequency_points",
+      "role": "negative_control",
+      "question": "Does a network accepted at one frequency remain acceptable at independently supplied synthetic frequency points?",
+      "demonstrates": "Independent frequency points can reject a design that a nominal-frequency check accepts.",
+      "does_not_establish": "Three synthetic points are not a continuous broadband or large-signal chamber model.",
+      "passed": true,
+      "feasible": false,
+      "n_evaluations": 3,
+      "n_failed_evaluations": 0
+    },
+    {
+      "benchmark_id": "B5_high_drive_stress",
+      "role": "negative_control",
+      "question": "Does a nominally matched network remain feasible at high drive after component and source-terminal limits are included?",
+      "demonstrates": "Match quality alone is not hardware feasibility; every named matching component and the source terminal can be checked at operating amplitude.",
+      "does_not_establish": "Source-terminal VA is not forward generator power, and effective ESR/DCR does not predict temperature without a qualified thermal model.",
+      "passed": true,
+      "feasible": false,
+      "n_evaluations": 2,
+      "n_failed_evaluations": 0
+    },
+    {
+      "benchmark_id": "B6_discrete_hardware_search",
+      "role": "positive_control",
+      "question": "Does a complete finite search recover the known feasible capacitor from a hardware shortlist without duplicate or missed candidates?",
+      "demonstrates": "A discrete hardware shortlist is enumerated completely and feasibility-first ranking selects its sole acceptable nominal match.",
+      "does_not_establish": "One nominal load and a three-value shortlist do not establish robustness, continuous-space optimality, or a qualified component library.",
+      "passed": true,
+      "feasible": true,
+      "n_evaluations": 3,
+      "n_failed_evaluations": 0
+    },
+    {
+      "benchmark_id": "B7_role_factorial_search",
+      "role": "positive_control",
+      "question": "Can the engine keep two hardware candidates, two load scenarios, and two tuner states independent while selecting the only robust candidate?",
+      "demonstrates": "Candidate hardware, external scenarios, and per-scenario controls remain orthogonal through complete enumeration and feasibility-first selection.",
+      "does_not_establish": "The analytically constructed two-point example is not a chamber operating window or a controller model.",
+      "passed": true,
+      "feasible": true,
+      "n_evaluations": 8,
+      "n_failed_evaluations": 0
+    },
+    {
+      "benchmark_id": "B8_component_value_corner_stress",
+      "role": "negative_control",
+      "question": "Does an already selected nominal network remain acceptable at every deterministic realized-component-value corner?",
+      "demonstrates": "Existing Scenario enumeration can combine one nominal Candidate BOM with every declared realized-value factor corner without adding tolerance-specific public input or confusing the corners with new Candidates.",
+      "does_not_establish": "The synthetic +/-15% envelope is neither a vendor tolerance, a probability distribution, a Monte Carlo yield estimate, nor a temperature/aging model.",
+      "passed": true,
+      "feasible": false,
+      "n_evaluations": 8,
+      "n_failed_evaluations": 0
+    },
+    {
+      "benchmark_id": "D1_reference_plane_explicit",
+      "role": "boundary_conformance",
+      "question": "What source impedance results when a known lossy series R-L two-port is represented explicitly ahead of a plasma-terminal load?",
+      "demonstrates": "A passive lossy series two-port and plasma-terminal load provide one well-defined physical representation.",
+      "does_not_establish": "A reference-plane label alone cannot validate an externally supplied de-embedding transform.",
+      "passed": true,
+      "feasible": true,
+      "n_evaluations": 1,
+      "n_failed_evaluations": 0
+    },
+    {
+      "benchmark_id": "D2_reference_plane_embedded",
+      "role": "boundary_conformance",
+      "question": "Does folding the same fixture exactly once into the upstream one-port preserve the matcher input impedance?",
+      "demonstrates": "Equivalent explicit and embedded representations of the same lossy series two-port give the same source impedance when the reference plane is handled once.",
+      "does_not_establish": "This synthetic R-L transform does not qualify a real chamber fixture model or a general measured S-parameter de-embedding workflow.",
+      "passed": true,
+      "feasible": true,
+      "n_evaluations": 1,
+      "n_failed_evaluations": 0
+    },
+    {
+      "benchmark_id": "D3_reference_plane_double_counted",
+      "role": "negative_control",
+      "question": "Does deliberately including the same fixture in both the circuit and supplied upstream impedance change the design decision?",
+      "demonstrates": "Fixture double counting is observable as a changed source impedance and rejected match classification.",
+      "does_not_establish": "The platform cannot infer from arbitrary impedance data whether an undocumented fixture was already included.",
+      "passed": true,
+      "feasible": false,
+      "n_evaluations": 1,
+      "n_failed_evaluations": 0
+    }
+  ],
+  "reference_circuit": {
+    "reference_impedance_ohm": 50.0,
+    "fixture_resistance_ohm": 2.0,
+    "fixture_inductance_H": 2.257149671173009e-07,
+    "plasma_resistance_ohm": 25.0,
+    "plasma_reactance_ohm": -100.0,
+    "embedded_resistance_ohm": 27.0,
+    "embedded_reactance_ohm": -80.76908643457358
+  },
+  "load_scenarios": [
+    {
+      "scenario_id": "high_R_strong_capacitive",
+      "resistance_ohm": 50.0,
+      "reactance_ohm": -161.53817286914716
+    },
+    {
+      "scenario_id": "nominal",
+      "resistance_ohm": 25.0,
+      "reactance_ohm": -80.76908643457358
+    },
+    {
+      "scenario_id": "low_R_weak_capacitive",
+      "resistance_ohm": 12.5,
+      "reactance_ohm": -40.38454321728679
+    },
+    {
+      "scenario_id": "low_R_nominal_X",
+      "resistance_ohm": 12.5,
+      "reactance_ohm": -80.76908643457358
+    },
+    {
+      "scenario_id": "high_R_nominal_X",
+      "resistance_ohm": 50.0,
+      "reactance_ohm": -80.76908643457358
+    }
+  ],
+  "control_cases": {
+    "B1": {
+      "benchmark_id": "B1_fixed_nominal",
+      "case_id": "benchmark_match_fixed_nominal",
+      "case_path": "bench/cases/match_fixed_nominal.yaml",
+      "role": "negative_control",
+      "question": "Can a network optimized only at the nominal load cover the operating window without retuning?",
+      "demonstrates": "A good nominal match is not evidence of a robust design.",
+      "does_not_establish": "The synthetic electrical envelope is not a qualified plasma process window.",
+      "expected": {
+        "feasible": false,
+        "feasible_fraction": [
+          0.19,
+          0.21
+        ],
+        "worst_reflection_magnitude": [
+          0.7,
+          0.82
+        ],
+        "infeasible_scenarios": [
+          "high_R_nominal_X",
+          "low_R_weak_capacitive",
+          "low_R_nominal_X",
+          "high_R_strong_capacitive"
+        ]
+      },
+      "passed": true,
+      "checks": {
+        "feasible_classification": true,
+        "feasible_fraction": true,
+        "worst_reflection_magnitude": true,
+        "infeasible_scenarios": true,
+        "all_evaluations_succeeded": true
+      },
+      "feasible": false,
+      "feasible_fraction": 0.2,
+      "success_fraction": 1.0,
+      "worst_reflection_magnitude": 0.7672066486794396,
+      "worst_reflected_power_fraction": 0.588606041777937,
+      "worst_return_loss_dB": 2.3017528437478325,
+      "control_margin": null,
+      "edge_limited": false,
+      "infeasible_scenarios": [
+        "high_R_nominal_X",
+        "high_R_strong_capacitive",
+        "low_R_nominal_X",
+        "low_R_weak_capacitive"
+      ],
+      "violated_constraints": {
+        "high_R_strong_capacitive": [
+          "max_reflection_magnitude"
+        ],
+        "nominal": [],
+        "low_R_weak_capacitive": [
+          "max_reflection_magnitude"
+        ],
+        "low_R_nominal_X": [
+          "max_reflection_magnitude"
+        ],
+        "high_R_nominal_X": [
+          "max_reflection_magnitude"
+        ]
+      },
+      "best_candidate_id": "trial_0000",
+      "best_candidate_values": {
+        "C1": 2.58221757073e-10,
+        "L1": 1.19731080934e-06,
+        "C2": 7.45488022912e-12
+      },
+      "n_candidates": 1,
+      "feasible_candidates": 0,
+      "n_evaluations": 5,
+      "n_failed_evaluations": 0,
+      "scenarios": [
+        {
+          "scenario_id": "high_R_strong_capacitive",
+          "feasible": false,
+          "reflection_magnitude": 0.7672066486794396,
+          "reflected_power_fraction": 0.588606041777937,
+          "return_loss_dB": 2.3017528437478325,
+          "input_resistance_ohm": 8.495248251073694,
+          "input_reactance_ohm": -26.613679774205796,
+          "control": {},
+          "control_margin": null,
+          "edge_limited": false,
+          "violated_constraints": [
+            "max_reflection_magnitude"
+          ],
+          "from_cache": false
+        },
+        {
+          "scenario_id": "nominal",
+          "feasible": true,
+          "reflection_magnitude": 0.001022055288187313,
+          "reflected_power_fraction": 1.0445970121116515e-06,
+          "return_loss_dB": 59.81051220721194,
+          "input_resistance_ohm": 49.9024056288596,
+          "input_reactance_ohm": 0.030015502255820913,
+          "control": {},
+          "control_margin": null,
+          "edge_limited": false,
+          "violated_constraints": [],
+          "from_cache": false
+        },
+        {
+          "scenario_id": "low_R_weak_capacitive",
+          "feasible": false,
+          "reflection_magnitude": 0.7666970551539929,
+          "reflected_power_fraction": 0.5878243743818048,
+          "return_loss_dB": 2.307524096889843,
+          "input_resistance_ohm": 56.657481171384966,
+          "input_reactance_ohm": -126.94917963711592,
+          "control": {},
+          "control_margin": null,
+          "edge_limited": false,
+          "violated_constraints": [
+            "max_reflection_magnitude"
+          ],
+          "from_cache": false
+        },
+        {
+          "scenario_id": "low_R_nominal_X",
+          "feasible": false,
+          "reflection_magnitude": 0.3334932500761531,
+          "reflected_power_fraction": 0.11121774784635559,
+          "return_loss_dB": 9.538259036108837,
+          "input_resistance_ohm": 43.08850256738409,
+          "input_reactance_ohm": 32.10306792321666,
+          "control": {},
+          "control_margin": null,
+          "edge_limited": false,
+          "violated_constraints": [
+            "max_reflection_magnitude"
+          ],
+          "from_cache": false
+        },
+        {
+          "scenario_id": "high_R_nominal_X",
+          "feasible": false,
+          "reflection_magnitude": 0.33317639874124905,
+          "reflected_power_fraction": 0.11100651267818779,
+          "return_loss_dB": 9.546515406977843,
+          "input_resistance_ohm": 37.188908179484145,
+          "input_reactance_ohm": -27.651656648072084,
+          "control": {},
+          "control_margin": null,
+          "edge_limited": false,
+          "violated_constraints": [
+            "max_reflection_magnitude"
+          ],
+          "from_cache": false
+        }
+      ]
+    },
+    "B2": {
+      "benchmark_id": "B2_limited_tuner",
+      "case_id": "benchmark_match_limited_tuner",
+      "case_path": "bench/cases/match_limited_tuner.yaml",
+      "role": "negative_control",
+      "question": "Does electrical reachability remain acceptable when the selected setting must retain 20% normalized tuning headroom?",
+      "demonstrates": "The platform distinguishes an electrically reachable match from one that consumes too much actuator range.",
+      "does_not_establish": "Discrete capacitor settings model control authority, not controller dynamics.",
+      "expected": {
+        "feasible": false,
+        "feasible_fraction": [
+          0.39,
+          0.41
+        ],
+        "worst_reflection_magnitude": [
+          0.3,
+          0.31
+        ],
+        "control_margin": [
+          0.0,
+          0.0
+        ],
+        "edge_limited": true,
+        "n_evaluations": 125,
+        "infeasible_scenarios": [
+          "high_R_strong_capacitive",
+          "low_R_weak_capacitive",
+          "low_R_nominal_X"
+        ],
+        "violated_constraints": {
+          "high_R_strong_capacitive": [
+            "min_control_margin"
+          ],
+          "nominal": [],
+          "low_R_weak_capacitive": [
+            "min_control_margin"
+          ],
+          "low_R_nominal_X": [
+            "min_control_margin"
+          ],
+          "high_R_nominal_X": []
+        }
+      },
+      "passed": true,
+      "checks": {
+        "feasible_classification": true,
+        "feasible_fraction": true,
+        "worst_reflection_magnitude": true,
+        "infeasible_scenarios": true,
+        "all_evaluations_succeeded": true,
+        "violated_constraints": true,
+        "control_margin": true,
+        "edge_limited": true,
+        "n_evaluations": true
+      },
+      "feasible": false,
+      "feasible_fraction": 0.4,
+      "success_fraction": 1.0,
+      "worst_reflection_magnitude": 0.3020050442525467,
+      "worst_reflected_power_fraction": 0.0912070467539827,
+      "worst_return_loss_dB": 10.399716063191345,
+      "control_margin": 0.0,
+      "edge_limited": true,
+      "infeasible_scenarios": [
+        "high_R_strong_capacitive",
+        "low_R_nominal_X",
+        "low_R_weak_capacitive"
+      ],
+      "violated_constraints": {
+        "high_R_strong_capacitive": [
+          "min_control_margin"
+        ],
+        "nominal": [],
+        "low_R_weak_capacitive": [
+          "min_control_margin"
+        ],
+        "low_R_nominal_X": [
+          "min_control_margin"
+        ],
+        "high_R_nominal_X": []
+      },
+      "best_candidate_id": "trial_0000",
+      "best_candidate_values": {
+        "L1": 6.43146488676e-07
+      },
+      "n_candidates": 1,
+      "feasible_candidates": 0,
+      "n_evaluations": 125,
+      "n_failed_evaluations": 0,
+      "scenarios": [
+        {
+          "scenario_id": "high_R_strong_capacitive",
+          "feasible": false,
+          "reflection_magnitude": 0.24394093438822648,
+          "reflected_power_fraction": 0.05950717947020102,
+          "return_loss_dB": 12.254306339993164,
+          "input_resistance_ohm": 33.98769411184545,
+          "input_reactance_ohm": 13.179614294317197,
+          "control": {
+            "C1": 8.6e-10,
+            "C2": 2e-10
+          },
+          "control_margin": 0.1212121212121211,
+          "edge_limited": true,
+          "violated_constraints": [
+            "min_control_margin"
+          ],
+          "from_cache": false
+        },
+        {
+          "scenario_id": "nominal",
+          "feasible": true,
+          "reflection_magnitude": 0.013931070493505558,
+          "reflected_power_fraction": 0.0001940747250950212,
+          "return_loss_dB": 37.120310203380605,
+          "input_resistance_ohm": 48.81451494698392,
+          "input_reactance_ohm": 0.6998040397007669,
+          "control": {
+            "C1": 6.7e-10,
+            "C2": 1.6e-10
+          },
+          "control_margin": 0.6060606060606062,
+          "edge_limited": false,
+          "violated_constraints": [],
+          "from_cache": false
+        },
+        {
+          "scenario_id": "low_R_weak_capacitive",
+          "feasible": false,
+          "reflection_magnitude": 0.021895343119882928,
+          "reflected_power_fraction": 0.00047940605033740464,
+          "return_loss_dB": 33.192964892602966,
+          "input_resistance_ohm": 49.64372189139097,
+          "input_reactance_ohm": 2.152962855215883,
+          "control": {
+            "C1": 4.8e-10,
+            "C2": 4.5e-11
+          },
+          "control_margin": 0.0,
+          "edge_limited": true,
+          "violated_constraints": [
+            "min_control_margin"
+          ],
+          "from_cache": false
+        },
+        {
+          "scenario_id": "low_R_nominal_X",
+          "feasible": false,
+          "reflection_magnitude": 0.018909691366209295,
+          "reflected_power_fraction": 0.0003575764275652903,
+          "return_loss_dB": 34.46631118835153,
+          "input_resistance_ohm": 51.40765217548395,
+          "input_reactance_ohm": 1.3024067535650818,
+          "control": {
+            "C1": 8.6e-10,
+            "C2": 1.35e-10
+          },
+          "control_margin": 0.14634146341463414,
+          "edge_limited": true,
+          "violated_constraints": [
+            "min_control_margin"
+          ],
+          "from_cache": false
+        },
+        {
+          "scenario_id": "high_R_nominal_X",
+          "feasible": true,
+          "reflection_magnitude": 0.3020050442525467,
+          "reflected_power_fraction": 0.0912070467539827,
+          "return_loss_dB": 10.399716063191345,
+          "input_resistance_ohm": 26.807024193375902,
+          "input_reactance_ohm": 0.3998996600243629,
+          "control": {
+            "C1": 5.5e-10,
+            "C2": 1.6e-10
+          },
+          "control_margin": 0.34146341463414615,
+          "edge_limited": false,
+          "violated_constraints": [],
+          "from_cache": false
+        }
+      ]
+    },
+    "B3": {
+      "benchmark_id": "B3_full_tuner",
+      "case_id": "benchmark_match_full_tuner",
+      "case_path": "bench/cases/match_full_tuner.yaml",
+      "role": "positive_control",
+      "question": "Can one fixed network cover the operating window when its declared capacitors may retune per scenario?",
+      "demonstrates": "Fixed hardware plus bounded control authority can satisfy the electrical window while retaining the declared tuning reserve.",
+      "does_not_establish": "This AC equivalent-circuit result does not qualify RF voltage stress, losses, controller dynamics, or plasma physics.",
+      "expected": {
+        "feasible": true,
+        "feasible_fraction": [
+          0.99,
+          1.0
+        ],
+        "worst_reflection_magnitude": [
+          0.0,
+          0.06
+        ],
+        "control_margin": [
+          0.23,
+          0.24
+        ],
+        "edge_limited": false,
+        "n_evaluations": 245,
+        "infeasible_scenarios": []
+      },
+      "passed": true,
+      "checks": {
+        "feasible_classification": true,
+        "feasible_fraction": true,
+        "worst_reflection_magnitude": true,
+        "infeasible_scenarios": true,
+        "all_evaluations_succeeded": true,
+        "control_margin": true,
+        "edge_limited": true,
+        "n_evaluations": true
+      },
+      "feasible": true,
+      "feasible_fraction": 1.0,
+      "success_fraction": 1.0,
+      "worst_reflection_magnitude": 0.038844448497049926,
+      "worst_reflected_power_fraction": 0.0015088911790399643,
+      "worst_return_loss_dB": 28.213420803348285,
+      "control_margin": 0.23255813953488372,
+      "edge_limited": false,
+      "infeasible_scenarios": [],
+      "violated_constraints": {
+        "high_R_strong_capacitive": [],
+        "nominal": [],
+        "low_R_weak_capacitive": [],
+        "low_R_nominal_X": [],
+        "high_R_nominal_X": []
+      },
+      "best_candidate_id": "trial_0000",
+      "best_candidate_values": {
+        "L1": 6.43146488676e-07
+      },
+      "n_candidates": 1,
+      "feasible_candidates": 1,
+      "n_evaluations": 245,
+      "n_failed_evaluations": 0,
+      "scenarios": [
+        {
+          "scenario_id": "high_R_strong_capacitive",
+          "feasible": true,
+          "reflection_magnitude": 0.038844448497049926,
+          "reflected_power_fraction": 0.0015088911790399643,
+          "return_loss_dB": 28.213420803348285,
+          "input_resistance_ohm": 53.229672739587514,
+          "input_reactance_ohm": -2.378454438122337,
+          "control": {
+            "C1": 8.9e-10,
+            "C2": 2.1e-10
+          },
+          "control_margin": 0.23255813953488388,
+          "edge_limited": false,
+          "violated_constraints": [],
+          "from_cache": false
+        },
+        {
+          "scenario_id": "nominal",
+          "feasible": true,
+          "reflection_magnitude": 0.013931070493505558,
+          "reflected_power_fraction": 0.0001940747250950212,
+          "return_loss_dB": 37.120310203380605,
+          "input_resistance_ohm": 48.81451494698392,
+          "input_reactance_ohm": 0.6998040397007669,
+          "control": {
+            "C1": 6.7e-10,
+            "C2": 1.6e-10
+          },
+          "control_margin": 0.6976744186046514,
+          "edge_limited": false,
+          "violated_constraints": [],
+          "from_cache": false
+        },
+        {
+          "scenario_id": "low_R_weak_capacitive",
+          "feasible": true,
+          "reflection_magnitude": 0.021895343119882928,
+          "reflected_power_fraction": 0.00047940605033740464,
+          "return_loss_dB": 33.192964892602966,
+          "input_resistance_ohm": 49.64372189139097,
+          "input_reactance_ohm": 2.152962855215883,
+          "control": {
+            "C1": 4.8e-10,
+            "C2": 4.5e-11
+          },
+          "control_margin": 0.23255813953488372,
+          "edge_limited": false,
+          "violated_constraints": [],
+          "from_cache": false
+        },
+        {
+          "scenario_id": "low_R_nominal_X",
+          "feasible": true,
+          "reflection_magnitude": 0.018909691366209295,
+          "reflected_power_fraction": 0.0003575764275652903,
+          "return_loss_dB": 34.46631118835153,
+          "input_resistance_ohm": 51.40765217548395,
+          "input_reactance_ohm": 1.3024067535650818,
+          "control": {
+            "C1": 8.6e-10,
+            "C2": 1.35e-10
+          },
+          "control_margin": 0.38596491228070157,
+          "edge_limited": false,
+          "violated_constraints": [],
+          "from_cache": false
+        },
+        {
+          "scenario_id": "high_R_nominal_X",
+          "feasible": true,
+          "reflection_magnitude": 0.009829853335945153,
+          "reflected_power_fraction": 9.662601660619205e-05,
+          "return_loss_dB": 40.14905923819938,
+          "input_resistance_ohm": 49.108883287892375,
+          "input_reactance_ohm": -0.39375356576762327,
+          "control": {
+            "C1": 5.5e-10,
+            "C2": 2e-10
+          },
+          "control_margin": 0.3255813953488373,
+          "edge_limited": false,
+          "violated_constraints": [],
+          "from_cache": false
+        }
+      ]
+    }
+  },
+  "control_grids": {
+    "B2": {
+      "C1": [
+        4.8e-10,
+        5.5e-10,
+        6.7e-10,
+        8.6e-10,
+        8.9e-10
+      ],
+      "C2": [
+        4.5e-11,
+        1.35e-10,
+        1.6e-10,
+        2e-10,
+        2.1e-10
+      ]
+    },
+    "B3": {
+      "C1": [
+        4e-10,
+        4.8e-10,
+        5.5e-10,
+        6.7e-10,
+        8.6e-10,
+        8.9e-10,
+        9.7e-10
+      ],
+      "C2": [
+        2e-11,
+        4.5e-11,
+        1.35e-10,
+        1.6e-10,
+        2e-10,
+        2.1e-10,
+        2.35e-10
+      ]
+    }
+  },
+  "a5": {
+    "result": {
+      "benchmark_id": "A5_icp_transformer_frequency_conformance",
+      "case_id": "benchmark_icp_transformer_frequency_conformance",
+      "case_path": "bench/cases/icp_transformer_frequency_conformance.yaml",
+      "role": "model_conformance",
+      "question": "Does the public effective ICP transformer load pass through planning, frequency substitution, SPICE, and metric extraction at three frequencies?",
+      "demonstrates": "The identifiable reflected loading, coil terms, optional shunt capacitance, and public frequency scenarios preserve their declared terminal equation end to end.",
+      "does_not_establish": "Synthetic terminal parameters do not validate density, collision frequency, plasma power split, or a physical ICP chamber.",
+      "expected": {
+        "feasible": false,
+        "feasible_fraction": [
+          0.32,
+          0.34
+        ],
+        "worst_reflection_magnitude": [
+          0.9998,
+          1.0
+        ],
+        "infeasible_scenarios": [
+          "low_frequency",
+          "high_frequency"
+        ],
+        "n_evaluations": 3,
+        "input_impedance_ohm": {
+          "low_frequency": [
+            16.750790468909464,
+            865.4568787265937
+          ],
+          "nominal_frequency": [
+            49.99999999999998,
+            0.0
+          ],
+          "high_frequency": [
+            0.7820990400912651,
+            957.8679116788057
+          ]
+        },
+        "input_impedance_tolerance_ohm": 0.02
+      },
+      "passed": true,
+      "checks": {
+        "feasible_classification": true,
+        "feasible_fraction": true,
+        "worst_reflection_magnitude": true,
+        "infeasible_scenarios": true,
+        "all_evaluations_succeeded": true,
+        "n_evaluations": true,
+        "input_impedance_ohm": true
+      },
+      "feasible": false,
+      "feasible_fraction": 0.3333333333333333,
+      "success_fraction": 1.0,
+      "worst_reflection_magnitude": 0.9999149939148381,
+      "worst_reflected_power_fraction": 0.9998299950557107,
+      "worst_return_loss_dB": 0.0007383848583282226,
+      "control_margin": null,
+      "edge_limited": false,
+      "infeasible_scenarios": [
+        "high_frequency",
+        "low_frequency"
+      ],
+      "violated_constraints": {
+        "low_frequency": [
+          "max_reflection_magnitude"
+        ],
+        "nominal_frequency": [],
+        "high_frequency": [
+          "max_reflection_magnitude"
+        ]
+      },
+      "best_candidate_id": "trial_0000",
+      "best_candidate_values": {
+        "L1": 8.712592931020065e-06,
+        "C1": 7.415445982210926e-11
+      },
+      "n_candidates": 1,
+      "feasible_candidates": 0,
+      "n_evaluations": 3,
+      "n_failed_evaluations": 0,
+      "scenarios": [
+        {
+          "scenario_id": "low_frequency",
+          "feasible": false,
+          "reflection_magnitude": 0.9977743741208944,
+          "reflected_power_fraction": 0.9955537016523426,
+          "return_loss_dB": 0.019353085122627657,
+          "input_resistance_ohm": 16.750790468845313,
+          "input_reactance_ohm": 865.456878726527,
+          "control": {},
+          "control_margin": null,
+          "edge_limited": false,
+          "violated_constraints": [
+            "max_reflection_magnitude"
+          ],
+          "from_cache": false
+        },
+        {
+          "scenario_id": "nominal_frequency",
+          "feasible": true,
+          "reflection_magnitude": 4.78797440776361e-12,
+          "reflected_power_fraction": 2.2924698929399295e-23,
+          "return_loss_dB": 226.39696359219954,
+          "input_resistance_ohm": 49.9999999999466,
+          "input_reactance_ohm": -4.758113391127136e-10,
+          "control": {},
+          "control_margin": null,
+          "edge_limited": false,
+          "violated_constraints": [],
+          "from_cache": false
+        },
+        {
+          "scenario_id": "high_frequency",
+          "feasible": false,
+          "reflection_magnitude": 0.9999149939148381,
+          "reflected_power_fraction": 0.9998299950557107,
+          "return_loss_dB": 0.0007383848583282226,
+          "input_resistance_ohm": 0.7820990400869287,
+          "input_reactance_ohm": 957.8679116787752,
+          "control": {},
+          "control_margin": null,
+          "edge_limited": false,
+          "violated_constraints": [
+            "max_reflection_magnitude"
+          ],
+          "from_cache": false
+        }
+      ]
+    },
+    "frequency_MHz": {
+      "low_frequency": 10.0,
+      "nominal_frequency": 13.559999999999999,
+      "high_frequency": 20.0
+    }
+  },
+  "b5": {
+    "scenarios": [
+      {
+        "scenario_id": "low_drive",
+        "drive_peak_V": 25.0,
+        "frequency_Hz": 13560000.0,
+        "reflection_magnitude": 0.011035382019418172,
+        "phasors": {
+          "source_voltage_V": {
+            "real": 25.0,
+            "imag": 0.0,
+            "peak": 25.0,
+            "phase_deg": 0.0
+          },
+          "load_voltage_V": {
+            "real": -30.27360245140963,
+            "imag": -50.92782399508224,
+            "peak": 59.24638606919472,
+            "phase_deg": -120.7289987258864
+          },
+          "source_current_A": {
+            "real": 0.5030929654659317,
+            "imag": 0.01062927397921176,
+            "peak": 0.5032052398044264,
+            "phase_deg": 1.210356705626535
+          },
+          "load_current_A": {
+            "real": 0.4695370388401364,
+            "imag": -0.5201498528344168,
+            "peak": 0.700728835032803,
+            "phase_deg": -47.927568866691544
+          }
+        },
+        "ac_sha256": "7e9423d80d785bf8f2d3a547457f0b9d5e5840a97c039bd950b8ae4a5e04872f",
+        "metrics": {
+          "source_real_power_W": 6.288662068324147,
+          "load_real_power_W": 6.137761253080369,
+          "network_loss_W": 0.1509008152437774,
+          "transfer_efficiency": 0.9760043052712497,
+          "component_L1_current_rms_A": 0.5209691137899748,
+          "component_L1_loss_W": 0.13570440876155584,
+          "source_current_rms_A": 0.3558198373943127,
+          "source_apparent_power_VA": 6.290065497555329
+        }
+      },
+      {
+        "scenario_id": "high_drive",
+        "drive_peak_V": 100.0,
+        "frequency_Hz": 13560000.0,
+        "reflection_magnitude": 0.011035382019418173,
+        "phasors": {
+          "source_voltage_V": {
+            "real": 100.0,
+            "imag": 0.0,
+            "peak": 100.0,
+            "phase_deg": 0.0
+          },
+          "load_voltage_V": {
+            "real": -121.0944098056385,
+            "imag": -203.7112959803289,
+            "peak": 236.98554427677882,
+            "phase_deg": -120.72899872588643
+          },
+          "source_current_A": {
+            "real": 2.012371861863727,
+            "imag": 0.04251709591684705,
+            "peak": 2.0128209592177058,
+            "phase_deg": 1.2103567056265352
+          },
+          "load_current_A": {
+            "real": 1.878148155360546,
+            "imag": -2.080599411337667,
+            "peak": 2.8029153401312117,
+            "phase_deg": -47.92756886669154
+          }
+        },
+        "ac_sha256": "4f97c153fc6be72431ff00799c53698d6f2a87c72c5236a637aabc9fefee5079",
+        "metrics": {
+          "source_real_power_W": 100.61859309318635,
+          "load_real_power_W": 98.2041800492858,
+          "network_loss_W": 2.4144130439005522,
+          "transfer_efficiency": 0.9760043052712486,
+          "component_L1_current_rms_A": 2.083876455159899,
+          "component_L1_loss_W": 2.1712705401848935,
+          "source_current_rms_A": 1.4232793495772509,
+          "source_apparent_power_VA": 100.64104796088526
+        }
+      }
+    ],
+    "limits": {
+      "component_L1_current_rms_A": 1.0,
+      "component_L1_loss_W": 0.5,
+      "source_current_rms_A": 1.0,
+      "source_apparent_power_VA": 50.0
+    }
+  },
+  "b8": [
+    {
+      "scenario_id": "c1_low_l1_low_c2_low",
+      "C1_factor": 0.85,
+      "L1_factor": 0.85,
+      "C2_factor": 0.85,
+      "reflection_magnitude": 0.3138060449485419,
+      "input_resistance_ohm": 26.21866275761374,
+      "input_reactance_ohm": -2.6877958671196844,
+      "feasible": true
+    },
+    {
+      "scenario_id": "c1_low_l1_low_c2_high",
+      "C1_factor": 0.85,
+      "L1_factor": 0.85,
+      "C2_factor": 1.15,
+      "reflection_magnitude": 0.30331337031680705,
+      "input_resistance_ohm": 26.754726502395748,
+      "input_reactance_ohm": -1.3479754155977663,
+      "feasible": true
+    },
+    {
+      "scenario_id": "c1_low_l1_high_c2_low",
+      "C1_factor": 0.85,
+      "L1_factor": 1.15,
+      "C2_factor": 0.85,
+      "reflection_magnitude": 0.2926108451646706,
+      "input_resistance_ohm": 91.322404478384,
+      "input_reactance_ohm": 1.6487133365333857,
+      "feasible": true
+    },
+    {
+      "scenario_id": "c1_low_l1_high_c2_high",
+      "C1_factor": 0.85,
+      "L1_factor": 1.15,
+      "C2_factor": 1.15,
+      "reflection_magnitude": 0.31731383100605237,
+      "input_resistance_ohm": 96.42473441502429,
+      "input_reactance_ohm": 1.977460053645434,
+      "feasible": false
+    },
+    {
+      "scenario_id": "c1_high_l1_low_c2_low",
+      "C1_factor": 1.15,
+      "L1_factor": 0.85,
+      "C2_factor": 0.85,
+      "reflection_magnitude": 0.3510661499942594,
+      "input_resistance_ohm": 24.601376163932294,
+      "input_reactance_ohm": -6.823935669958885,
+      "feasible": false
+    },
+    {
+      "scenario_id": "c1_high_l1_low_c2_high",
+      "C1_factor": 1.15,
+      "L1_factor": 0.85,
+      "C2_factor": 1.15,
+      "reflection_magnitude": 0.33242991273430494,
+      "input_resistance_ohm": 25.50364179490355,
+      "input_reactance_ohm": -5.799938532753079,
+      "feasible": false
+    },
+    {
+      "scenario_id": "c1_high_l1_high_c2_low",
+      "C1_factor": 1.15,
+      "L1_factor": 1.15,
+      "C2_factor": 0.85,
+      "reflection_magnitude": 0.350880419346499,
+      "input_resistance_ohm": 68.06713059355941,
+      "input_reactance_ohm": -39.81137796743596,
+      "feasible": false
+    },
+    {
+      "scenario_id": "c1_high_l1_high_c2_high",
+      "C1_factor": 1.15,
+      "L1_factor": 1.15,
+      "C2_factor": 1.15,
+      "reflection_magnitude": 0.37249361450061763,
+      "input_resistance_ohm": 69.91887448104727,
+      "input_reactance_ohm": -43.08242495453828,
+      "feasible": false
+    }
+  ],
+  "reference_plane": {
+    "D1": {
+      "benchmark_id": "D1_reference_plane_explicit",
+      "case_id": "benchmark_reference_plane_fixture_explicit",
+      "case_path": "bench/cases/reference_plane_fixture_explicit.yaml",
+      "role": "boundary_conformance",
+      "question": "What source impedance results when a known lossy series R-L two-port is represented explicitly ahead of a plasma-terminal load?",
+      "demonstrates": "A passive lossy series two-port and plasma-terminal load provide one well-defined physical representation.",
+      "does_not_establish": "A reference-plane label alone cannot validate an externally supplied de-embedding transform.",
+      "expected": {
+        "feasible": true,
+        "feasible_fraction": [
+          1.0,
+          1.0
+        ],
+        "worst_reflection_magnitude": [
+          0.0382,
+          0.0384
+        ],
+        "infeasible_scenarios": [],
+        "input_impedance_ohm": {
+          "nominal": [
+            49.29125674335881,
+            -3.7386456518344304
+          ]
+        },
+        "input_impedance_tolerance_ohm": 0.02
+      },
+      "passed": true,
+      "checks": {
+        "feasible_classification": true,
+        "feasible_fraction": true,
+        "worst_reflection_magnitude": true,
+        "infeasible_scenarios": true,
+        "all_evaluations_succeeded": true,
+        "input_impedance_ohm": true
+      },
+      "feasible": true,
+      "feasible_fraction": 1.0,
+      "success_fraction": 1.0,
+      "worst_reflection_magnitude": 0.03829679687789925,
+      "worst_reflected_power_fraction": 0.0014666446511070734,
+      "worst_return_loss_dB": 28.336750973069805,
+      "control_margin": null,
+      "edge_limited": false,
+      "infeasible_scenarios": [],
+      "violated_constraints": {
+        "nominal": []
+      },
+      "best_candidate_id": "trial_0000",
+      "best_candidate_values": {},
+      "n_candidates": 1,
+      "feasible_candidates": 1,
+      "n_evaluations": 1,
+      "n_failed_evaluations": 0,
+      "scenarios": [
+        {
+          "scenario_id": "nominal",
+          "feasible": true,
+          "reflection_magnitude": 0.03829679687789925,
+          "reflected_power_fraction": 0.0014666446511070734,
+          "return_loss_dB": 28.336750973069805,
+          "input_resistance_ohm": 49.29125674304824,
+          "input_reactance_ohm": -3.7386456517718316,
+          "control": {},
+          "control_margin": null,
+          "edge_limited": false,
+          "violated_constraints": [],
+          "from_cache": false
+        }
+      ]
+    },
+    "D2": {
+      "benchmark_id": "D2_reference_plane_embedded",
+      "case_id": "benchmark_reference_plane_fixture_embedded",
+      "case_path": "bench/cases/reference_plane_fixture_embedded.yaml",
+      "role": "boundary_conformance",
+      "question": "Does folding the same fixture exactly once into the upstream one-port preserve the matcher input impedance?",
+      "demonstrates": "Equivalent explicit and embedded representations of the same lossy series two-port give the same source impedance when the reference plane is handled once.",
+      "does_not_establish": "This synthetic R-L transform does not qualify a real chamber fixture model or a general measured S-parameter de-embedding workflow.",
+      "expected": {
+        "feasible": true,
+        "feasible_fraction": [
+          1.0,
+          1.0
+        ],
+        "worst_reflection_magnitude": [
+          0.0382,
+          0.0384
+        ],
+        "infeasible_scenarios": [],
+        "input_impedance_ohm": {
+          "nominal": [
+            49.29125674335881,
+            -3.7386456518344304
+          ]
+        },
+        "input_impedance_tolerance_ohm": 0.02
+      },
+      "passed": true,
+      "checks": {
+        "feasible_classification": true,
+        "feasible_fraction": true,
+        "worst_reflection_magnitude": true,
+        "infeasible_scenarios": true,
+        "all_evaluations_succeeded": true,
+        "input_impedance_ohm": true
+      },
+      "feasible": true,
+      "feasible_fraction": 1.0,
+      "success_fraction": 1.0,
+      "worst_reflection_magnitude": 0.03829679687772152,
+      "worst_reflected_power_fraction": 0.0014666446510934609,
+      "worst_return_loss_dB": 28.336750973110114,
+      "control_margin": null,
+      "edge_limited": false,
+      "infeasible_scenarios": [],
+      "violated_constraints": {
+        "nominal": []
+      },
+      "best_candidate_id": "trial_0000",
+      "best_candidate_values": {},
+      "n_candidates": 1,
+      "feasible_candidates": 1,
+      "n_evaluations": 1,
+      "n_failed_evaluations": 0,
+      "scenarios": [
+        {
+          "scenario_id": "nominal",
+          "feasible": true,
+          "reflection_magnitude": 0.03829679687772152,
+          "reflected_power_fraction": 0.0014666446510934609,
+          "return_loss_dB": 28.336750973110114,
+          "input_resistance_ohm": 49.29125674370534,
+          "input_reactance_ohm": -3.738645651904215,
+          "control": {},
+          "control_margin": null,
+          "edge_limited": false,
+          "violated_constraints": [],
+          "from_cache": false
+        }
+      ]
+    },
+    "D3": {
+      "benchmark_id": "D3_reference_plane_double_counted",
+      "case_id": "benchmark_reference_plane_fixture_double_counted",
+      "case_path": "bench/cases/reference_plane_fixture_double_counted.yaml",
+      "role": "negative_control",
+      "question": "Does deliberately including the same fixture in both the circuit and supplied upstream impedance change the design decision?",
+      "demonstrates": "Fixture double counting is observable as a changed source impedance and rejected match classification.",
+      "does_not_establish": "The platform cannot infer from arbitrary impedance data whether an undocumented fixture was already included.",
+      "expected": {
+        "feasible": false,
+        "feasible_fraction": [
+          0.0,
+          0.0
+        ],
+        "worst_reflection_magnitude": [
+          0.341,
+          0.343
+        ],
+        "infeasible_scenarios": [
+          "nominal"
+        ],
+        "input_impedance_ohm": {
+          "nominal": [
+            75.90503487455376,
+            -36.571420757913565
+          ]
+        },
+        "input_impedance_tolerance_ohm": 0.02
+      },
+      "passed": true,
+      "checks": {
+        "feasible_classification": true,
+        "feasible_fraction": true,
+        "worst_reflection_magnitude": true,
+        "infeasible_scenarios": true,
+        "all_evaluations_succeeded": true,
+        "input_impedance_ohm": true
+      },
+      "feasible": false,
+      "feasible_fraction": 0.0,
+      "success_fraction": 1.0,
+      "worst_reflection_magnitude": 0.3418282828657534,
+      "worst_reflected_power_fraction": 0.11684657496694952,
+      "worst_return_loss_dB": 9.323840132225845,
+      "control_margin": null,
+      "edge_limited": false,
+      "infeasible_scenarios": [
+        "nominal"
+      ],
+      "violated_constraints": {
+        "nominal": [
+          "max_reflection_magnitude"
+        ]
+      },
+      "best_candidate_id": "trial_0000",
+      "best_candidate_values": {},
+      "n_candidates": 1,
+      "feasible_candidates": 0,
+      "n_evaluations": 1,
+      "n_failed_evaluations": 0,
+      "scenarios": [
+        {
+          "scenario_id": "nominal",
+          "feasible": false,
+          "reflection_magnitude": 0.3418282828657534,
+          "reflected_power_fraction": 0.11684657496694952,
+          "return_loss_dB": 9.323840132225845,
+          "input_resistance_ohm": 75.90503487464017,
+          "input_reactance_ohm": -36.571420758344836,
+          "control": {},
+          "control_margin": null,
+          "edge_limited": false,
+          "violated_constraints": [
+            "max_reflection_magnitude"
+          ],
+          "from_cache": false
+        }
+      ]
+    }
+  }
+}
