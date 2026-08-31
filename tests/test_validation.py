@@ -67,7 +67,6 @@ def test_scalar_variable_spec_is_normalized_not_rejected(make_case):
 @pytest.mark.parametrize(
     ("solver", "expected"),
     [
-        ({"name": "dummy"}, "solver.dummy"),
         ({"name": "ngspice_cli", "tran": "nope"}, "solver.tran_not_mapping"),
         ({"name": "ngspice_cli", "tran": {"step_s": "x", "stop_s": 1}}, "solver.tran_non_numeric"),
         ({"name": "ngspice_cli", "tran": {"step_s": -1, "stop_s": 1}}, "solver.tran_non_positive"),
@@ -79,6 +78,26 @@ def test_scalar_variable_spec_is_normalized_not_rejected(make_case):
 def test_each_solver_rule_emits_its_own_code(make_case, solver, expected):
     case = make_case({"case_id": "solver", "source": {"type": "sine_voltage"}, "solver": solver})
     assert expected in codes(validate_case(case))
+
+
+@pytest.mark.parametrize("name", ["dummy", "missing_solver"])
+def test_unknown_solver_is_rejected_before_execution(make_case, name):
+    case = make_case({"case_id": "solver", "source": {"type": "sine_voltage"}, "solver": {"name": name}})
+
+    assert "solver.unknown" in codes(validate_case(case))
+
+
+def test_removed_dummy_solver_is_rejected_even_when_a_plugin_is_present(make_case):
+    case = make_case(
+        {
+            "case_id": "solver",
+            "source": {"type": "sine_voltage"},
+            "plugins": [__file__],
+            "solver": {"name": "dummy"},
+        }
+    )
+
+    assert "solver.unknown" in codes(validate_case(case))
 
 
 @pytest.mark.parametrize(
@@ -108,11 +127,6 @@ def test_a_parameter_reference_is_valid_for_an_ac_point(make_case):
         }
     )
     assert not {"solver.ac_non_numeric", "solver.ac_invalid_range"} & codes(validate_case(case))
-
-
-def test_dummy_solver_never_pretends_to_produce_ac_data(make_case):
-    case = make_case({"case_id": "dummy_ac", "solver": {"name": "dummy", "ac": {}}})
-    assert "solver.dummy_ac_unsupported" in codes(validate_case(case))
 
 
 def test_rf_load_models_require_parameters_reference_plane_and_origin(make_case):
@@ -206,7 +220,7 @@ def test_a_frequency_domain_objective_does_not_require_a_waveform_target(make_ca
 
 
 def test_strict_mode_promotes_warnings_to_failure(make_case):
-    case = make_case({"case_id": "w", "source": {"type": "sine_voltage"}, "solver": {"name": "dummy"}})
+    case = make_case({"case_id": "w"})
     assert validate_case(case, strict=False).ok is True
     assert validate_case(case, strict=True).ok is False
 

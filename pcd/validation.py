@@ -138,19 +138,17 @@ def _validate_solver(case: Case, report: ValidationReport) -> None:
     if not isinstance(solver, dict):
         report.add("error", "solver.not_mapping", "solver must be a mapping", "$.solver")
         return
-    if str(solver.get("name", "dummy")) == "dummy":
-        report.add(
-            "warning",
-            "solver.dummy",
-            "dummy solver is for research screening and is not physical validation",
-            "$.solver.name",
-        )
-        if "ac" in solver:
+    name = str(solver.get("name", "ngspice_cli"))
+    if name == "dummy" or not case.data.get("plugins"):
+        from .sim_registry import available
+
+        known = available()["solver"]
+        if name not in known:
             report.add(
                 "error",
-                "solver.dummy_ac_unsupported",
-                "dummy solver does not synthesize an AC frequency response",
-                "$.solver.ac",
+                "solver.unknown",
+                f"unknown solver {name!r}; available={known}",
+                "$.solver.name",
             )
     if "tran" in solver or "ac" not in solver:
         _validate_tran(solver.get("tran", {}) or {}, report)

@@ -14,6 +14,7 @@ import pytest
 import yaml
 
 from pcd.case import Case, load_case
+from tests import fakes as _test_fakes  # noqa: F401  # register the test-only solver
 
 EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
 FIXTURES = Path(__file__).resolve().parent / "fixtures"

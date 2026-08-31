@@ -26,6 +26,3 @@ acceptance:
 
 execution:
   solver: ngspice_cli
-  optimizer: random
-  seed: 0
-  trials: 1

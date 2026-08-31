@@ -18,7 +18,7 @@ circuit:
 load: {name: none}
 measurement: {voltage_node: out, current_source: Vsrc}
 solver:
-  name: dummy
+  name: ngspice_cli
   tran: {step_s: 1.0e-9, stop_s: 1.0e-6}
 target:
   objective: peak_voltage

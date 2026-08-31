@@ -7,9 +7,23 @@ from pathlib import Path
 import pytest
 
 from pcd.case import Case, load_case
-from pcd.core import Candidate, ControlState, EvaluationRequest, RawResult, Scenario
-from pcd.results import candidate_summary
+from pcd.core import (
+    Candidate,
+    CandidateResult,
+    ConstraintResult,
+    ControlState,
+    EvaluationRequest,
+    EvaluationResult,
+    MetricSet,
+    Objective,
+    RawResult,
+    Scenario,
+    ScenarioResult,
+    StudySpec,
+)
+from pcd.results import best_decision_summary, candidate_summary
 from pcd.results import store as store_module
+from pcd.sim_core import archive_case_bundle
 from pcd.study import (
     _feasibility_first_loss,
     _runtime_fingerprint,
@@ -45,7 +59,7 @@ def test_case_study_runs_through_the_generic_pipeline(tmp_path, topology_case):
         n_trials=2,
         run_root=tmp_path,
         optimizer_name="random",
-        solver_override="dummy",
+        solver_override="test_fake",
         seed=3,
     )
     study_root = Path(result["run_root"])
@@ -53,8 +67,13 @@ def test_case_study_runs_through_the_generic_pipeline(tmp_path, topology_case):
     assert result["n_candidates"] == 2
     assert result["n_evaluations"] == 2
     assert result["best"]["candidate"]["candidate_id"].startswith("trial_")
+    assert result["best"]["status"] == "meets_declared_acceptance"
+    assert result["best"]["limitation"] == "none"
+    assert result["best"]["coverage"] == {"conditions": 1, "solved": 1, "accepted": 1}
+    assert result["best"]["conditions"][0]["status"] == "accepted"
+    assert result["best"]["conditions"][0]["objectives"].keys() == {"loss"}
     assert result["execution"] == {
-        "solver": "dummy",
+        "solver": "test_fake",
         "optimizer": "random",
         "trials": 2,
         "seed": 3,
@@ -68,8 +87,55 @@ def test_case_study_runs_through_the_generic_pipeline(tmp_path, topology_case):
     assert archived_case.data["optimizer"]["seed"] == 3
     summary = candidate_summary(study_root)
     assert len(summary) == 2
+    assert summary["selected"].sum() == 1
+    assert summary.loc[summary["selected"], "candidate_id"].item() == result["best"]["candidate"]["candidate_id"]
     assert "objective.loss" in summary
     assert "control_margin" in summary
+
+
+def test_best_decision_summary_distinguishes_failed_evidence_and_control_margin():
+    scenario = Scenario("corner", {"pressure_Pa": 5.0})
+    candidate = Candidate("design", {"C_F": 1e-9})
+    request = EvaluationRequest(candidate, scenario, ControlState({"tune_F": 2e-10}))
+    accepted = EvaluationResult(
+        request,
+        RawResult("ok"),
+        MetricSet({"score": 0.2}),
+        (ConstraintResult("max_score", True, value=0.2, limit=0.5),),
+    )
+    failed_trial = EvaluationResult(request, RawResult("failed", error="solver failed"))
+    accepted_result = CandidateResult(
+        candidate,
+        (ScenarioResult(scenario, accepted, (accepted, failed_trial), 0.5),),
+        {"score": 0.2},
+        feasible_fraction=1.0,
+        success_fraction=1.0,
+        total_violation=0.0,
+    )
+    study = StudySpec("decision", (scenario,), (Objective("score"),))
+
+    incomplete = best_decision_summary(study, accepted_result, n_failed_evaluations=1)
+    assert incomplete["status"] == "incomplete_evidence"
+    assert incomplete["limitation"] == "failed_evaluations"
+    assert incomplete["coverage"] == {"conditions": 1, "solved": 1, "accepted": 1}
+    assert incomplete["conditions"][0]["selected_control"] == {"tune_F": 2e-10}
+    assert incomplete["conditions"][0]["values"] == {"pressure_Pa": 5.0}
+
+    margin_constraint = ConstraintResult("min_control_margin", False, violation=1.0, value=0.0, limit=0.2)
+    margin_limited = EvaluationResult(request, RawResult("ok"), MetricSet({"score": 0.2}), (margin_constraint,))
+    margin_result = CandidateResult(
+        candidate,
+        (ScenarioResult(scenario, margin_limited, (margin_limited,), 0.0),),
+        {"score": 0.2},
+        feasible_fraction=0.0,
+        success_fraction=1.0,
+        total_violation=1.0,
+    )
+    limited = best_decision_summary(study, margin_result)
+    assert limited["status"] == "does_not_meet_declared_acceptance"
+    assert limited["limitation"] == "control_margin_only"
+    assert limited["conditions"][0]["status"] == "control_margin_only"
+    assert limited["conditions"][0]["failed_constraints"] == [margin_constraint.to_dict()]
 
 
 def test_candidate_summary_matches_evidence_coverage_and_objective_direction(tmp_path):
@@ -110,7 +176,7 @@ def test_candidate_summary_matches_evidence_coverage_and_objective_direction(tmp
 
 def test_study_archives_external_data_once_at_the_study_root(tmp_path):
     case_path = Path(__file__).resolve().parents[1] / "bench" / "cases" / "match_fixed_nominal.yaml"
-    _spec, runner, store = build_case_runner(load_case(case_path), tmp_path, solver_override="dummy")
+    _spec, runner, store = build_case_runner(load_case(case_path), tmp_path, solver_override="test_fake")
     runner.evaluate_candidate(Candidate("fixed"))
     root = store.root
 
@@ -141,7 +207,7 @@ def test_deep_windows_workspace_keeps_internal_artifacts_below_legacy_limit(tmp_
     old_temp_length = len(str(deep_root)) + 1 + len(long_id) + len("\\raw\\" + "0" * 64 + "\\raw_result.json.tmp")
     assert old_temp_length >= 260
 
-    _spec, runner, store = build_case_runner(case, deep_root, solver_override="dummy")
+    _spec, runner, store = build_case_runner(case, deep_root, solver_override="test_fake")
     runner.evaluate_candidate(Candidate("fixed"))
 
     files = [path for path in store.root.rglob("*") if path.is_file()]
@@ -321,16 +387,16 @@ def test_runtime_fingerprint_hashes_present_plugins_and_marks_missing_ones(tmp_p
     missing = tmp_path / "missing.py"
     data = copy.deepcopy(topology_case.data)
     data["plugins"] = [str(plugin), str(missing)]
-    fingerprint = _runtime_fingerprint(Case(topology_case.path, data), "dummy")
+    fingerprint = _runtime_fingerprint(Case(topology_case.path, data), "test_fake")
     assert fingerprint["plugins"][str(plugin.resolve())]
     assert fingerprint["plugins"][str(missing.resolve())] is None
     assert fingerprint["implementation_sha256"]
-    assert fingerprint["solver"]["name"] == "dummy"
+    assert fingerprint["solver"]["name"] == "test_fake"
 
 
 def test_simulation_fingerprint_excludes_study_interpretation_but_keeps_physics(topology_case):
     baseline = copy.deepcopy(topology_case.data)
-    first = _simulation_fingerprint(Case(topology_case.path, baseline), "dummy")
+    first = _simulation_fingerprint(Case(topology_case.path, baseline), "test_fake")
 
     interpretation = copy.deepcopy(baseline)
     interpretation.setdefault("target", {})["objective"] = "rf_load"
@@ -340,18 +406,18 @@ def test_simulation_fingerprint_excludes_study_interpretation_but_keeps_physics(
         "aggregation": "mean",
     }
     interpretation["optimizer"] = {"name": "random", "seed": 99}
-    assert _simulation_fingerprint(Case(topology_case.path, interpretation), "dummy") == first
-    assert _runtime_fingerprint(Case(topology_case.path, interpretation), "dummy") != _runtime_fingerprint(
-        Case(topology_case.path, baseline), "dummy"
+    assert _simulation_fingerprint(Case(topology_case.path, interpretation), "test_fake") == first
+    assert _runtime_fingerprint(Case(topology_case.path, interpretation), "test_fake") != _runtime_fingerprint(
+        Case(topology_case.path, baseline), "test_fake"
     )
 
     changed_circuit = copy.deepcopy(baseline)
     changed_circuit.setdefault("circuit", {})["output_node"] = "different_node"
-    assert _simulation_fingerprint(Case(topology_case.path, changed_circuit), "dummy") != first
+    assert _simulation_fingerprint(Case(topology_case.path, changed_circuit), "test_fake") != first
 
     changed_frequency = copy.deepcopy(baseline)
     changed_frequency.setdefault("target", {})["fundamental_Hz"] = 27.12e6
-    assert _simulation_fingerprint(Case(topology_case.path, changed_frequency), "dummy") != first
+    assert _simulation_fingerprint(Case(topology_case.path, changed_frequency), "test_fake") != first
 
 
 def test_fingerprints_track_external_physics_and_metric_files_separately(tmp_path, topology_case):
@@ -363,15 +429,15 @@ def test_fingerprints_track_external_physics_and_metric_files_separately(tmp_pat
     data.setdefault("circuit", {})["netlist_file"] = str(netlist)
     data.setdefault("target", {})["waveform_file"] = str(target)
     case = Case(topology_case.path, data)
-    raw_before = _simulation_fingerprint(case, "dummy")
-    evaluation_before = _runtime_fingerprint(case, "dummy")
+    raw_before = _simulation_fingerprint(case, "test_fake")
+    evaluation_before = _runtime_fingerprint(case, "test_fake")
 
     target.write_text("time_s,voltage_V\n0,1\n", encoding="utf-8")
-    assert _simulation_fingerprint(case, "dummy") == raw_before
-    assert _runtime_fingerprint(case, "dummy") != evaluation_before
+    assert _simulation_fingerprint(case, "test_fake") == raw_before
+    assert _runtime_fingerprint(case, "test_fake") != evaluation_before
 
     netlist.write_text("R1 in out 75\n", encoding="utf-8")
-    assert _simulation_fingerprint(case, "dummy") != raw_before
+    assert _simulation_fingerprint(case, "test_fake") != raw_before
 
 
 def test_study_requires_a_positive_trial_budget(tmp_path, topology_case):
@@ -379,25 +445,22 @@ def test_study_requires_a_positive_trial_budget(tmp_path, topology_case):
         run_case_study(topology_case, n_trials=0, run_root=tmp_path)
 
 
-def test_effective_execution_settings_replace_the_archived_public_plan():
+def test_public_candidate_enumeration_cannot_be_changed_after_resolution():
     path = Path(__file__).resolve().parents[1] / "bench" / "cases" / "match_discrete_hardware_search.yaml"
     case = load_case(path)
 
-    effective = resolve_study_case(
-        case,
-        n_trials=2,
-        optimizer_name="random",
-        solver_override="dummy",
-        seed=9,
-    )
+    with pytest.raises(ValueError, match=r"candidate enumeration is derived from network.search"):
+        resolve_study_case(case, n_trials=2, optimizer_name="random", seed=9)
+
+    effective = resolve_study_case(case, n_trials=3, solver_override="test_fake")
 
     assert effective.authored_data == case.authored_data
     assert effective.resolved_plan is not None
     assert effective.resolved_plan["execution"] == {
-        "solver": "dummy",
-        "optimizer": "random",
-        "trials": 2,
-        "seed": 9,
+        "solver": "test_fake",
+        "optimizer": "grid",
+        "trials": 3,
+        "seed": 0,
     }
     assert effective.resolved_plan["case"] == effective.data
     assert case.resolved_plan is not None
@@ -406,9 +469,21 @@ def test_effective_execution_settings_replace_the_archived_public_plan():
 
 def test_grid_optimizer_cannot_be_partially_run_through_the_python_api(tmp_path):
     path = Path(__file__).resolve().parents[1] / "bench" / "cases" / "match_discrete_hardware_search.yaml"
-    with pytest.raises(ValueError, match="requires exactly 3 trials"):
+    with pytest.raises(ValueError, match=r"candidate enumeration is derived from network.search"):
         run_case_study(load_case(path), n_trials=2, run_root=tmp_path)
     assert not list(tmp_path.rglob("study_result.json"))
+
+
+def test_archived_public_case_keeps_exact_candidate_enumeration(tmp_path):
+    path = Path(__file__).resolve().parents[1] / "bench" / "cases" / "match_discrete_hardware_search.yaml"
+    original = load_case(path)
+    archive_case_bundle(original, tmp_path)
+    archived = load_case(tmp_path / "case.yaml")
+
+    assert archived.resolved_plan is None
+    assert archived.has_exact_candidate_enumeration
+    with pytest.raises(ValueError, match=r"candidate enumeration is derived from network.search"):
+        resolve_study_case(archived, n_trials=2, optimizer_name="random", seed=9)
 
 
 def test_optimizer_signal_uses_coverage_while_final_rank_keeps_the_full_order():

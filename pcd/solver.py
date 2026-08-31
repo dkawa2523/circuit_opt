@@ -24,7 +24,6 @@ import pandas as pd
 
 from .analysis import AC_FILE, AC_LOAD_VOLTAGE, ac_probe_plan, ac_sweep, probe_plan, read_ac, transient_requested
 from .case import Case
-from .spice import param_ref_or_value
 
 DEFAULT_TIMEOUT_S = 300.0
 
@@ -104,10 +103,8 @@ def solver_identity(case: Case, solver_name: str | None = None) -> dict[str, Any
     """Return the solver facts that affect execution and cache reuse."""
 
     cfg = case.data.get("solver", {}) or {}
-    name = str(solver_name or cfg.get("name", "dummy"))
-    if name == "dummy":
-        executable = None
-    elif "executable" in cfg:
+    name = str(solver_name or cfg.get("name", "ngspice_cli"))
+    if "executable" in cfg:
         executable = str(cfg["executable"])
     elif name == "ngspice_cli":
         executable = default_ngspice_executable()
@@ -139,14 +136,6 @@ def diagnose_solver(
         "windows_prefers_console_binary": False,
         "notes": [],
     }
-    if solver_name == "dummy":
-        return {
-            **report,
-            "executable": None,
-            "resolved_executable": None,
-            "batch_runnable": True,
-            "notes": ["dummy solver does not use an external executable"],
-        }
     if solver_name != "ngspice_cli":
         return {**report, "notes": [f"no built-in diagnostic for solver '{solver_name}'"]}
     return {**report, **_ngspice_diagnostic(executable)}
@@ -171,61 +160,6 @@ def _ngspice_diagnostic(executable: str | None) -> dict[str, Any]:
         "batch_command": [exe, "-b", "-o", "solver.log", "netlist.cir"],
         "notes": notes,
     }
-
-
-# -----------------------------------------------------------------------------
-# Built-in solvers
-# -----------------------------------------------------------------------------
-
-
-def dummy_waveform(case: Case, params: dict[str, Any]) -> pd.DataFrame:
-    """A cheap analytic stand-in for screening loops.
-
-    It is deliberately not physical: it exercises the plumbing without needing
-    ngspice, and `validate-case --strict` warns when a case still uses it.
-    """
-
-    tran = case.data.get("solver", {}).get("tran", {}) or {}
-    stop = float(tran.get("stop_s", 2e-6))
-    step = float(tran.get("step_s", stop / 500))
-    n = max(16, min(50000, int(np.ceil(stop / step)) + 1))
-    t = np.linspace(0.0, stop, n)
-
-    src = case.data.get("source", {}) or {}
-    vin = _dummy_input(str(src.get("type", "sine_voltage")), src, params, t, stop, step)
-
-    # Gain drifts slightly with the parameter magnitudes so that different
-    # candidates produce different, but smooth and bounded, waveforms.
-    numeric = [float(v) for v in params.values() if isinstance(v, (int, float, np.number)) and abs(float(v)) > 0]
-    log_sum = sum(np.tanh(np.log10(abs(v) + 1e-300) / 12.0) for v in numeric) if numeric else 0.0
-    vout = (0.65 + 0.12 * np.tanh(log_sum)) * vin
-    current = np.gradient(vout, t, edge_order=1) * 1e-10 if len(t) > 2 else np.zeros_like(t)
-    return pd.DataFrame({"time_s": t, "voltage_V": vout, "current_A": current})
-
-
-def _dummy_input(
-    typ: str, src: dict[str, Any], params: dict[str, Any], t: np.ndarray, stop: float, step: float
-) -> np.ndarray:
-    def value(*keys: str, default: Any) -> float:
-        for key in keys:
-            if key in src:
-                return float(param_ref_or_value(src[key], params, default))
-        return float(default)
-
-    if typ in {"voltage_pulse", "pulse"}:
-        v1 = value("v1_V", default=0.0)
-        v2 = value("v2_V", default=1.0)
-        delay = value("delay_s", default=0.0)
-        width = value("width_s", default=stop / 4)
-        period = value("period_s", default=max(stop / 2, step))
-        phase_t = np.mod(np.maximum(t - delay, 0.0), period)
-        return np.where((t >= delay) & (phase_t < width), v2, v1)
-    if typ in {"dc_voltage", "voltage_dc", "dc"}:
-        return np.full_like(t, value("voltage_V", "value", default=0.0))
-    amp = value("amplitude_V", "amplitude", default=1.0)
-    freq = value("frequency_Hz", "frequency", default=1e6)
-    phase = np.deg2rad(value("phase_deg", default=0.0))
-    return value("dc_V", default=0.0) + amp * np.sin(2 * np.pi * freq * t + phase)
 
 
 #: Older ngspice releases wrote a different number of columns for the same

@@ -39,19 +39,18 @@ network:
   type: pi_match
   fixed:                       # one chosen hardware value
     L1: 6.43e-7
-  search:                      # candidate hardware search
-    C1: {range: [1e-11, 1e-9], scale: log}
+  search:                      # finite candidate hardware shortlist
+    C1: {values: [1e-10, 2.6e-10, 1e-9]}
   tuning:                      # exact settings available per condition
     C2: [4.5e-11, 1.6e-10, 2.1e-10]
 ```
 
-A search axis uses either `values` or `range`; `scale: log` applies to a range,
-and an explicit `default` is optional for either form. Values must be positive component values.
-When no default is supplied, the resolved plan records the first discrete
-value or the range center. A `values` shortlist is enumerated completely and
-exactly once; a `range` uses a sampled optimizer. Tuning likewise accepts only
-explicit discrete values because a partial inner search cannot establish
-infeasibility.
+A search axis contains a non-empty `values` list and may select one of those
+values as its replay `default`. Values must be positive and unique. When no
+default is supplied, the first value is used only for standalone netlist
+preview. Every hardware combination is evaluated exactly once. Tuning likewise
+accepts only explicit settings because an incomplete inner search cannot
+establish infeasibility.
 
 Effective series loss is a fixed qualified value at the operating point:
 
@@ -199,24 +198,22 @@ uses the same normalized 0=edge, 1=center value reported in the results.
 
 ## Execution
 
-Most studies need no execution block. Defaults are written into the resolved
-plan: `ngspice_cli`, seed 0, one fixed candidate, complete grid enumeration for
-discrete `values`, or 30 random candidates when any search axis uses `range`.
+Most studies need no execution block. The resolved plan uses `ngspice_cli`, one
+fixed candidate, or the complete Cartesian product of `network.search.values`.
 
 ```yaml
 execution:
   solver: ngspice_cli
-  optimizer: random
-  seed: 7
-  trials: 50
   candidate_state_limit: 250
   control_state_limit: 250
 ```
 
-A case without a search always runs one candidate. With `optimizer: grid`,
-`trials` is inferred from the Cartesian product and cannot truncate it. The
-candidate- and tuning-state limits are safety bounds, not sampling budgets;
-every state below them is evaluated.
+A case without a search always runs one candidate. Candidate and tuning-state
+limits are safety bounds, not sampling budgets; every declared state below
+them is evaluated. `--optimizer`, `--trials`, and `--seed` are advanced-case
+options and cannot change a resolved `pcd.rf.v1` candidate set. `--solver` may
+select `ngspice_cli`, or an adapter already registered by an advanced Python
+integration, without changing the problem.
 
 ## Persisted truth
 
@@ -232,6 +229,11 @@ Each public-input run stores:
 
 Study results additionally retain every candidate, scenario, control
 evaluation, aggregation, and content-addressed raw simulation result.
+`study_result.json.best` is the compact decision surface: selected fixed
+candidate, acceptance status, solved/accepted condition counts, and each
+condition's selected control, objective values, and failed constraints. A
+failed electrical evaluation marks the overall decision as incomplete rather
+than silently treating the missing point as an ordinary design failure.
 Candidate selection first prefers complete solver evidence, then condition
 coverage, constraint violation, and the declared objectives. If
 `control_margin_min` is present, an electrically valid edge setting remains
@@ -242,10 +244,10 @@ tuning headroom. The reported
 worst axis and condition are retained.  A single numeric setting is neutral at
 1, while categorical controls are excluded. `edge_limited` is true only when
 margin is the sole barrier to full feasibility.
-When `pcd run` receives execution overrides such as `--trials` or `--solver`,
-their effective values replace the corresponding fields in `resolved_plan.yaml`
-and `case.yaml` before validation and hashing. `input_case.yaml` remains the
-unaltered authored input.
+When `pcd run` receives a solver override, its effective value replaces the
+solver field in `resolved_plan.yaml` and `case.yaml` before validation and
+hashing. Candidate enumeration remains derived from the authored RF input.
+`input_case.yaml` remains unaltered.
 
 ## Responsibility boundary
 

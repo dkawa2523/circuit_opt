@@ -38,20 +38,16 @@ def test_list_reports_simulation_metrics_and_search(capsys):
     assert "random" in payload["optimizers"]
     assert "grid" in payload["optimizers"]
     assert "ngspice_cli" in payload["simulation"]["solver"]
+    assert "dummy" not in payload["simulation"]["solver"]
 
 
-def test_solver_diagnose_dummy_is_batch_runnable(capsys):
-    main(["solver-diagnose", "--solver", "dummy", "--json"])
+def test_solver_diagnose_rejects_an_unknown_solver(capsys):
+    with pytest.raises(SystemExit) as excinfo:
+        main(["solver-diagnose", "--solver", "unknown", "--json"])
+    assert excinfo.value.code == 1
     payload = _stdout_json(capsys)
     assert payload["schema"] == "solver_diagnostic.v1"
-    assert payload["batch_runnable"] is True
-
-
-def test_solver_diagnose_text_mode_prints_key_value_lines(capsys):
-    main(["solver-diagnose", "--solver", "dummy"])
-    out = capsys.readouterr().out
-    assert "solver: dummy" in out
-    assert "batch_runnable: True" in out
+    assert payload["batch_runnable"] is False
 
 
 def test_solver_diagnose_exits_nonzero_for_a_missing_executable():
@@ -70,10 +66,9 @@ def test_validate_case_json_reports_ok(capsys):
     assert isinstance(payload["issues"], list)
 
 
-def test_validate_case_strict_exits_on_the_dummy_solver_warning():
-    with pytest.raises(SystemExit) as excinfo:
-        main(["validate-case", RC_CASE, "--strict"])
-    assert excinfo.value.code == 1
+def test_validate_case_strict_accepts_the_physical_example(capsys):
+    main(["validate-case", RC_CASE, "--strict"])
+    assert capsys.readouterr().out.strip() == "OK"
 
 
 # --- simulation-only commands ---------------------------------------------
@@ -89,7 +84,7 @@ def test_sim_netlist_writes_a_netlist(tmp_path, capsys):
 
 
 def test_sim_run_produces_a_waveform_and_no_metrics(tmp_path, capsys):
-    main(["sim-run", RC_CASE, "--solver", "dummy", "--run-root", str(tmp_path)])
+    main(["sim-run", RC_CASE, "--solver", "test_fake", "--run-root", str(tmp_path)])
     payload = _stdout_json(capsys)
     run_dir = Path(payload["run_dir"])
     assert payload["status"] == "ok"
@@ -109,17 +104,17 @@ def test_sim_run_strict_exit_fails_when_the_simulation_fails(tmp_path, capsys):
         "circuit: {builder: from_yaml, output_node: out, components: [{ref: R1, n1: src, n2: out, value: 50}]}\n"
         "load: {name: definitely_unknown, ports: {p: out, n: '0'}}\n"
         "measurement: {voltage_node: out, current_source: Vsrc}\n"
-        "solver: {name: dummy, tran: {step_s: 1.0e-9, stop_s: 1.0e-7}}\n",
+        "solver: {name: test_fake, tran: {step_s: 1.0e-9, stop_s: 1.0e-7}}\n",
         encoding="utf-8",
     )
     run_root = tmp_path / "runs"
     with pytest.raises(SystemExit) as excinfo:
-        main(["sim-run", str(case_path), "--solver", "dummy", "--run-root", str(run_root), "--strict-exit"])
+        main(["sim-run", str(case_path), "--solver", "test_fake", "--run-root", str(run_root), "--strict-exit"])
     assert excinfo.value.code == 1
     payload = json.loads(capsys.readouterr().out)
     assert payload["status"] == "failed"
     assert payload["error"]
-    # Research mode still leaves a complete, scoreable record behind.
+    # A failed preparation still leaves a complete record behind.
     assert (Path(payload["run_dir"]) / "waveform.csv").exists()
 
 
@@ -138,7 +133,7 @@ def test_visualize_netlist_writes_image_and_summary(tmp_path, capsys):
 
 
 def test_visualize_response_plots_a_run(tmp_path, capsys):
-    main(["sim-run", RC_CASE, "--solver", "dummy", "--run-root", str(tmp_path / "runs")])
+    main(["sim-run", RC_CASE, "--solver", "test_fake", "--run-root", str(tmp_path / "runs")])
     run_dir = json.loads(capsys.readouterr().out)["run_dir"]
     image = tmp_path / "response.png"
     main(["visualize-response", run_dir, "--out", str(image)])
@@ -150,9 +145,14 @@ def test_visualize_response_plots_a_run(tmp_path, capsys):
 
 
 def test_run_is_the_simple_human_readable_study_entry_point(tmp_path, capsys):
-    main(["run", RC_CASE, "--solver", "dummy", "--output", str(tmp_path)])
+    main(["run", RC_CASE, "--solver", "test_fake", "--output", str(tmp_path)])
     output = capsys.readouterr().out
     assert "Feasible across all conditions: yes" in output
+    assert "Decision: meets_declared_acceptance" in output
+    assert "Selected candidate:" in output
+    assert "Condition coverage: accepted 1/1, solved 1/1" in output
+    assert "Objective: loss=" in output
+    assert "Condition nominal: accepted, control={}" in output
     assert "Candidates: 1" in output
     assert "Results:" in output
     assert len(list(tmp_path.rglob("study_result.json"))) == 1
@@ -171,7 +171,25 @@ def test_run_refuses_to_sample_only_part_of_a_resolved_grid(tmp_path, capsys):
     with pytest.raises(SystemExit) as excinfo:
         main(["run", GRID_CASE, "--trials", "2", "--output", str(tmp_path)])
     assert excinfo.value.code == 2
-    assert "grid optimizer requires exactly 3 trials" in capsys.readouterr().out
+    assert "candidate enumeration is derived from network.search" in capsys.readouterr().out
+
+
+def test_run_refuses_to_replace_complete_public_enumeration_with_random_sampling(tmp_path, capsys):
+    with pytest.raises(SystemExit) as excinfo:
+        main(
+            [
+                "run",
+                GRID_CASE,
+                "--optimizer",
+                "random",
+                "--trials",
+                "3",
+                "--output",
+                str(tmp_path),
+            ]
+        )
+    assert excinfo.value.code == 2
+    assert "candidate enumeration is derived from network.search" in capsys.readouterr().out
 
 
 def test_run_uses_the_unified_pipeline_for_an_advanced_case(tmp_path, capsys):
@@ -182,7 +200,7 @@ def test_run_uses_the_unified_pipeline_for_an_advanced_case(tmp_path, capsys):
             "--optimizer",
             "random",
             "--solver",
-            "dummy",
+            "test_fake",
             "--trials",
             "3",
             "--seed",

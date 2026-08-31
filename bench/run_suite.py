@@ -17,6 +17,7 @@ from typing import Any
 
 import yaml
 
+from pcd import __version__
 from pcd.artifacts import write_json
 from pcd.case import load_case
 from pcd.study import run_case_study
@@ -372,6 +373,7 @@ def main(argv: list[str] | None = None) -> int:
     suite_checks = _suite_checks(cases)
     payload = {
         "schema": "design_benchmark_suite.v1",
+        "platform_version": __version__,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "solver": str(args.solver),
         "acceptance": {"metric": "reflection_magnitude", "max": math.sqrt(0.1)},

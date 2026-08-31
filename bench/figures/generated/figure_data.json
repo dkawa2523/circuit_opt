@@ -14,15 +14,16 @@
   "source": {
     "path_style": "repository-relative POSIX",
     "run_root": "runs/benchmark_suite",
+    "platform_version": "0.15.0",
     "solver": "ngspice_cli",
-    "generated_at": "2026-08-31T01:21:05.105111+00:00",
-    "benchmark_result_sha256": "1d4ab957251563ecb252265862977c4aaff9e83a088ba28be79c5bbc4dd7d7f2",
+    "generated_at": "2026-08-31T02:44:47.854295+00:00",
+    "benchmark_result_sha256": "70ce56e2b4e46b19cf21390fe21908d185bb53cba6563c4980f9771db22dcd50",
     "candidate_sha256": {
-      "B2": "ac22a9e69bab6933b006621fe23173594b4db797ed4e5dddac8795ce31ecc594",
-      "B3": "f66bacfc03d785a149dfce0c646ce193fce7bb4c2f29e7ffda573c811da355ac",
-      "A5": "7a8d292a762778d32e9efd9afcc731f77d94032e470551d9248d2f095d0cae1b",
-      "B5": "724998c81c7fddf6eec19516eb1db4d9965544471647e3d27541f28eb5d2dcfa",
-      "B8": "770012af064f0bc5620549041170838262771099fa39a99a7c158ea715051e18"
+      "B2": "697c6cba8efb4f98ac61ab2b0e9e292c97c9c44423c09967ec20cfa6ae270d57",
+      "B3": "e4726a85f2b9e30c3f9dcab2784861af3a71e70a419e6043b9074ed2261e5ef2",
+      "A5": "ee1c839bec744db30d9f13c7308af2731994f2a013c7b03b270d697943904802",
+      "B5": "257a68c1f0cb406e69c1c1d955db95f76700bc4a92d9ae9ce12741f51cc04ffd",
+      "B8": "206ddfae3f8d46bd8127326019f1384e104f46f638a4cadf2814bdc3ccfca7e7"
     },
     "reference_case_sha256": {
       "D1": "b0ce3c4a5129f2bfe8cec7b5f198ab32212799cdd5b091ea6e0f7c861d6163fe",

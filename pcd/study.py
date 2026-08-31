@@ -23,7 +23,7 @@ from .core.models import (
 )
 from .core.pipeline import StudyRunner
 from .metrics import constraints_from_case, measure_record
-from .results import FileResultStore
+from .results import FileResultStore, best_decision_summary
 from .search import create_optimizer
 from .sim_core import archive_case_bundle, simulate_case
 from .solver import solver_identity
@@ -248,12 +248,36 @@ def resolve_study_case(
 ) -> Case:
     """Return one case whose archived plan matches the actual run settings."""
 
+    if case.has_exact_candidate_enumeration:
+        planned = dict((case.resolved_plan or {}).get("execution") or {})
+        trial_value: Any = planned.get("trials")
+        if trial_value is None:
+            trial_value = (case.data.get("run") or {}).get("trials")
+        planned_trials = int(1 if trial_value is None else trial_value)
+        planned_optimizer = str(planned.get("optimizer", (case.data.get("optimizer") or {}).get("name", "grid")))
+        seed_value: Any = planned.get("seed")
+        if seed_value is None:
+            seed_value = (case.data.get("optimizer") or {}).get("seed")
+        planned_seed = int(0 if seed_value is None else seed_value)
+        changes = []
+        if int(n_trials) != planned_trials:
+            changes.append(f"trials={n_trials} (planned {planned_trials})")
+        if optimizer_name is not None and str(optimizer_name) != planned_optimizer:
+            changes.append(f"optimizer={optimizer_name} (planned {planned_optimizer})")
+        if seed is not None and int(seed) != planned_seed:
+            changes.append(f"seed={seed} (planned {planned_seed})")
+        if changes:
+            raise ValueError(
+                "pcd.rf.v1 candidate enumeration is derived from network.search and cannot be overridden: "
+                + ", ".join(changes)
+            )
+
     data = deepcopy(case.data)
     solver = mapping(data.get("solver"), "solver")
     optimizer = mapping(data.get("optimizer"), "optimizer")
     run = mapping(data.get("run"), "run")
 
-    effective_solver = str(solver_override or solver.get("name", "dummy"))
+    effective_solver = str(solver_override or solver.get("name", "ngspice_cli"))
     effective_optimizer = str(optimizer_name or optimizer.get("name", "random"))
     effective_seed = int(seed if seed is not None else optimizer.get("seed", 0))
     data["solver"] = {**solver, "name": effective_solver}
@@ -378,15 +402,7 @@ def run_case_study(
         "n_candidates": len(results),
         "n_evaluations": sum(len(item.control_evaluations) for item in results),
         "n_failed_evaluations": n_failed,
-        "best": {
-            "candidate": best.candidate.to_dict(),
-            "aggregates": dict(best.aggregates),
-            "feasible_fraction": best.feasible_fraction,
-            "success_fraction": best.success_fraction,
-            "total_violation": best.total_violation,
-            "control_margin": best.control_margin,
-            "edge_limited": best.edge_limited,
-        },
+        "best": best_decision_summary(spec, best, n_failed_evaluations=n_failed),
         "optimizer_state": optimizer.state(),
     }
     write_json(store.root / "study_result.json", payload)

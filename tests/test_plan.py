@@ -148,18 +148,18 @@ def test_archived_case_replays_its_scenarios_after_the_source_table_is_removed(t
     assert [item.scenario_id for item in study_spec_from_case(replay).scenarios] == ["nominal", "high"]
 
 
-def test_search_defaults_are_resolved_and_fixed_runs_cannot_repeat():
+def test_search_defaults_are_resolved_and_fixed_runs_are_single_candidate_grids():
     data = _base()
     data["network"]["fixed"].pop("C1")
-    data["network"]["search"] = {"C1": {"range": [1e-11, 1e-9], "scale": "log"}}
+    data["network"]["search"] = {"C1": {"values": [1e-11, 1e-10, 1e-9]}}
     plan = compile_rf_case(data, Path.cwd())
-    assert plan.trials == 30
-    assert plan.case["variables"]["C1"]["default"] == pytest.approx(1e-10)
+    assert plan.trials == 3
+    assert plan.case["variables"]["C1"]["default"] == pytest.approx(1e-11)
 
     fixed = _base()
-    fixed["execution"] = {"trials": 2}
-    with pytest.raises(ValueError, match="must be 1"):
-        compile_rf_case(fixed, Path.cwd())
+    fixed_plan = compile_rf_case(fixed, Path.cwd())
+    assert fixed_plan.optimizer == "grid"
+    assert fixed_plan.trials == 1
 
 
 def test_discrete_search_is_a_complete_grid_without_trial_count_input():
@@ -175,19 +175,18 @@ def test_discrete_search_is_a_complete_grid_without_trial_count_input():
     assert any("all 3 discrete hardware candidates" in item for item in plan.inferences)
 
 
-def test_grid_search_rejects_partial_continuous_or_oversized_spaces():
+def test_public_search_rejects_continuous_partial_or_oversized_spaces():
     continuous = _base()
     continuous["network"]["fixed"].pop("C1")
     continuous["network"]["search"] = {"C1": {"range": [100e-12, 300e-12]}}
-    continuous["execution"] = {"optimizer": "grid"}
-    with pytest.raises(ValueError, match="requires values, not range"):
+    with pytest.raises(ValueError, match=r"unsupported fields.*range"):
         compile_rf_case(continuous, Path.cwd())
 
     partial = _base()
     partial["network"]["fixed"].pop("C1")
     partial["network"]["search"] = {"C1": {"values": [100e-12, 200e-12, 300e-12]}}
-    partial["execution"] = {"optimizer": "grid", "trials": 2}
-    with pytest.raises(ValueError, match="complete grid size 3"):
+    partial["execution"] = {"trials": 2}
+    with pytest.raises(ValueError, match=r"unsupported fields.*trials"):
         compile_rf_case(partial, Path.cwd())
 
     oversized = _base()
@@ -205,7 +204,7 @@ def test_public_component_values_are_positive_unique_and_replayable():
         ({"values": [100e-12, 100e-12]}, "must not contain duplicates"),
         ({"values": [0.0, 100e-12]}, "must be positive"),
         ({"values": [100e-12, 200e-12], "default": 300e-12}, "must be one of"),
-        ({"range": [100e-12, 200e-12], "default": 300e-12}, "must be inside"),
+        ({"range": [100e-12, 200e-12], "default": 300e-12}, "unsupported fields.*range"),
     ]:
         invalid = deepcopy(data)
         invalid["network"]["search"] = {"C1": spec}
@@ -217,16 +216,16 @@ def test_direct_reflection_limit_drive_and_execution_remain_explicit():
     data = _base()
     data["drive_peak_V"] = 80
     data["acceptance"] = {"reflection_magnitude_max": 0.2}
-    data["execution"] = {"solver": "ngspice_cli", "optimizer": "random", "seed": 4, "trials": 1}
+    data["execution"] = {"solver": "ngspice_cli"}
     plan = compile_rf_case(data, Path.cwd())
 
     assert plan.case["source"]["amplitude_V"] == 80
     assert plan.case["target"]["constraints"]["metric_bounds"]["reflection_magnitude"] == {"max": 0.2}
     assert plan.to_dict()["execution"] == {
         "solver": "ngspice_cli",
-        "optimizer": "random",
+        "optimizer": "grid",
         "trials": 1,
-        "seed": 4,
+        "seed": 0,
     }
 
 
@@ -446,12 +445,12 @@ def test_search_axes_reject_ambiguous_or_invalid_spaces():
     assert compile_rf_case(choices, Path.cwd()).case["variables"]["C1"]["default"] == 100e-12
 
     invalid = [
-        ({"values": [1], "range": [1, 2]}, "either values or range"),
-        ({}, "must declare values or range"),
+        ({"values": [1], "range": [1, 2]}, "unsupported fields.*range"),
+        ({}, "non-empty list"),
         ({"values": []}, "non-empty list"),
-        ({"range": [1]}, r"\[minimum, maximum\]"),
-        ({"range": [2, 1]}, "must be ordered"),
-        ({"range": [-1, 2], "scale": "log"}, "must be positive"),
+        ({"range": [1]}, "unsupported fields.*range"),
+        ({"range": [2, 1]}, "unsupported fields.*range"),
+        ({"range": [-1, 2], "scale": "log"}, "unsupported fields"),
     ]
     for spec, message in invalid:
         data = deepcopy(base)

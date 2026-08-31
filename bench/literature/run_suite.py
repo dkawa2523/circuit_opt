@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from pcd import __version__
+
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 
@@ -527,6 +529,7 @@ def run(run_root: Path, *, include_core: bool) -> dict[str, Any]:
     )
     result: dict[str, Any] = {
         "schema": "pcd.literature_benchmark_suite.v4",
+        "platform_version": __version__,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "passed": passed,
         "benchmark_integrity_passed": passed,

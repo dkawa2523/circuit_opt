@@ -50,10 +50,12 @@ uv sync --group dev
 uv run pcd run case.yaml
 ```
 
-Results default to `runs/`. The terminal shows feasibility, condition count,
-electrical solve count, worst reflection, and the result directory. Use
-`--json` for the complete machine-readable result or `--output path` to choose
-the root directory.
+Results default to `runs/`. The terminal shows the selected fixed candidate,
+condition coverage, selected tuner state per condition, declared objectives,
+failed limits, and the result directory. `study_result.json` retains the same
+compact decision together with every detailed result reference. Use `--json`
+for the machine-readable result or `--output path` to choose the root
+directory.
 
 ## What users specify
 
@@ -74,11 +76,11 @@ not sample an incomplete tuner grid and call the result infeasible. The
 default safety limit is 250 states; a deliberately larger study may set
 `execution.control_state_limit`.
 
-The same rule applies to a finite hardware shortlist: `network.search` axes
-using `values` are compared exactly once with the grid optimizer, and the
-candidate count is inferred. Continuous `range` axes use sampled search and
-default to 30 candidates. This keeps exhaustive claims separate from
-stochastic exploration.
+The same rule applies to hardware selection: every `network.search.values`
+combination is compared exactly once and the candidate count is inferred.
+The public RF input does not turn a continuous range into an arbitrary sample
+and present that sample as a completed design decision. Exploratory continuous
+optimization remains available only in the advanced explicit extension path.
 
 ## What PCD resolves automatically
 
@@ -88,8 +90,8 @@ resolved plan explicitly contains:
 - the RF source, standard nodes, load ports, and 50-ohm measurement plane;
 - the same frequency for source, impedance anchor, and one-point AC solve;
 - scenario-column mappings and a complete tuning-state budget;
-- reflection objective, engineering constraints, solver, optimizer, seed,
-  and candidate count;
+- reflection objective, engineering constraints, solver, and the exact
+  candidate count;
 - component probes and effective series-loss elements only when requested.
 
 No numerical layer reinterprets the short input independently. Every run
@@ -181,7 +183,7 @@ pcd/case.py       schema routing, case paths, and design-variable discovery
 pcd/study_config.py advanced Candidate/Scenario/Control translation
 pcd/core/         role types, scenario/control selection, aggregation
 pcd/study.py      evaluation execution, caching, and study result assembly
-pcd/search.py     random, finite-grid, and optional Optuna candidate generation
+pcd/search.py     exact public candidate grids and advanced exploratory search
 pcd/sim_core.py   one simulation and its immutable run artifacts
 pcd/netlist.py    circuit IR and ngspice rendering
 pcd/sim_methods.py named circuit, load, and solver implementations

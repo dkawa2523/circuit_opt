@@ -17,14 +17,6 @@ LOAD_MODELS = {
         {"R_ohm": 50},
         ["Rload p n 50"],
     ),
-    "parallel_rc": (
-        {"R_ohm": 50, "C_F": 1e-9},
-        ["Rload p n 50", "Cload p n 1e-09"],
-    ),
-    "series_rlc": (
-        {"R_ohm": 50, "L_H": 2e-7, "C_F": 1e-9, "Rleak_ohm": 1e12},
-        ["Rload p nl 50", "Lload nl nc 2e-07", "Cload nc n 1e-09", "Rleak p n 1e+12"],
-    ),
     "impedance_point": (
         {"resistance_ohm": 20, "reactance_ohm": -80, "model_frequency_Hz": 13.56e6},
         ["Rpoint p nx 20", "Cpoint nx n"],
@@ -178,8 +170,6 @@ def test_every_registered_method_is_reachable_by_name():
     assert set(methods["load"]) == {
         "none",
         "resistor",
-        "parallel_rc",
-        "series_rlc",
         "from_yaml",
         "impedance_point",
         "ccp_lumped",
@@ -187,15 +177,6 @@ def test_every_registered_method_is_reachable_by_name():
     }
     assert set(methods["circuit"]) >= {"from_yaml", "l_match", "pi_match", "pi_match_harmonic"}
     assert "ladder" not in methods["circuit"]
-
-
-def test_dummy_solver_fails_honestly_for_ac_analysis(tmp_path, make_case):
-    from pcd.sim_methods import solver_dummy
-
-    case = make_case({"case_id": "dummy_ac", "solver": {"name": "dummy", "ac": {}}})
-    result = solver_dummy(tmp_path / "netlist.cir", tmp_path, case, {})
-    assert result.status == "failed"
-    assert result.diagnostics == {"unsupported_analysis": "ac"}
 
 
 # --- an externally authored netlist ----------------------------------------

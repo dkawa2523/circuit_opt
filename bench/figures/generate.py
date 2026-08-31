@@ -82,13 +82,6 @@ SCENARIO_ORDER = [
     "low_R_nominal_X",
     "high_R_nominal_X",
 ]
-SCENARIO_LABELS = {
-    "high_R_strong_capacitive": "high R, strong C",
-    "nominal": "nominal",
-    "low_R_weak_capacitive": "low R, weak C",
-    "low_R_nominal_X": "low R, nominal X",
-    "high_R_nominal_X": "high R, nominal X",
-}
 SCENARIO_CODES = {
     "high_R_strong_capacitive": "HS",
     "nominal": "N",
@@ -375,6 +368,7 @@ def build_figure_data(run_root: Path) -> dict[str, Any]:
         "source": {
             "path_style": "repository-relative POSIX",
             "run_root": _repository_path(run_root),
+            "platform_version": suite["platform_version"],
             "solver": suite["solver"],
             "generated_at": suite["generated_at"],
             "benchmark_result_sha256": _sha256(result_path),

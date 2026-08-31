@@ -41,9 +41,9 @@ def _add_study_commands(sub: argparse._SubParsersAction) -> None:
     p.add_argument("case")
     p.add_argument("--output", default="runs", help="directory that receives the study; default: runs")
     p.add_argument("--solver")
-    p.add_argument("--optimizer")
-    p.add_argument("--trials", type=int)
-    p.add_argument("--seed", type=int)
+    p.add_argument("--optimizer", help="advanced case only; public RF candidates are exact")
+    p.add_argument("--trials", type=int, help="advanced case only; public RF candidate count is inferred")
+    p.add_argument("--seed", type=int, help="advanced exploratory optimizer seed")
     p.add_argument("--json", action="store_true", help="print the complete machine-readable result")
 
     p = sub.add_parser("result-summary", help="summarize candidates from a completed study")
@@ -155,27 +155,74 @@ def _cmd_run(args: argparse.Namespace) -> int:
     return 1 if result.get("n_failed_evaluations", 0) else 0
 
 
+def _print_condition_summaries(conditions: list[dict]) -> None:
+    show_all_conditions = len(conditions) <= 8
+    for condition in conditions:
+        if not show_all_conditions and condition.get("status") == "accepted":
+            continue
+        control = json.dumps(
+            condition.get("selected_control") or {}, ensure_ascii=False, separators=(",", ":"), default=str
+        )
+        print(f"Condition {condition.get('scenario_id', '')}: {condition.get('status', '')}, control={control}")
+        failed = condition.get("failed_constraints") or []
+        if failed:
+            print("  Failed constraints: " + ", ".join(str(item.get("name", "")) for item in failed))
+
+
 def _print_run_summary(result: dict) -> None:
     best = result["best"]
     aggregates = best.get("aggregates") or {}
-    feasible = float(best.get("feasible_fraction", 0.0)) == 1.0 and float(best.get("success_fraction", 0.0)) == 1.0
-    scenarios = (result.get("study") or {}).get("scenarios") or []
-    print(f"Study: {(result.get('study') or {}).get('study_id', '')}")
-    feasibility = "yes" if feasible else ("no (tuning-margin limited)" if best.get("edge_limited") else "no")
+    study = result.get("study") or {}
+    scenarios = study.get("scenarios") or []
+    decision_status = best.get("status")
+    feasible = decision_status == "meets_declared_acceptance" or (
+        decision_status is None
+        and float(best.get("feasible_fraction", 0.0)) == 1.0
+        and float(best.get("success_fraction", 0.0)) == 1.0
+    )
+    print(f"Study: {study.get('study_id', '')}")
+    if decision_status == "incomplete_evidence":
+        feasibility = "unknown (incomplete evidence)"
+    else:
+        feasibility = "yes" if feasible else ("no (tuning-margin limited)" if best.get("edge_limited") else "no")
     print(f"Feasible across all conditions: {feasibility}")
+    if decision_status:
+        print(f"Decision: {decision_status}")
+    candidate = best.get("candidate") or {}
+    candidate_id = candidate.get("candidate_id", "")
+    candidate_values = candidate.get("values") or {}
+    candidate_suffix = (
+        f" {json.dumps(candidate_values, ensure_ascii=False, separators=(',', ':'), default=str)}"
+        if candidate_values
+        else ""
+    )
+    print(f"Selected candidate: {candidate_id}{candidate_suffix}")
     print(
         f"Candidates: {result.get('n_candidates', 0)}  Conditions: {len(scenarios)}  "
         f"Electrical solves: {result.get('n_evaluations', 0)}"
     )
+    coverage = best.get("coverage") or {}
+    if coverage:
+        total = int(coverage.get("conditions", 0))
+        print(
+            f"Condition coverage: accepted {int(coverage.get('accepted', 0))}/{total}, "
+            f"solved {int(coverage.get('solved', 0))}/{total}"
+        )
     if result.get("n_failed_evaluations", 0):
         print(f"Failed electrical solves: {result['n_failed_evaluations']}")
-    reflection = aggregates.get("reflection_magnitude")
-    if reflection is not None:
-        gamma = float(reflection)
-        print(f"Worst reflection: |Gamma|={gamma:.6g}, reflected power={gamma**2:.3%}")
+    for objective in study.get("objectives") or []:
+        metric = str(objective.get("metric", ""))
+        if metric in aggregates:
+            value = aggregates[metric]
+            formatted_value = f"{float(value):.6g}" if value is not None else "unavailable"
+            print(
+                f"Objective: {metric}={formatted_value} "
+                f"({objective.get('aggregation', 'worst')}, {objective.get('direction', 'minimize')})"
+            )
     margin = best.get("control_margin")
     if margin is not None:
         print(f"Worst control margin: {float(margin):.1%} (0%=edge, 100%=center)")
+    _print_condition_summaries(best.get("conditions") or [])
     print(f"Results: {result.get('run_root')}")
 
 

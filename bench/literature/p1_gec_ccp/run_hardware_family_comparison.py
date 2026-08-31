@@ -123,7 +123,6 @@ def _materialize_family_case(
         "acceptance": {"reflected_power_fraction_max": float(spec["acceptance"]["reflected_power_fraction_max"])},
         "execution": {
             "solver": "ngspice_cli",
-            "optimizer": "grid",
             "candidate_state_limit": 10,
             "control_state_limit": 32,
         },

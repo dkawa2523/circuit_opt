@@ -5,7 +5,7 @@ schema: case_yaml.v1
 case_id: advanced_case_fixture
 variables:
   topology_choice: {choices: [l_match, pi_match], default: pi_match}
-  load_model: {choices: [parallel_rc, impedance_point], default: parallel_rc}
+  load_model: {choices: [resistor, impedance_point], default: resistor}
 source:
   type: sine_voltage
   name: Vsrc
@@ -25,10 +25,8 @@ load:
   ports: {p: electrode, n: 0}
   variables:
     Rload: {bounds: [5, 200], scale: log, default: 25}
-    Cload: {bounds: [1.0e-12, 2.0e-10], scale: log, default: 5.0e-11}
     Xload: {bounds: [-200, -10], default: -80}
   R_ohm: Rload
-  C_F: Cload
   resistance_ohm: Rload
   reactance_ohm: Xload
   model_frequency_Hz: 1000000
@@ -37,7 +35,7 @@ measurement:
   current_source: Vsrc
   load_current: auto
 solver:
-  name: dummy
+  name: test_fake
   tran: {step_s: 1.0e-8, stop_s: 5.0e-6}
 target:
   waveform_file: target_waveform.csv

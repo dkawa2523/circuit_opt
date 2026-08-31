@@ -5,7 +5,7 @@
     "surface": "report",
     "title": "回路解析基盤 ベンチマークケース技術レポート",
     "description": "半導体製造、伝熱、データ分析の第三者が、回路benchmarkの問題設定、結果、証拠粒度、利用境界を独立に判断するための技術レポート",
-    "generatedAt": "2026-08-31T01:29:37.448451+00:00",
+    "generatedAt": "2026-08-31T02:51:26.112260+00:00",
     "sources": [
       {
         "id": "core-suite",
@@ -1132,7 +1132,7 @@
       {
         "id": "snapshot-provenance-table",
         "title": "入力snapshot provenance",
-        "subtitle": "as-ofとファイル内容hash。未記録versionは推測しない",
+        "subtitle": "基盤version、as-of、ファイル内容hash。solver binary版は推測しない",
         "dataset": "snapshot_provenance",
         "source": {
           "id": "report-method",
@@ -1173,6 +1173,11 @@
           {
             "field": "schema",
             "label": "Schema",
+            "type": "text"
+          },
+          {
+            "field": "platform_version",
+            "label": "PCD version",
             "type": "text"
           },
           {
@@ -2008,7 +2013,7 @@
         "id": "snapshot-provenance-intro",
         "type": "markdown",
         "layout": "full",
-        "body": "## 評価snapshot — 時刻・schema・内容hashを固定する\n\n以下のSHA-256は、このレポートが読んだcore統合結果、文献統合結果、B5選択candidate詳細そのものに対する値である。solverのversionやB5 artifact時刻は記録されていないため、推測して補わない。",
+        "body": "## 評価snapshot — 時刻・schema・内容hashを固定する\n\n以下のSHA-256は、このレポートが読んだcore統合結果、文献統合結果、B5選択candidate詳細そのものに対する値である。基盤versionは統合結果から記録する。solver binaryのversionやB5 artifact時刻は記録されていないため、推測して補わない。",
         "sourceId": "report-method"
       },
       {
@@ -2052,7 +2057,7 @@
   },
   "snapshot": {
     "version": 1,
-    "generatedAt": "2026-08-31T01:29:37.448451+00:00",
+    "generatedAt": "2026-08-31T02:51:26.112260+00:00",
     "status": "ready",
     "datasets": {
       "summary": [
@@ -2147,8 +2152,9 @@
           "suite": "core",
           "path": "runs/benchmark_suite/benchmark_result.json",
           "schema": "design_benchmark_suite.v1",
-          "as_of": "2026-08-31T01:21:05.105111+00:00",
-          "sha256": "1d4ab957251563ecb252265862977c4aaff9e83a088ba28be79c5bbc4dd7d7f2",
+          "platform_version": "0.15.0",
+          "as_of": "2026-08-31T02:44:47.854295+00:00",
+          "sha256": "70ce56e2b4e46b19cf21390fe21908d185bb53cba6563c4980f9771db22dcd50",
           "status": "PASS",
           "solver": "ngspice_cli"
         },
@@ -2156,19 +2162,21 @@
           "suite": "literature",
           "path": "runs/literature/final_evaluation/evaluation.json",
           "schema": "pcd.literature_benchmark_suite.v4",
-          "as_of": "2026-08-31T01:29:30.037476+00:00",
-          "sha256": "db50ee8bba990e0e3f24fc42edd5fa7c3a37a7c457aa2b6033ed19406b79a7a7",
+          "platform_version": "0.15.0",
+          "as_of": "2026-08-31T02:51:17.963750+00:00",
+          "sha256": "8b9238ea0eee57e4c2ecad60812466ac1df34ef8272f4b855d8cb8810b40b711",
           "status": "PASS",
-          "solver": "runner別。統合snapshotにversion未記録"
+          "solver": "runner別。solver binary versionは統合snapshotに未記録"
         },
         {
           "suite": "B5 candidate detail",
           "path": "runs/benchmark_suite/benchmark_match-e0791f5a3e300c68/candidates/trial_0000.json",
           "schema": "candidate_result.v1",
+          "platform_version": "0.15.0",
           "as_of": "artifact内に時刻記録なし",
-          "sha256": "724998c81c7fddf6eec19516eb1db4d9965544471647e3d27541f28eb5d2dcfa",
+          "sha256": "257a68c1f0cb406e69c1c1d955db95f76700bc4a92d9ae9ce12741f51cc04ffd",
           "status": "READ (2 scenarios)",
-          "solver": "core suiteの選択candidate詳細。version未記録"
+          "solver": "core suiteの選択candidate詳細。solver binary version未記録"
         }
       ],
       "data_grain": [

@@ -140,39 +140,6 @@ def test_different_seeds_explore_different_points(topology_case):
     assert not first["C1"].equals(second["C1"])
 
 
-def test_the_optuna_optimizer_learns_from_told_results(topology_case):
-    """The optional TPE optimizer must complete a full ask/tell cycle."""
-
-    pytest.importorskip("optuna")
-    from pcd.search import create_optimizer
-
-    opt = create_optimizer(topology_case, optimizer_name="optuna", seed=3)
-    for i in range(5):
-        params = opt.ask()
-        assert params["topology_choice"] in {"l_match", "pi_match", "pi_match_harmonic"}
-        opt.tell(params, {"loss": float(5 - i)})
-
-    state = opt.state()
-    assert state["type"] == "OptunaOptimizer"
-    assert state["n_observations"] == 5
-    assert state["best"]["optimizer_loss"] == pytest.approx(1.0)
-
-
-def test_the_optuna_optimizer_respects_declared_bounds(topology_case):
-    pytest.importorskip("optuna")
-    from pcd.case import variable_specs
-    from pcd.search import create_optimizer
-
-    opt = create_optimizer(topology_case, optimizer_name="optuna", seed=1)
-    specs = variable_specs(topology_case)
-    for _ in range(5):
-        params = opt.ask()
-        for name, spec in specs.items():
-            if "bounds" in spec:
-                assert float(spec["bounds"][0]) <= params[name] <= float(spec["bounds"][1])
-        opt.tell(params, {"loss": 1.0})
-
-
 def test_sampled_candidates_respect_every_declared_bound(topology_case):
     from pcd.case import variable_specs
 
@@ -223,7 +190,7 @@ def test_a_metric_may_return_a_named_objective_instead_of_loss(tmp_path, rc_case
     def missing_loss(case, record, waveform):
         return {"something_else": 1.0}
 
-    rec = simulate_case(rc_case, run_root=tmp_path, solver_override="dummy")
+    rec = simulate_case(rc_case, run_root=tmp_path, solver_override="test_fake")
     case = rc_case
     case.data["target"]["objective"] = "missing_loss"
     assert measure_record(case, rec.manifest())["something_else"] == 1.0
@@ -270,7 +237,7 @@ def test_a_non_finite_loss_is_a_failed_measurement_not_a_store_error(tmp_path, r
     def nonfinite_loss(case, record, waveform):
         return {"loss": float("inf")}
 
-    rec = simulate_case(rc_case, run_root=tmp_path, solver_override="dummy")
+    rec = simulate_case(rc_case, run_root=tmp_path, solver_override="test_fake")
     rc_case.data["target"]["objective"] = "nonfinite_loss"
     with pytest.raises(ValueError, match="non-finite loss"):
         measure_record(rc_case, rec.manifest())

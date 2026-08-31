@@ -14,7 +14,8 @@ import pytest
 
 import pcd.solver as solver_module
 from pcd.case import Case
-from pcd.solver import diagnose_solver, dummy_waveform, ngspice_cli, parse_wrdata, solver_timeout_s
+from pcd.solver import diagnose_solver, ngspice_cli, parse_wrdata, solver_identity, solver_timeout_s
+from tests.fakes import fake_waveform
 
 EX = Path(__file__).resolve().parents[1] / "examples" / "advanced"
 
@@ -26,7 +27,7 @@ RTOL_SIGNAL = 1e-9
 
 
 def test_the_waveform_frame_has_the_canonical_columns(rc_case):
-    frame = dummy_waveform(rc_case, {"R1": 1000.0, "C1": 1e-9})
+    frame = fake_waveform(rc_case, {"R1": 1000.0, "C1": 1e-9})
     assert list(frame.columns) == ["time_s", "voltage_V", "current_A"]
     assert all(frame[col].dtype == np.float64 for col in frame.columns)
     assert np.all(np.isfinite(frame.to_numpy()))
@@ -35,11 +36,11 @@ def test_the_waveform_frame_has_the_canonical_columns(rc_case):
 
 def test_the_transient_window_matches_the_case_settings(rc_case):
     stop = float(rc_case.data["solver"]["tran"]["stop_s"])
-    assert dummy_waveform(rc_case, {})["time_s"].iloc[-1] == pytest.approx(stop, rel=1e-12)
+    assert fake_waveform(rc_case, {})["time_s"].iloc[-1] == pytest.approx(stop, rel=1e-12)
 
 
 @pytest.mark.parametrize("source_type", ["sine_voltage", "dc_voltage", "pulse"])
-def test_the_dummy_solver_handles_every_source_shape(make_case, source_type):
+def test_the_test_fake_handles_every_source_shape(make_case, source_type):
     case = make_case(
         {
             "case_id": "shapes",
@@ -47,7 +48,7 @@ def test_the_dummy_solver_handles_every_source_shape(make_case, source_type):
             "solver": {"tran": {"step_s": 1e-9, "stop_s": 1e-7}},
         }
     )
-    frame = dummy_waveform(case, {})
+    frame = fake_waveform(case, {})
     assert len(frame) > 10
     assert np.all(np.isfinite(frame["voltage_V"].to_numpy()))
 
@@ -107,10 +108,8 @@ def test_the_timeout_falls_back_to_the_default_when_unusable(configured, expecte
     assert solver_timeout_s(Case(path=EX / "generic_rc_filter.yaml", data=data)) == expected
 
 
-def test_the_dummy_solver_needs_no_executable():
-    diag = diagnose_solver("dummy")
-    assert diag["batch_runnable"] is True
-    assert diag["executable"] is None
+def test_ngspice_is_the_default_solver_identity(rc_case):
+    assert solver_identity(rc_case)["name"] == "ngspice_cli"
 
 
 def test_an_unknown_solver_reports_that_it_cannot_be_diagnosed():

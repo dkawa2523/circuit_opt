@@ -35,6 +35,13 @@ class Case:
     def is_resolved_rf(self) -> bool:
         return self.resolved_plan is not None
 
+    @property
+    def has_exact_candidate_enumeration(self) -> bool:
+        """Whether candidate values form a complete, non-truncatable set."""
+
+        study = self.data.get("study")
+        return self.is_resolved_rf or (isinstance(study, dict) and study.get("candidate_enumeration") == "exact")
+
 
 def load_case(path: str | Path) -> Case:
     """Load exactly one supported input schema and resolve public RF inputs."""

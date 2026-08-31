@@ -5,6 +5,8 @@ import yaml
 from bench.literature.p0_lee2021_bias.run import _table_spice_netlist
 from bench.literature.p1_colpo1999_icp.digitized.run_uncertainty_challenge import _decision_stability
 from bench.literature.p1_gec_ccp.run_all32_benchmark import run as run_hargis_source
+from bench.literature.p1_gec_ccp.run_hardware_family_comparison import _materialize_family_case
+from pcd.case import load_case
 
 ROOT = Path(__file__).resolve().parents[1]
 GEC = ROOT / "bench" / "literature" / "p1_gec_ccp"
@@ -39,6 +41,18 @@ def test_hargis_hardware_comparison_declares_independent_unweighted_families() -
     assert "scenario_count" not in spec
     assert "weights" not in spec
     assert not (GEC / "hardware_authority_spec.yaml").exists()
+
+
+def test_hargis_hardware_comparison_generates_a_valid_exact_candidate_case(tmp_path: Path) -> None:
+    spec = yaml.safe_load((GEC / "hardware_family_spec.yaml").read_text(encoding="utf-8"))
+    case_path, integrity, _ = _materialize_family_case(spec, spec["families"][0], tmp_path)
+
+    case = load_case(case_path)
+
+    assert integrity["passed"]
+    assert case.resolved_plan is not None
+    assert case.resolved_plan["execution"]["optimizer"] == "grid"
+    assert case.resolved_plan["execution"]["trials"] == len(spec["candidate_L1_H"])
 
 
 def test_lee_metadata_and_plane_substitutions_are_explicit() -> None:

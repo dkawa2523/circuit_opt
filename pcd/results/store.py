@@ -149,12 +149,6 @@ class FileResultStore:
                 raise ValueError(f"shortened candidate path collision: {path}")
         self._write_json(path, result.to_dict())
 
-    def candidate_results(self) -> list[dict[str, Any]]:
-        directory = self.root / "candidates"
-        if not directory.exists():
-            return []
-        return [json.loads(path.read_text(encoding="utf-8")) for path in sorted(directory.glob("*.json"))]
-
     @staticmethod
     def _write_json(path: Path, payload: Mapping[str, Any]) -> None:
         atomic_write_text(

@@ -2,7 +2,7 @@
 
 The public file describes an engineering decision: fixed hardware, optional
 design search, settings that may be retuned, an electrical load envelope, and
-acceptance limits.  The rest of PCD consumes the older explicit case mapping.
+acceptance limits.  The rest of PCD consumes one explicit executable mapping.
 Keeping that translation here gives validation, simulation, caching, and
 reporting exactly the same resolved values without spreading aliases and
 defaults through the numerical code.
@@ -109,10 +109,6 @@ class _ExecutionPlan:
     seed: int
 
 
-def is_public_rf_case(data: Mapping[str, Any]) -> bool:
-    return str(data.get("schema", "")) == PUBLIC_SCHEMA
-
-
 def compile_rf_case(data: Mapping[str, Any], base_dir: Path) -> ResolvedPlan:
     """Resolve a ``pcd.rf.v1`` mapping without executing plugins or solvers."""
 
@@ -152,11 +148,7 @@ def compile_rf_case(data: Mapping[str, Any], base_dir: Path) -> ResolvedPlan:
         },
         "acceptance",
     )
-    _reject_unknown(
-        execution,
-        {"solver", "optimizer", "seed", "trials", "candidate_state_limit", "control_state_limit"},
-        "execution",
-    )
+    _reject_unknown(execution, {"solver", "candidate_state_limit", "control_state_limit"}, "execution")
     network = _network_plan(authored.get("network"), acceptance, execution, inferences)
     operating = _operating_plan(authored, load, base_dir, network.needs_absolute_drive, inferences)
     network = _observe_absolute_stress(network, operating.has_absolute_drive, inferences)
@@ -165,6 +157,7 @@ def compile_rf_case(data: Mapping[str, Any], base_dir: Path) -> ResolvedPlan:
 
     study: dict[str, Any] = {
         "design_variables": list(network.variables),
+        "candidate_enumeration": "exact",
         "objectives": [{"metric": "reflection_magnitude", "direction": "minimize", "aggregation": "worst"}],
     }
     if operating.table:
@@ -227,7 +220,7 @@ def _network_plan(
     required_refs = {ref for ref, _n1, _n2 in _TOPOLOGY_COMPONENTS[topology]}
     fixed, search, tuning = _network_roles(network, topology, required_refs)
     variables = {name: _fixed_spec(name, value) for name, value in fixed.items()}
-    search_variables = {name: _search_spec(name, spec, inferences) for name, spec in search.items()}
+    search_variables = {name: _search_spec(name, spec) for name, spec in search.items()}
     variables.update(search_variables)
     controls = {name: _tuning_spec(name, spec) for name, spec in tuning.items()}
     states = _control_state_count(controls, execution, inferences)
@@ -388,33 +381,18 @@ def _execution_plan(
     execution: Mapping[str, Any], search: Mapping[str, Mapping[str, Any]], inferences: list[str]
 ) -> _ExecutionPlan:
     solver = str(execution.get("solver", "ngspice_cli"))
-    has_search = bool(search)
-    is_discrete = has_search and all("choices" in spec for spec in search.values())
-    optimizer = str(execution.get("optimizer", "grid" if is_discrete else "random"))
-    seed = int(execution.get("seed", 0))
-    if optimizer == "grid":
-        if not has_search:
-            raise ValueError("execution.optimizer: grid requires network.search")
-        continuous = sorted(name for name, spec in search.items() if "choices" not in spec)
-        if continuous:
-            raise ValueError(f"execution.optimizer: grid requires values, not range, for {continuous}")
-        trials = math.prod(len(spec["choices"]) for spec in search.values())
-        limit = _positive_int(execution.get("candidate_state_limit", 250), "execution.candidate_state_limit")
-        if trials > limit:
-            raise ValueError(
-                f"network.search declares {trials} exact candidates, exceeding the safety limit {limit}; "
-                "reduce the value sets or deliberately raise execution.candidate_state_limit"
-            )
-        if "trials" in execution and _positive_int(execution["trials"], "execution.trials") != trials:
-            raise ValueError(f"execution.trials must equal the complete grid size {trials} when optimizer is grid")
+    trials = math.prod(len(spec["choices"]) for spec in search.values()) if search else 1
+    limit = _positive_int(execution.get("candidate_state_limit", 250), "execution.candidate_state_limit")
+    if trials > limit:
+        raise ValueError(
+            f"network.search declares {trials} exact candidates, exceeding the safety limit {limit}; "
+            "reduce the value sets or deliberately raise execution.candidate_state_limit"
+        )
+    if search:
         inferences.append(f"compare all {trials} discrete hardware candidates exactly once")
     else:
-        trials = _positive_int(execution.get("trials", 30 if has_search else 1), "execution.trials")
-    if not has_search and trials != 1:
-        raise ValueError("execution.trials must be 1 when network.search is empty")
-    if "trials" not in execution and optimizer != "grid":
-        inferences.append(f"run {trials} candidate{'s' if trials != 1 else ''}")
-    return _ExecutionPlan(solver, optimizer, trials, seed)
+        inferences.append("evaluate the one declared fixed hardware candidate")
+    return _ExecutionPlan(solver, "grid", trials, 0)
 
 
 def _operating_defaults(operating: _OperatingPlan, inferences: list[str]) -> dict[str, dict[str, Any]]:
@@ -459,26 +437,10 @@ def _fixed_spec(name: str, value: Any) -> dict[str, Any]:
     return {"choices": [number], "default": number}
 
 
-def _search_spec(name: str, value: Any, inferences: list[str]) -> dict[str, Any]:
+def _search_spec(name: str, value: Any) -> dict[str, Any]:
     cfg = _mapping(value, f"network.search.{name}", required=True)
-    _reject_unknown(cfg, {"values", "range", "scale", "default"}, f"network.search.{name}")
-    if "values" in cfg and "range" in cfg:
-        raise ValueError(f"network.search.{name} must use either values or range")
-    if "values" in cfg:
-        cfg["choices"] = cfg.pop("values")
-    if "range" in cfg:
-        cfg["bounds"] = cfg.pop("range")
-    if ("choices" in cfg) == ("bounds" in cfg):
-        raise ValueError(f"network.search.{name} must declare values or range")
-    if "choices" in cfg:
-        _validate_search_choices(name, cfg)
-    else:
-        _validate_search_range(name, cfg, inferences)
-    return cfg
-
-
-def _validate_search_choices(name: str, cfg: dict[str, Any]) -> None:
-    choices = cfg["choices"]
+    _reject_unknown(cfg, {"values", "default"}, f"network.search.{name}")
+    choices = cfg.get("values")
     if not isinstance(choices, list) or not choices:
         raise ValueError(f"network.search.{name}.values must be a non-empty list")
     normalized = [
@@ -486,35 +448,15 @@ def _validate_search_choices(name: str, cfg: dict[str, Any]) -> None:
     ]
     if len(set(normalized)) != len(normalized):
         raise ValueError(f"network.search.{name}.values must not contain duplicates")
-    cfg["choices"] = normalized
+    resolved: dict[str, Any] = {"choices": normalized}
     if "default" in cfg:
         default = _positive_number(cfg["default"], f"network.search.{name}.default")
         if default not in normalized:
             raise ValueError(f"network.search.{name}.default must be one of its values")
-        cfg["default"] = default
+        resolved["default"] = default
     else:
-        cfg["default"] = normalized[0]
-
-
-def _validate_search_range(name: str, cfg: dict[str, Any], inferences: list[str]) -> None:
-    bounds = cfg["bounds"]
-    if not isinstance(bounds, list) or len(bounds) != 2:
-        raise ValueError(f"network.search.{name}.range must be [minimum, maximum]")
-    low = _finite_number(bounds[0], f"network.search.{name}.range[0]")
-    high = _finite_number(bounds[1], f"network.search.{name}.range[1]")
-    if low > high:
-        raise ValueError(f"network.search.{name}.range must be ordered")
-    if low <= 0:
-        raise ValueError(f"network.search.{name}.range values must be positive")
-    cfg["bounds"] = [low, high]
-    if "default" in cfg:
-        default = _positive_number(cfg["default"], f"network.search.{name}.default")
-        if not low <= default <= high:
-            raise ValueError(f"network.search.{name}.default must be inside its range")
-        cfg["default"] = default
-        return
-    cfg["default"] = math.sqrt(low * high) if cfg.get("scale") == "log" else (low + high) / 2.0
-    inferences.append(f"use the center of network.search.{name} as its replay default")
+        resolved["default"] = normalized[0]
+    return resolved
 
 
 def _tuning_spec(name: str, value: Any) -> dict[str, list[Any]]:

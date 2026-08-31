@@ -1,5 +1,4 @@
-# EXECUTABLE DOCUMENTATION ONLY. The default dummy solver exercises the data
-# path but does not calculate this RC circuit's physical response.
+# Advanced explicit RC transient solved by ngspice.
 schema: case_yaml.v1
 case_id: generic_rc_filter
 run: {root: runs/generic_rc}
@@ -29,7 +28,7 @@ circuit:
 load: {name: none}
 measurement: {voltage_node: out, current_source: Vsrc}
 solver:
-  name: dummy
+  name: ngspice_cli
   tran: {step_s: 2.0e-9, stop_s: 2.0e-6}
 target:
   waveform_file: target_rc.csv

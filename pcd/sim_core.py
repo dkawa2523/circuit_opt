@@ -308,7 +308,7 @@ def simulate_case(
     """
 
     start = time.perf_counter()
-    solver_name = str(solver_override or case.data.get("solver", {}).get("name", "dummy"))
+    solver_name = str(solver_override or case.data.get("solver", {}).get("name", "ngspice_cli"))
     prepared: SimRecord | None = None
     try:
         prepared = prepare_case(

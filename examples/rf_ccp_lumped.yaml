@@ -6,8 +6,8 @@ case_id: rf_ccp_lumped
 network:
   type: l_match
   search:
-    L1: {range: [1.0e-7, 3.0e-6], scale: log, default: 1.0e-6}
-    C1: {range: [1.0e-11, 1.0e-9], scale: log, default: 2.0e-10}
+    L1: {values: [1.0e-7, 1.0e-6, 3.0e-6], default: 1.0e-6}
+    C1: {values: [1.0e-11, 2.0e-10, 1.0e-9], default: 2.0e-10}
 
 load:
   type: ccp_lumped

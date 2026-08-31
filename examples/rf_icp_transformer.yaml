@@ -6,8 +6,8 @@ case_id: rf_icp_transformer
 network:
   type: l_match
   search:
-    L1: {range: [1.0e-8, 2.0e-6], scale: log, default: 2.0e-7}
-    C1: {range: [1.0e-11, 2.0e-9], scale: log, default: 4.0e-10}
+    L1: {values: [1.0e-8, 2.0e-7, 2.0e-6], default: 2.0e-7}
+    C1: {values: [1.0e-11, 4.0e-10, 2.0e-9], default: 4.0e-10}
 
 load:
   type: icp_transformer

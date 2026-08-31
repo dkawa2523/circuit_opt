@@ -4,7 +4,6 @@ import math
 from pathlib import Path
 from typing import Any
 
-from .analysis import ac_sweep
 from .case import Case, resolve_path
 from .component_models import core_node, loss_reference, meter_node, meter_reference, series_resistance_ohm
 from .netlist import Circuit
@@ -16,7 +15,7 @@ from .rf_loads import (
     impedance_point_reactive_element,
 )
 from .sim_registry import register
-from .solver import SimulationResult, dummy_waveform, ngspice_cli
+from .solver import SimulationResult, ngspice_cli
 from .spice import fundamental_hz, pick_value, spice_value
 
 # -----------------------------------------------------------------------------
@@ -118,38 +117,6 @@ def load_resistor(case: Case, params: dict[str, Any]) -> str:
 * load model: resistor
 .subckt load_model p n
 Rload p n {spice_value(r)}
-.ends load_model
-""".strip()
-
-
-@register("load", "parallel_rc")
-def load_parallel_rc(case: Case, params: dict[str, Any]) -> str:
-    cfg = _load_cfg(case)
-    r = pick_value(cfg, "R_ohm", params, "Rload")
-    c = pick_value(cfg, "C_F", params, "Cload")
-    return f"""
-* load model: parallel_rc
-.subckt load_model p n
-Rload p n {spice_value(r)}
-Cload p n {spice_value(c)}
-.ends load_model
-""".strip()
-
-
-@register("load", "series_rlc")
-def load_series_rlc(case: Case, params: dict[str, Any]) -> str:
-    cfg = _load_cfg(case)
-    r = pick_value(cfg, "R_ohm", params, "Rload")
-    inductance = pick_value(cfg, "L_H", params, "Lload")
-    c = pick_value(cfg, "C_F", params, "Cload")
-    rleak = pick_value(cfg, "Rleak_ohm", params, 1e12)
-    return f"""
-* load model: series_rlc
-.subckt load_model p n
-Rload p nl {spice_value(r)}
-Lload nl nc {spice_value(inductance)}
-Cload nc n {spice_value(c)}
-Rleak p n {spice_value(rleak)}
 .ends load_model
 """.strip()
 
@@ -266,28 +233,6 @@ def load_from_yaml(case: Case, params: dict[str, Any]) -> str:
 # -----------------------------------------------------------------------------
 # Solvers
 # -----------------------------------------------------------------------------
-
-
-@register("solver", "dummy")
-def solver_dummy(netlist_path: Path, run_dir: Path, case: Case, params: dict[str, Any]) -> SimulationResult:
-    if ac_sweep(case.data.get("solver", {}) or {}, params) is not None:
-        empty = dummy_waveform(case, params).iloc[:0]
-        return SimulationResult(
-            time_s=empty["time_s"].to_numpy(float),
-            voltage_V=empty["voltage_V"].to_numpy(float),
-            current_A=empty["current_A"].to_numpy(float),
-            status="failed",
-            log="dummy solver does not synthesize an AC frequency response",
-            diagnostics={"unsupported_analysis": "ac"},
-        )
-    wf = dummy_waveform(case, params)
-    return SimulationResult(
-        time_s=wf["time_s"].to_numpy(float),
-        voltage_V=wf["voltage_V"].to_numpy(float),
-        current_A=wf["current_A"].to_numpy(float),
-        status="ok",
-        log="dummy solver: no SPICE execution",
-    )
 
 
 @register("solver", "ngspice_cli")

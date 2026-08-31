@@ -1459,6 +1459,7 @@ def build_artifact(  # noqa: C901
             "suite": "core",
             "path": _relative(core_path),
             "schema": core.get("schema", "unknown"),
+            "platform_version": core.get("platform_version", "not recorded"),
             "as_of": core.get("generated_at", "unknown"),
             "sha256": _sha256(core_path),
             "status": "PASS" if core.get("passed") else "FAIL",
@@ -1468,19 +1469,21 @@ def build_artifact(  # noqa: C901
             "suite": "literature",
             "path": _relative(literature_path),
             "schema": literature.get("schema", "unknown"),
+            "platform_version": literature.get("platform_version", "not recorded"),
             "as_of": literature.get("generated_at", "unknown"),
             "sha256": _sha256(literature_path),
             "status": "PASS" if literature.get("benchmark_integrity_passed") else "FAIL",
-            "solver": "runner別。統合snapshotにversion未記録",
+            "solver": "runner別。solver binary versionは統合snapshotに未記録",
         },
         {
             "suite": "B5 candidate detail",
             "path": _relative(b5_candidate_path),
             "schema": b5_candidate.get("schema", "unknown"),
+            "platform_version": core.get("platform_version", "not recorded"),
             "as_of": "artifact内に時刻記録なし",
             "sha256": _sha256(b5_candidate_path),
             "status": f"READ ({len(b5_candidate['scenarios'])} scenarios)",
-            "solver": "core suiteの選択candidate詳細。version未記録",
+            "solver": "core suiteの選択candidate詳細。solver binary version未記録",
         },
     ]
 
@@ -1867,7 +1870,7 @@ Control選択は単純な最小|Γ|とは限らない。各Scenarioで、まず�
                 "layout": "full",
                 "body": """## 評価snapshot — 時刻・schema・内容hashを固定する
 
-以下のSHA-256は、このレポートが読んだcore統合結果、文献統合結果、B5選択candidate詳細そのものに対する値である。solverのversionやB5 artifact時刻は記録されていないため、推測して補わない。""",
+以下のSHA-256は、このレポートが読んだcore統合結果、文献統合結果、B5選択candidate詳細そのものに対する値である。基盤versionは統合結果から記録する。solver binaryのversionやB5 artifact時刻は記録されていないため、推測して補わない。""",
                 "sourceId": "report-method",
             },
             {
@@ -2081,7 +2084,7 @@ Control選択は単純な最小|Γ|とは限らない。各Scenarioで、まず�
         {
             "id": "snapshot-provenance-table",
             "title": "入力snapshot provenance",
-            "subtitle": "as-ofとファイル内容hash。未記録versionは推測しない",
+            "subtitle": "基盤version、as-of、ファイル内容hash。solver binary版は推測しない",
             "dataset": "snapshot_provenance",
             "source": _widget_source(source_by_id["report-method"], "snapshot_provenance"),
             "layout": "full",
@@ -2091,6 +2094,7 @@ Control選択は単純な最小|Γ|とは限らない。各Scenarioで、まず�
                 {"field": "suite", "label": "Suite", "type": "text"},
                 {"field": "path", "label": "入力artifact", "type": "text"},
                 {"field": "schema", "label": "Schema", "type": "text"},
+                {"field": "platform_version", "label": "PCD version", "type": "text"},
                 {"field": "as_of", "label": "Snapshot時刻", "type": "text"},
                 {"field": "sha256", "label": "SHA-256", "type": "text"},
                 {"field": "status", "label": "結果", "type": "text"},

@@ -24,7 +24,7 @@ EX = Path(__file__).resolve().parents[1] / "examples" / "advanced"
 
 
 def test_simulation_writes_artifacts_but_never_metrics(tmp_path, rc_case):
-    rec = simulate_case(rc_case, run_root=tmp_path, solver_override="dummy")
+    rec = simulate_case(rc_case, run_root=tmp_path, solver_override="test_fake")
     assert rec.status == "ok"
     assert (rec.run_dir / "waveform.csv").exists()
     assert (rec.run_dir / "netlist.cir").exists()
@@ -50,12 +50,14 @@ def test_preparing_a_case_writes_everything_except_the_waveform(tmp_path, rc_cas
 def test_registries_expose_the_documented_methods():
     sim = sim_available()
     assert set(sim) == {"circuit", "load", "solver"}
-    assert {"dummy", "ngspice_cli"} <= set(sim["solver"])
+    assert "ngspice_cli" in sim["solver"]
+    assert "test_fake" in sim["solver"]
+    assert "dummy" not in sim["solver"]
 
 
 def test_a_plugin_can_add_circuit_and_objective_methods(tmp_path):
     case = load_case(EX / "plugin_case.yaml")
-    rec = simulate_case(case, run_root=tmp_path, solver_override="dummy")
+    rec = simulate_case(case, run_root=tmp_path, solver_override="test_fake")
     assert rec.circuit == "custom_series_lc"
     assert measure_record(case, rec.manifest())["objective"] == "peak_voltage"
 
@@ -110,7 +112,7 @@ def test_provenance_records_the_resolved_solver(tmp_path, rc_case, monkeypatch):
 
 
 def test_a_failed_simulation_still_leaves_a_complete_record(tmp_path, rc_case):
-    """Research mode must not lose an observation when the solver breaks."""
+    """A solver failure must not lose the observation record."""
 
     rec = simulate_case(rc_case, run_root=tmp_path, solver_override="does_not_exist")
     assert rec.status == "failed"
@@ -130,10 +132,10 @@ def test_a_failure_during_preparation_is_also_recorded(tmp_path, make_case):
             "source": {"type": "sine_voltage", "name": "Vsrc", "amplitude_V": 1, "frequency_Hz": 1e6},
             "circuit": {"builder": "from_yaml", "components": [{"ref": "R1", "n1": "src", "n2": "out", "value": 50}]},
             "load": {"name": "definitely_unknown"},
-            "solver": {"name": "dummy", "tran": {"step_s": 1e-9, "stop_s": 1e-7}},
+            "solver": {"name": "test_fake", "tran": {"step_s": 1e-9, "stop_s": 1e-7}},
         }
     )
-    rec = simulate_case(case, run_root=tmp_path / "runs", solver_override="dummy")
+    rec = simulate_case(case, run_root=tmp_path / "runs", solver_override="test_fake")
     assert rec.status == "failed"
     assert rec.circuit == "unknown"
     assert (rec.run_dir / "sim_manifest.json").exists()
@@ -190,10 +192,10 @@ def test_the_manifest_records_load_ports_and_reference_plane(tmp_path, make_case
                 "reference_plane": "chamber_feedthrough",
             },
             "measurement": {"load_current": "auto"},
-            "solver": {"name": "dummy"},
+            "solver": {"name": "test_fake"},
         }
     )
-    rec = prepare_case(case, run_root=tmp_path, solver_name="dummy")
+    rec = prepare_case(case, run_root=tmp_path, solver_name="test_fake")
     assert rec.measurement["load_ports"] == {"p": "electrode", "n": "return"}
     assert rec.measurement["load_current"] == "load_current_A"
     assert rec.measurement["reference_plane"] == "chamber_feedthrough"

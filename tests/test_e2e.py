@@ -25,6 +25,7 @@ RC_CASE = EXAMPLES / "advanced" / "generic_rc_filter.yaml"
 ADVANCED_CASE = FIXTURES / "advanced_case.yaml"
 FREQUENCY_TABLE_CASE = EXAMPLES / "rf_impedance_frequency_table.yaml"
 COMPONENT_STRESS_CASE = EXAMPLES / "rf_component_stress.yaml"
+ngspice_available = shutil.which("ngspice_con.exe") or shutil.which("ngspice")
 
 
 def pcd(*args: str, expect_success: bool = True) -> subprocess.CompletedProcess[str]:
@@ -42,11 +43,12 @@ def pcd(*args: str, expect_success: bool = True) -> subprocess.CompletedProcess[
     return result
 
 
+@pytest.mark.skipif(not ngspice_available, reason="ngspice is not installed on this machine")
 def test_simulation_only_journey_produces_the_boundary_artifacts(tmp_path):
     """RF/circuit engineer path: case -> netlist -> waveform, never metrics."""
 
     run_root = tmp_path / "sim_only"
-    pcd("sim-run", str(RC_CASE), "--solver", "dummy", "--run-root", str(run_root))
+    pcd("sim-run", str(RC_CASE), "--solver", "ngspice_cli", "--run-root", str(run_root))
 
     manifests = list(run_root.rglob("sim_manifest.json"))
     assert len(manifests) == 1
@@ -56,6 +58,7 @@ def test_simulation_only_journey_produces_the_boundary_artifacts(tmp_path):
     assert not (run_dir / "metrics.json").exists(), "simulation must never score"
 
 
+@pytest.mark.skipif(not ngspice_available, reason="ngspice is not installed on this machine")
 def test_scenario_aware_study_journey(tmp_path):
     run_root = tmp_path / "study"
     result = pcd(
@@ -64,7 +67,7 @@ def test_scenario_aware_study_journey(tmp_path):
         "--optimizer",
         "random",
         "--solver",
-        "dummy",
+        "ngspice_cli",
         "--trials",
         "5",
         "--seed",
@@ -83,14 +86,15 @@ def test_scenario_aware_study_journey(tmp_path):
     assert len(pd.read_csv(summary)) == 5
 
 
+@pytest.mark.skipif(not ngspice_available, reason="ngspice is not installed on this machine")
 def test_production_safe_journey_uses_strict_flags(tmp_path):
     """validate-case --strict gates the run; --strict-exit gates the batch."""
 
     result = pcd("validate-case", str(RC_CASE), "--strict", expect_success=False)
-    assert result.returncode == 1, "the dummy solver warning must fail strict validation"
+    assert result.returncode == 0
 
     run_root = tmp_path / "prod"
-    pcd("sim-run", str(RC_CASE), "--solver", "dummy", "--run-root", str(run_root), "--strict-exit")
+    pcd("sim-run", str(RC_CASE), "--solver", "ngspice_cli", "--run-root", str(run_root), "--strict-exit")
 
 
 def test_netlist_visualization_journey(tmp_path):
@@ -105,12 +109,10 @@ def test_netlist_visualization_journey(tmp_path):
 
 # --- real solver -----------------------------------------------------------
 
-ngspice_available = shutil.which("ngspice_con.exe") or shutil.which("ngspice")
-
 
 @pytest.mark.skipif(not ngspice_available, reason="ngspice is not installed on this machine")
 def test_real_ngspice_transient_produces_a_physical_waveform(tmp_path):
-    """The dummy solver is a screening tool; this proves the real path works."""
+    """The installed solver produces the physical transient artifact."""
 
     run_root = tmp_path / "ngspice"
     result = pcd("sim-run", str(RC_CASE), "--solver", "ngspice_cli", "--run-root", str(run_root), "--strict-exit")
@@ -384,12 +386,13 @@ circuit:
   output_node: electrode
   components: [{{raw: "Rwire src electrode 1e-9"}}]
 load:
-  name: series_rlc
+  name: from_yaml
   ports: {{p: electrode, n: "0"}}
-  R_ohm: {r}
-  L_H: {inductance}
-  C_F: {capacitance}
-  Rleak_ohm: 1e15
+  components:
+    - raw: "Rload p nl {r}"
+    - raw: "Lload nl nc {inductance}"
+    - raw: "Cload nc n {capacitance}"
+    - raw: "Rleak p n 1e15"
 measurement: {{voltage_node: electrode, current_source: Vsrc, load_current: auto}}
 solver:
   name: ngspice_cli
