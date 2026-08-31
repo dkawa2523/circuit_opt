@@ -1,0 +1,47 @@
+# B8: deterministic realized-value corners for one already selected network.
+# The deliberately broad +/-15% envelope crosses the match boundary; it is a
+# synthetic stress test, not a claim about any vendor part or probability law.
+schema: case_yaml.v1
+case_id: benchmark_component_value_corner_stress
+variables:
+  C1_nominal: {choices: [2.58221757073e-10], default: 2.58221757073e-10}
+  L1_nominal: {choices: [1.19731080934e-6], default: 1.19731080934e-6}
+  C2_nominal: {choices: [7.45488022912e-12], default: 7.45488022912e-12}
+  C1_factor: {default: 1.0}
+  L1_factor: {default: 1.0}
+  C2_factor: {default: 1.0}
+source: {type: sine_voltage, name: Vsrc, p: src, n: 0, amplitude_V: 1, frequency_Hz: 13560000}
+circuit:
+  builder: from_yaml
+  output_node: electrode_terminal
+  components:
+    - {ref: C1, n1: src, n2: 0, value: "{C1_nominal*C1_factor}"}
+    - {ref: L1, n1: src, n2: electrode_terminal, value: "{L1_nominal*L1_factor}"}
+    - {ref: C2, n1: electrode_terminal, n2: 0, value: "{C2_nominal*C2_factor}"}
+load:
+  name: impedance_point
+  ports: {p: electrode_terminal, n: 0}
+  resistance_ohm: 25
+  reactance_ohm: -80.7690864346
+  model_frequency_Hz: 13560000
+  reference_plane: electrode_terminal
+  characterization: {origin: analytic_benchmark, envelope: synthetic_full_factorial_15_percent}
+measurement: {voltage_node: electrode_terminal, current_source: Vsrc, reference_impedance_ohm: 50}
+solver: {name: ngspice_cli, ac: {frequency_Hz: 13560000}}
+target:
+  fundamental_Hz: 13560000
+  objective: impedance_match
+  constraints: {metric_bounds: {reflection_magnitude: {max: 0.31622776601683794}}}
+study:
+  design_variables: [C1_nominal, L1_nominal, C2_nominal]
+  scenario_table:
+    table_file: ../component_value_corners.csv
+    id_column: scenario_id
+    weight_column: weight
+    values:
+      C1_factor: C1_factor
+      L1_factor: L1_factor
+      C2_factor: C2_factor
+  objectives: [{metric: reflection_magnitude, direction: minimize, aggregation: worst}]
+optimizer: {name: grid, seed: 0}
+run: {trials: 1}

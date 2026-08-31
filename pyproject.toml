@@ -4,24 +4,126 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "circuit-design-platform"
-version = "0.6.0"
-description = "Separated circuit simulation, data, and ML/design workflow platform"
+version = "0.15.0"
+description = "Scenario-aware RF circuit design-study engine"
 requires-python = ">=3.10"
 dependencies = [
   "numpy>=1.23",
   "pandas>=1.5",
   "PyYAML>=6.0",
-  "schemdraw>=0.23",
+  # Figure geometry is verified against the 0.23 placement/anchor contract.
+  "schemdraw>=0.23,<0.24",
+  # schemdraw only declares matplotlib as an extra, but `visualize-netlist`
+  # writes PNG, which needs it.  It is a real runtime dependency.
+  "matplotlib>=3.6,<4",
 ]
-
-[project.optional-dependencies]
-optuna = ["optuna>=3"]
-test = ["pytest>=7"]
 
 [project.scripts]
 pcd = "pcd.cli:main"
-cdp = "pcd.cli:main"
 
+# Runtime and study directories are never distributable; only `pcd` is.
+[tool.setuptools.packages.find]
+include = ["pcd*"]
+exclude = ["runs*", "tests*"]
+
+[dependency-groups]
+dev = [
+  "nox>=2024.4.15",
+  "ruff>=0.16,<0.17",
+  "pyrefly>=1.2,<2",
+  "pytest>=7",
+  "pytest-cov>=4.1",
+  "hypothesis>=6.100",
+  "import-linter>=2.0",
+  "bandit[toml]>=1.7.7",
+  "pip-audit>=2.7",
+  "detect-secrets>=1.5",
+  "vulture>=2.11",
+]
+
+# -----------------------------------------------------------------------------
+# Ruff: format + lint.  Rules are selected explicitly (never "ALL").
+# -----------------------------------------------------------------------------
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+extend-exclude = ["runs", "quality"]
+
+[tool.ruff.lint]
+select = [
+  "E", "W",   # pycodestyle
+  "F",        # pyflakes: undefined names, unused imports
+  "I",        # isort
+  "UP",       # pyupgrade
+  "B",        # bugbear: likely bugs
+  "SIM",      # simplify
+  "C4",       # comprehensions
+  "A",        # builtin shadowing
+  "TID",      # tidy imports
+  "PT",       # pytest style
+  "RUF",      # ruff-specific
+  "S",        # bandit subset
+  "C90",      # mccabe complexity
+  "NPY",      # numpy correctness
+]
+ignore = [
+  "E501",  # line length is the formatter's job
+  "S603",  # subprocess call: running a solver is this tool's purpose
+  "S607",  # partial path: ngspice is intentionally resolved via PATH
+]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "parents"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]                    # assert is the point
+
+[tool.ruff.lint.isort]
+known-first-party = ["pcd"]
+
+# -----------------------------------------------------------------------------
+# Pyrefly: the single type checker.  Do not add a second one.
+# -----------------------------------------------------------------------------
+[tool.pyrefly]
+project-includes = ["pcd", "tests", "bench", "noxfile.py"]
+project-excludes = ["**/__pycache__/**", "**/.venv/**", "runs/**"]
+python-version = "3.10"
+
+# -----------------------------------------------------------------------------
+# pytest + coverage
+# -----------------------------------------------------------------------------
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+addopts = "-ra --strict-markers --strict-config"
+markers = [
+  "property: Hypothesis property-based test",
+  "e2e: end-to-end CLI journey; run in quality-nightly",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["pcd"]
+
+[tool.coverage.report]
+show_missing = true
+exclude_lines = ["pragma: no cover", "if TYPE_CHECKING:", "if __name__ == .__main__.:"]
+
+# -----------------------------------------------------------------------------
+# Security and dead code
+# -----------------------------------------------------------------------------
+[tool.bandit]
+exclude_dirs = ["tests", "runs"]
+# Running ngspice is the documented purpose of the solver layer; the call sites
+# use an argv list with an explicit timeout and never shell=True.
+skips = ["B404", "B603", "B607"]
+
+[tool.vulture]
+paths = ["pcd", "bench"]
+min_confidence = 80
+# Registry methods are bound by name at import time via @register, so no static
+# reference to them exists.  `pcd list` enumerates them.
+ignore_decorators = ["@register", "@metric_register", "@search_register", "@sim_register"]

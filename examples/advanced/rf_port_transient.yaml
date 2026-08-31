@@ -1,0 +1,21 @@
+# Generic transient load-port measurement. The known 50-ohm divider gives
+# 25 W at the load for a 100 V-peak source and also exposes 25 W network loss.
+schema: case_yaml.v1
+case_id: rf_port_transient
+source: {type: sine_voltage, name: Vsrc, p: src, n: 0, amplitude_V: 100, frequency_Hz: 1000000}
+circuit:
+  builder: from_yaml
+  output_node: load_port
+  components: [{raw: "Rnetwork src load_port 50"}]
+load:
+  name: resistor
+  ports: {p: load_port, n: 0}
+  reference_plane: load_terminal
+  R_ohm: 50
+measurement: {load_current: auto}
+solver:
+  name: ngspice_cli
+  tran: {step_s: 1.0e-9, stop_s: 8.0e-6}
+target: {objective: rf_load}
+study:
+  objectives: [{metric: load_real_power_W, direction: maximize, aggregation: mean}]

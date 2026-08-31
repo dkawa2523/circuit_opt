@@ -1,0 +1,35 @@
+match_full_central.yaml:
+  id: P1_CCP_phase_baseline
+  role: sensitivity_baseline
+  question: Does the bounded 4 by 4 tuner cover all eight unshifted Hargis 66 Pa central loads?
+  demonstrates: The published central phases provide the reference classification for the common-mode phase stress.
+  does_not_establish: The capacitor grid is a platform fixture and not the matching network used in either paper.
+  expected:
+    feasible: true
+    feasible_fraction: [0.99, 1.0]
+    worst_reflection_magnitude: [0.075, 0.085]
+    infeasible_scenarios: []
+
+match_full_phase_minus6.yaml:
+  id: P1_CCP_phase_minus6
+  role: systematic_sensitivity
+  question: Does the same tuner cover the central load window when every voltage-current phase is shifted by -6 degrees?
+  demonstrates: All points are moved coherently toward more-capacitive phase; this is not pointwise random uncertainty.
+  does_not_establish: The shift is a conservative model-sensitivity bound, not a probability interval or corrected measurement set.
+  expected:
+    feasible: false
+    feasible_fraction: [0.87, 0.88]
+    worst_reflection_magnitude: [0.365, 0.367]
+    infeasible_scenarios: [gec66_r34_vpp200__phase_minus6]
+
+match_full_phase_plus6.yaml:
+  id: P1_CCP_phase_plus6
+  role: systematic_sensitivity
+  question: Does the same tuner cover the central load window when every voltage-current phase is shifted by +6 degrees?
+  demonstrates: All points are moved coherently toward less-capacitive phase; this is not pointwise random uncertainty.
+  does_not_establish: The shift is a conservative model-sensitivity bound, not a probability interval or corrected measurement set.
+  expected:
+    feasible: true
+    feasible_fraction: [0.99, 1.0]
+    worst_reflection_magnitude: [0.164, 0.165]
+    infeasible_scenarios: []

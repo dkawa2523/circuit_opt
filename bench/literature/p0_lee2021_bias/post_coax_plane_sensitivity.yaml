@@ -1,0 +1,28 @@
+schema: pcd.rf.v1
+case_id: literature_p0_lee2021_post_coax_plane_sensitivity
+description: Post-coax impedance substituted into a frozen matcher-output fixture without a plane transform.
+frequency_Hz: 13560000
+
+network:
+  type: pi_match
+  fixed:
+    C1: 1.0438288626e-9
+    L1: 2.130134994e-7
+    C2: 1.0e-12
+
+load:
+  type: impedance_point
+  resistance_ohm: 2.47
+  reactance_ohm: -14.3
+  reference_plane: bias_rf_rod_end_post_coax
+  evidence:
+    origin: literature_table_exact
+    doi: 10.1063/6.0000883
+    locator: Table I, plasma, ZL
+    benchmark_use: reference-plane-misuse sensitivity; not an additional operating condition
+
+acceptance:
+  reflected_power_fraction_max: 0.10
+
+execution:
+  solver: ngspice_cli

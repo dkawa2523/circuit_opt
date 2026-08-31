@@ -1,0 +1,69 @@
+schema: pcd.literature_uncertainty_challenge.v1
+benchmark_id: p1_colpo1999_digitization_corner_challenge
+
+source:
+  central_table: qualified_impedance.csv
+  doi: 10.1063/1.369268
+  figures: [2, 3]
+  frequency_Hz: 13560000
+  reference_plane: rfz60_global_icp_source_terminal
+  impedance_convention: Z_m = R_m + j X_m
+  evidence_class: two_reader_central_point_plot_transcription
+
+corner_expansion:
+  derived_table: uncertainty_corners.csv
+  rule: Cartesian product of R_center +/- 6 ohm and X_center +/- 7 ohm
+  resistance_offsets_ohm: [-6.0, 6.0]
+  reactance_offsets_ohm: [-7.0, 7.0]
+  corners_per_central_point: 4
+  expected_central_points: 15
+  expected_corner_points: 60
+  correlation_assumption: unknown; use all four rectangular corners
+  uncertainty_scope: digitization and marker-center ambiguity only
+  statistical_interpretation: none; corners are not samples or confidence limits
+  excluded_uncertainty: RFZ60 measurement uncertainty and chamber-to-chamber variation
+
+design_fixture:
+  purpose: exercise fixed-versus-bounded matching decisions on the explicitly expanded load window
+  claim_scope: platform engineering challenge; not the matcher reported by Colpo et al.
+  topology: pi_match
+  source_reference_impedance_ohm: 50.0
+  fixed_inductor_H: 1.0e-6
+  fixed_network:
+    C1_F: 5.75e-10
+    C2_F: 2.35e-10
+    selection_basis: >-
+      A deterministic 5 pF analytic screen at the middle tabulated condition
+      (100 mTorr, 3 kW) selected the near-match setting. The benchmark result,
+      however, is obtained from NGSpice over all derived corners.
+    representative_central_scenario: colpo_p0100_w3000
+    representative_reflection_magnitude_max: 0.01
+  bounded_tuner:
+    C1_F: [4.50e-10, 5.25e-10, 6.00e-10, 6.75e-10]
+    C2_F: [2.00e-10, 2.15e-10, 2.30e-10, 2.45e-10]
+    control_states: 16
+    selection_basis: >-
+      A small, explicit, one-frequency capacitor grid spanning the exact-match
+      region of the derived window. It is a finite platform fixture, not a
+      statement about component resolution, tuner dynamics, or hardware ratings.
+  acceptance:
+    reflected_power_fraction_max: 0.10
+    origin: platform engineering criterion; not a paper acceptance limit
+
+qualification:
+  expected_design_classification:
+    fixed_network:
+      feasible: false
+      feasible_fraction: [0.55, 0.62]
+      worst_reflection_magnitude: [0.74, 0.77]
+    bounded_tuner:
+      feasible: true
+      feasible_fraction: [1.0, 1.0]
+      worst_reflection_magnitude_max: 0.25
+  boundaries:
+    impedance_table_automatically_propagates_uncertainty_columns: false
+    uncertainty_is_propagated_here_by: explicit materialization of four derived rows per central point
+    paper_matcher_reproduction_claimed: false
+    less_than_one_percent_paper_reflection_reproduced: false
+    production_hardware_qualified: false
+    load_physics_or_icp_transformer_parameters_validated: false

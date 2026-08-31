@@ -1,0 +1,37 @@
+# B5: matching is acceptable, but high-drive component stress is not.
+schema: pcd.rf.v1
+case_id: benchmark_match_high_drive_stress
+frequency_Hz: 13560000
+
+network:
+  type: pi_match
+  fixed:
+    C1: 2.58221757073e-10
+    L1: 1.19731080934e-6
+    C2: 7.45488022912e-12
+  loss_ohm:
+    C1: 0.1
+    L1: 0.5
+    C2: 0.1
+
+load:
+  type: impedance_point
+  resistance_ohm: 25
+  reactance_ohm: -80.76908643457358
+  reference_plane: electrode_terminal
+  evidence: {origin: synthetic_benchmark, point: nominal_13p56MHz}
+
+conditions:
+  - {id: low_drive, drive_peak_V: 25}
+  - {id: high_drive, drive_peak_V: 100}
+
+acceptance:
+  reflected_power_fraction_max: 0.10
+  component_limits:
+    L1:
+      current_rms_A_max: 1.0
+      loss_W_max: 0.5
+  source_limits:
+    current_rms_A_max: 1.0
+    apparent_power_VA_max: 50.0
+  loss_balance_fraction_max: 1.0e-5

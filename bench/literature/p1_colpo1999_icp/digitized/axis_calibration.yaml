@@ -1,0 +1,100 @@
+schema: pcd.literature_digitization.v1
+benchmark_id: p1_colpo1999_plasma_on_window
+
+source:
+  title: Determination of the equivalent circuit of inductively coupled plasma sources
+  authors: [Pascal Colpo, Roland Ernst, Francois Rossi]
+  year: 1999
+  doi: 10.1063/1.369268
+  article: https://doi.org/10.1063/1.369268
+  public_metadata: https://publications.jrc.ec.europa.eu/repository/handle/JRC17678
+  author_full_text: https://www.researchgate.net/publication/241446170_Determination_of_the_equivalent_circuit_of_inductively_coupled_plasma_sources
+
+operating_scope:
+  frequency_Hz: 13560000
+  gas: argon
+  pressure_mTorr: [10, 100, 1000]
+  paired_rf_power_W: [1000, 2000, 3000, 4000, 5000]
+  instrument: Advanced Energy RFZ60
+  reference_plane: rfz60_global_icp_source_terminal
+  reference_plane_basis: Figure 1 places the RFZ60 between the matching network and RF coil
+  impedance_convention: Z_m = R_m + j X_m
+  reactance_sign: positive_inductive
+
+figures:
+  resistance:
+    paper_figure: 2
+    visible_axis_label: R_m
+    landing_page: https://www.researchgate.net/figure/Measured-global-resistance-R-m-against-rf-power-for-different-Ar_fig2_241446170
+    working_image:
+      retained_in_repository: false
+      reason_not_retained: copyrighted figure; retain only calibration and derived numerical points
+      width_pixels: 378
+      height_pixels: 308
+      sha256: 66DE0819CDEF3775D96075A75ECE249EDD69D8A8B060563D8F416CE5A2B89717
+      retrieval_cache_url: https://ts4.mm.bing.net/th?id=OIP.Vb1w2F9PQPWPgpyPnOJ9AQAAAA&pid=15.1
+    x_axis:
+      quantity: reported_rf_power_W
+      anchors:
+        - {pixel: 50.0, value: 0.0}
+        - {pixel: 364.0, value: 5000.0}
+    y_axis:
+      quantity: resistance_ohm
+      anchors:
+        - {pixel: 251.0, value: 0.0}
+        - {pixel: 5.0, value: 300.0}
+
+  reactance:
+    paper_figure: 3
+    visible_axis_label: X_m
+    landing_page: https://www.researchgate.net/figure/Measured-global-reactance-X-m-against-rf-power-for-different-Ar_fig3_241446170
+    working_image:
+      retained_in_repository: false
+      reason_not_retained: copyrighted figure; retain only calibration and derived numerical points
+      width_pixels: 379
+      height_pixels: 304
+      sha256: 4D2819EE21D2914924BC5D076474F01898D7AFFF64AC7F8ABE853393795949CC
+      retrieval_cache_url: https://ts3.mm.bing.net/th?id=OIP.jONbHwVI1bjqtMwt71wV8gAAAA&pid=15.1
+    x_axis:
+      quantity: reported_rf_power_W
+      anchors:
+        - {pixel: 56.0, value: 0.0}
+        - {pixel: 366.0, value: 5000.0}
+    y_axis:
+      quantity: reactance_ohm
+      anchors:
+        - {pixel: 248.0, value: 0.0}
+        - {pixel: 6.0, value: 400.0}
+
+digitization:
+  method: mean of two independent manual marker-center extractions from author-uploaded figure thumbnails with linear two-anchor axis calibration
+  marker_mapping:
+    10_mTorr: star
+    100_mTorr: square
+    1000_mTorr: diamond
+  pairing_rule: same pressure marker and same reported RF-power abscissa in both figures
+  power_pixel_tolerance_W: 20.0
+  value_rounding_ohm: 0.1
+  uncertainty_half_width:
+    resistance_ohm: 6.0
+    reactance_ohm: 7.0
+  independent_reader_maximum_difference:
+    resistance_ohm: 3.4
+    reactance_ohm: 3.3
+  uncertainty_scope: digitization and marker-center ambiguity only; it is not RFZ60 measurement uncertainty
+  retrieval_note: cached image metadata were inconsistent with the visible plotted quantity, so figure assignment is based on the visible R_m or X_m axis label and the paper captions
+
+qualification:
+  replay_thresholds:
+    pixel_value_round_trip_tolerance_ohm: 0.101
+    spice_relative_complex_error_max: 5.0e-5
+  qualified_use:
+    - P1 global ICP terminal-impedance central-point challenge set carrying digitization-only bounds as metadata
+    - impedance_table central-point input; expand the bounds explicitly before uncertainty-aware design studies
+    - positive-inductive one-port replay in Python and ngspice
+  not_qualified_use:
+    - exact plasma-physics or parameter-identification validation
+    - reproduction of the paper's matching network or its less-than-1-percent reflected-power result
+    - validation of a planar semiconductor-production ICP chamber
+    - fitting or validating the current structured icp_transformer model
+    - uncertainty-propagated tuner coverage without explicitly expanding the digitization bounds

@@ -1,0 +1,4 @@
+scenario_id,frequency_Hz,resistance_ohm,reactance_ohm,weight,condition_id
+nominal_6p78MHz,6780000,18,-110,1,recipe_nominal
+nominal_13p56MHz,13560000,25,-70,2,recipe_nominal
+nominal_27p12MHz,27120000,34,-28,1,recipe_nominal
