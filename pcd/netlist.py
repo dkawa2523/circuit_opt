@@ -11,6 +11,7 @@ is :mod:`pcd.solver`; recording the run is :mod:`pcd.sim_core`.
 from __future__ import annotations
 
 from collections.abc import Callable
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -22,7 +23,8 @@ from .analysis import (
     control_lines,
     load_current,
     probe_plan,
-    source_node,
+    source_name,
+    source_voltage_vector,
 )
 from .case import Case
 from .sim_registry import get as get_sim_method
@@ -57,12 +59,18 @@ class Circuit:
     output_node: str = "out"
     ground: str = "0"
     notes: list[str] = field(default_factory=list)
+    preamble: list[str] = field(default_factory=list)
 
     def add(self, ref: str, n1: str, n2: str, value: Any) -> None:
         self.components.append(Component(ref=str(ref), n1=str(n1), n2=str(n2), value=value))
 
     def raw(self, line: str) -> None:
         self.components.append(Component(raw=str(line)))
+
+    def preamble_raw(self, line: str) -> None:
+        """Add an authored statement before generated case parameters."""
+
+        self.preamble.append(str(line))
 
     def couple(self, ref: str, first: str, second: str, coefficient: float) -> None:
         """Magnetically couple two inductors, i.e. make them a transformer."""
@@ -124,7 +132,7 @@ def select_load_name(case: Case, params: dict[str, Any]) -> str:
 def build_circuit(case: Case, params: dict[str, Any]) -> tuple[str, Circuit]:
     load_sim_plugins(case.data.get("plugins"), case.base_dir)
     name = select_circuit_name(case, params)
-    circuit = get_sim_method("circuit", name)(case, params)
+    circuit = get_sim_method("circuit", name)(case.detached(), deepcopy(params))
     if not isinstance(circuit, Circuit):
         raise TypeError(f"circuit builder '{name}' must return Circuit")
     return name, circuit
@@ -133,7 +141,7 @@ def build_circuit(case: Case, params: dict[str, Any]) -> tuple[str, Circuit]:
 def build_load_subckt(case: Case, params: dict[str, Any]) -> tuple[str, str]:
     load_sim_plugins(case.data.get("plugins"), case.base_dir)
     name = select_load_name(case, params)
-    subckt = get_sim_method("load", name)(case, params)
+    subckt = get_sim_method("load", name)(case.detached(), deepcopy(params))
     return name, "" if subckt is None else str(subckt).strip()
 
 
@@ -213,13 +221,18 @@ def _case_sources(case: Case) -> list[dict[str, Any]]:
 def _source_ac_suffix(src: dict[str, Any], params: dict[str, Any]) -> str:
     """Use an explicit AC magnitude, or the sine peak amplitude, for stress."""
 
-    if "ac_magnitude_V" in src:
+    if "ac_magnitude" in src:
+        magnitude = param_ref_or_value(src["ac_magnitude"], params)
+    elif "ac_magnitude_V" in src:
         magnitude = param_ref_or_value(src["ac_magnitude_V"], params)
+    elif "ac_magnitude_A" in src:
+        magnitude = param_ref_or_value(src["ac_magnitude_A"], params)
     elif str(src.get("type", "sine_voltage")) in {"sine_voltage", "rf_voltage", "voltage_sine", "sine"}:
         magnitude = _pick(src, params, "amplitude_V", "amplitude", default=1.0)
     else:
         magnitude = 1.0
-    return f" AC {spice_value(magnitude)}"
+    phase = param_ref_or_value(src.get("ac_phase_deg", 0.0), params)
+    return f" AC {spice_value(magnitude)} {spice_value(phase)}"
 
 
 def render_source(case: Case, params: dict[str, Any], ac_enabled: bool = False) -> list[str]:
@@ -231,6 +244,7 @@ def render_source(case: Case, params: dict[str, Any], ac_enabled: bool = False) 
     """
 
     lines: list[str] = []
+    active = source_name(case)
     for i, src in enumerate(_case_sources(case)):
         if not src:
             continue
@@ -241,8 +255,10 @@ def render_source(case: Case, params: dict[str, Any], ac_enabled: bool = False) 
         render = SOURCE_RENDERERS.get(typ)
         if render is None:
             raise ValueError(f"unknown source type: {typ}. available={sorted(SOURCE_RENDERERS)}")
-        line = render(str(src.get("name", f"Vsrc{i}")), str(src.get("p", "src")), str(src.get("n", "0")), src, params)
-        lines.append(line + (_source_ac_suffix(src, params) if ac_enabled else ""))
+        name = str(src.get("name", "Vsrc" if i == 0 else f"Vsrc{i}"))
+        line = render(name, str(src.get("p", "src")), str(src.get("n", "0")), src, params)
+        ac_suffix = _source_ac_suffix(src, params) if name == active else " AC 0"
+        lines.append(line + (ac_suffix if ac_enabled else ""))
     return lines
 
 
@@ -263,7 +279,7 @@ def render_ngspice_netlist(
     solver_cfg = case.data.get("solver", {}) or {}
     meas = case.data.get("measurement", {}) or {}
     output_node = str(meas.get("voltage_node", circuit.output_node))
-    source = str(meas.get("current_source", "Vsrc"))
+    source = source_name(case)
 
     ports = (case.data.get("load", {}) or {}).get("ports", {}) or {}
     load_p = str(ports.get("p", circuit.output_node))
@@ -274,6 +290,8 @@ def render_ngspice_netlist(
         output_vector = f"v({load_p})" if load_n == "0" else f"v({load_p},{load_n})"
 
     lines = [f"* Auto-generated simulation netlist for case: {case.case_id}"]
+    if circuit.preamble:
+        lines += ["", "* Imported circuit deck", *circuit.preamble]
     lines += _header_lines(circuit, params, solver_cfg)
     lines += ["", "* Sources", *render_source(case, params, ac_enabled=bool(ac_sweep(solver_cfg, params)))]
     lines += ["", "* Circuit", *(comp.to_spice() for comp in circuit.components)]
@@ -281,7 +299,10 @@ def render_ngspice_netlist(
         lines += ["", "* Optional load", load_subckt, *_load_instance(case, circuit.output_node)]
     vectors, _columns = probe_plan(case)
     ac_vectors, _ac_columns = ac_probe_plan(case)
-    lines += ["", *control_lines(solver_cfg, output_vector, source, source_node(case), vectors, params, ac_vectors)]
+    lines += [
+        "",
+        *control_lines(solver_cfg, output_vector, source, source_voltage_vector(case), vectors, params, ac_vectors),
+    ]
     return "\n".join(lines) + "\n"
 
 

@@ -217,6 +217,12 @@ at the load port. It then reports:
 - voltage/current harmonics;
 - periodic-window residual and settled status.
 
+Acceptance metrics require every voltage and current signal used by the
+calculation to be periodic over the final measurement window. If any one is
+still changing, the evaluation is recorded as `not_settled` instead of turning
+startup ringing into a steady-state power or stress claim. The Python analysis
+functions expose `require_settled=False` only for explicitly diagnostic use.
+
 `load_real_power_W` is accepted real power at the named load port. For the ICP
 model it includes coil loss and effective reflected loss; for the CCP model it
 is the aggregate power represented by `R_eff`. No electron/ion/sheath or

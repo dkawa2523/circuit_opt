@@ -34,6 +34,9 @@ def _variable_case(make_case, spec):
         ({"bounds": "nope"}, "variable.invalid_bounds"),
         ({"bounds": ["a", "b"]}, "variable.non_numeric_bounds"),
         ({"bounds": [10, 1]}, "variable.bounds_reversed"),
+        ({"bounds": [float("nan"), 1]}, "variable.non_finite_bounds"),
+        ({"bounds": [1.2, 1.8], "type": "int"}, "variable.empty_integer_bounds"),
+        ({"choices": [1, float("inf")]}, "variable.non_finite_value"),
         ({"bounds": [-1, 10], "scale": "log"}, "variable.log_bounds_non_positive"),
         ({"bounds": [1, 10], "default": 99}, "variable.default_out_of_bounds"),
     ],
@@ -109,6 +112,7 @@ def test_removed_dummy_solver_is_rejected_even_when_a_plugin_is_present(make_cas
         ({"points": 0, "start_Hz": 2e6, "stop_Hz": 1e6}, "solver.ac_invalid_range"),
         ({"frequency_Hz": 0}, "solver.ac_invalid_range"),
         ({"frequency_Hz": []}, "solver.ac_non_numeric"),
+        ({"points": 1.5}, "solver.ac_non_integer_points"),
         ({"frequency_Hz": "rf_frequency_Hz", "points": 1}, "solver.ac_point_conflict"),
     ],
 )
@@ -187,12 +191,122 @@ def test_missing_source_is_a_warning(make_case):
 
 def test_malformed_source_containers_are_errors(make_case):
     assert "case.source_not_mapping" in codes(validate_case(make_case({"case_id": "s", "source": [1, 2]})))
-    assert "case.sources_not_list" in codes(validate_case(make_case({"case_id": "s", "sources": {"a": 1}})))
+    assert "case.sources_not_list" in codes(validate_case(make_case({"case_id": "s", "sources": 1})))
+
+
+def test_duplicate_sources_and_reserved_probe_columns_are_rejected(make_case):
+    case = make_case(
+        {
+            "case_id": "ambiguous_measurement",
+            "sources": [
+                {"type": "dc_voltage", "name": "Vsame"},
+                {"type": "dc_voltage", "name": "Vsame"},
+            ],
+            "measurement": {"current_source": "Vsame", "probes": {"voltage_V": "v(extra)"}},
+        }
+    )
+
+    assert {"case.duplicate_source_name", "measurement.invalid_probe"} <= codes(validate_case(case))
+
+
+def test_measurement_current_source_must_name_a_structured_source(make_case):
+    case = make_case(
+        {
+            "case_id": "unknown_source",
+            "source": {"type": "sine_voltage", "name": "Vrf"},
+            "measurement": {"current_source": "Vmissing"},
+        }
+    )
+
+    assert "measurement.invalid_probe" in codes(validate_case(case))
+
+
+@pytest.mark.parametrize(
+    "measurement",
+    [
+        {"reference_impedance_ohm": 0},
+        {"reference_impedance_ohm": float("inf")},
+        {"reference_impedance_ohm": "open"},
+        {"periodic_cycles": 0},
+        {"settling_comparisons": 1.5},
+        {"settling_tolerance": -1},
+        {"settling_tolerance": "tight"},
+        {"harmonic_count": "many"},
+    ],
+)
+def test_invalid_rf_measurement_options_are_rejected(make_case, measurement):
+    case = make_case({"case_id": "bad_measurement", "source": {"type": "sine_voltage"}, "measurement": measurement})
+    assert not validate_case(case).ok
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "expected"),
+    [
+        ("netlist_mode", "automatic", "circuit.invalid_netlist_mode"),
+        ("source_policy", "replace_by_node", "circuit.invalid_source_policy"),
+    ],
+)
+def test_external_netlist_policies_are_explicit_and_validated(make_case, field, value, expected):
+    case = make_case(
+        {
+            "circuit": {
+                "builder": "from_netlist",
+                "netlist_file": "external.cir",
+                field: value,
+            }
+        }
+    )
+
+    assert expected in codes(validate_case(case))
+
+
+@pytest.mark.parametrize(
+    ("section", "value", "expected"),
+    [
+        ("solver", [], "solver.not_mapping"),
+        ("load", [], "load.not_mapping"),
+        ("measurement", [], "measurement.not_mapping"),
+        ("target", [], "target.not_mapping"),
+        ("plugins", {}, "plugins.not_list"),
+        ("plugins", [1], "plugin.invalid_path"),
+    ],
+)
+def test_malformed_nested_sections_are_reported_without_crashing(make_case, section, value, expected):
+    case = make_case({"case_id": "bad", "source": {"type": "sine_voltage"}, section: value})
+
+    assert expected in codes(validate_case(case))
 
 
 def test_missing_plugin_is_an_error(make_case):
     case = make_case({"case_id": "p", "source": {"type": "sine_voltage"}, "plugins": ["nope.py"]})
     assert "plugin.not_found" in codes(validate_case(case))
+
+
+def test_plugin_loading_and_solver_registration_are_validated_together(tmp_path, make_case):
+    plugin = tmp_path / "solver_plugin.py"
+    plugin.write_text("def broken(:\n", encoding="utf-8")
+    case = make_case(
+        {
+            "case_id": "plugin",
+            "source": {"type": "sine_voltage"},
+            "plugins": [plugin.name],
+            "solver": {"name": "validation_plugin_solver"},
+        }
+    )
+
+    invalid = codes(validate_case(case))
+    assert {"plugin.load_failed", "solver.unknown"} <= invalid
+
+    plugin.write_text(
+        "from pcd.sim_registry import register\n"
+        "@register('solver', 'validation_plugin_solver')\n"
+        "def solve(*args, **kwargs):\n"
+        "    return None\n",
+        encoding="utf-8",
+    )
+    valid = codes(validate_case(case))
+    assert "plugin.load_failed" not in valid
+    assert "solver.unknown" not in valid
 
 
 def test_missing_target_waveform_is_an_error(make_case):
@@ -204,6 +318,17 @@ def test_missing_target_waveform_is_an_error(make_case):
         }
     )
     assert "target.waveform_not_found" in codes(validate_case(case))
+
+
+def test_target_waveform_path_must_be_pathlike(make_case):
+    case = make_case(
+        {
+            "case_id": "t",
+            "source": {"type": "sine_voltage"},
+            "target": {"waveform_file": ["not", "a", "path"]},
+        }
+    )
+    assert "target.invalid_waveform_path" in codes(validate_case(case))
 
 
 def test_target_without_waveform_file_is_a_warning(make_case):

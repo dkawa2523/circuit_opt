@@ -213,11 +213,39 @@ limits are safety bounds, not sampling budgets; every declared state below
 them is evaluated. `--optimizer`, `--trials`, and `--seed` are advanced-case
 options and cannot change a resolved `pcd.rf.v1` candidate set. `--solver` may
 select `ngspice_cli`, or an adapter already registered by an advanced Python
-integration, without changing the problem.
+integration, without changing the problem. `--require-acceptance` is an
+optional automation gate: it exits nonzero when the completed decision is not
+`meets_declared_acceptance`, even if every electrical solve succeeded.
+
+## Advanced external circuit input
+
+`case_yaml.v1` can import an existing circuit while PCD continues to own the
+source, AC/transient analysis, output vectors, and final parameter overrides:
+
+```yaml
+circuit:
+  builder: from_netlist
+  netlist_file: exported_match.cir
+  netlist_mode: deck           # deck | fragment
+  source_policy: replace_named # replace_named | preserve
+  output_node: electrode
+```
+
+`deck` discards the standard first-line SPICE title; `fragment` treats its
+first line as executable circuit input and is the default for compatibility.
+`replace_named` removes only top-level independent sources whose names exactly
+match structured case sources. It does not infer conflicts from shared nodes.
+Use `preserve` when the imported sources are intentionally part of the circuit.
+
+Top-level execution directives such as `.control`, `.ac`, `.tran`, `.op`,
+`.dc`, `.noise`, and `.end` are not imported. Consequently `from_netlist` is a
+circuit-import adapter for PCD AC/transient studies, not an arbitrary ngspice
+deck runner.
 
 ## Persisted truth
 
-Each public-input run stores:
+Each public-input run stores the following files in one immutable
+`generations/g_<id>/` directory:
 
 | file | purpose |
 |---|---|
@@ -226,14 +254,29 @@ Each public-input run stores:
 | `case.yaml` | executable internal case used by the numerical path |
 | `netlist.cir` | exact generated circuit for an evaluation |
 | `sim_manifest.json` | solver identity, parameters, hashes, diagnostics, and artifacts |
+| `evaluations.csv` | one flat candidate/scenario/control row per electrical solve |
 
 Study results additionally retain every candidate, scenario, control
 evaluation, aggregation, and content-addressed raw simulation result.
+For an advanced external SPICE deck, recursively included files and selected
+library sections are inlined into `imported_netlist.cir`; their original bytes
+are also content-addressed and listed separately in `input_manifest.json`.
+The root `study_result.json` is written last and points to the active generation.
+Rerunning the same case publishes a new complete generation while preserving
+the previous generation and reusable raw simulation cache entries. If a rerun
+is interrupted, the previous `study_result.json` and its candidate inventory
+remain authoritative; an unpublished generation may remain for inspection or
+later cleanup. `pcd result-prune STUDY_ROOT --keep 3` previews old immutable
+generations; add `--apply` to remove only those listed. Raw and evaluation
+caches are never removed by this command.
 `study_result.json.best` is the compact decision surface: selected fixed
 candidate, acceptance status, solved/accepted condition counts, and each
-condition's selected control, objective values, and failed constraints. A
-failed electrical evaluation marks the overall decision as incomplete rather
-than silently treating the missing point as an ordinary design failure.
+condition's selected control, objective values, and failed constraints.
+`best.status` describes evidence for the selected candidate itself. The
+separate `best.search_completeness` field becomes `incomplete_evidence` when
+any explored candidate or control solve failed, because global optimality may
+then be unknown even when the selected candidate demonstrably meets its
+declared acceptance limits.
 Candidate selection first prefers complete solver evidence, then condition
 coverage, constraint violation, and the declared objectives. If
 `control_margin_min` is present, an electrically valid edge setting remains
@@ -248,6 +291,16 @@ When `pcd run` receives a solver override, its effective value replaces the
 solver field in `resolved_plan.yaml` and `case.yaml` before validation and
 hashing. Candidate enumeration remains derived from the authored RF input.
 `input_case.yaml` remains unaltered.
+
+`evaluations.csv` repeats design, scenario, and control values with explicit
+prefixes and includes raw status, selection flag, metrics, constraints, cache
+identity, duration, and artifact paths. `table_schema`, generation-specific
+`dataset_id`, case schemas, and runtime/solver fingerprints make rows safe to
+combine across studies without relying on directory names. It is intended as
+the direct analysis or machine-learning handoff; candidate-level
+`study_history.json` remains the compact optimizer trace. `selected_control`
+is an outcome of evaluating all controls, not an independent input feature;
+using it to predict that same outcome would leak target information.
 
 ## Responsibility boundary
 

@@ -23,6 +23,7 @@ if str(ROOT) not in sys.path:
 from bench.literature.p1_colpo1999_icp.digitized.run import run as run_central  # noqa: E402
 from pcd.artifacts import write_json  # noqa: E402
 from pcd.case import load_case  # noqa: E402
+from pcd.results import candidate_result_paths  # noqa: E402
 from pcd.study import run_case_study  # noqa: E402
 
 CORNER_COLUMNS = (
@@ -154,8 +155,8 @@ def _run_design_case(path: Path, run_root: Path, solver: str) -> dict[str, Any]:
         solver_override=solver,
         seed=0,
     )
-    candidate_dir = Path(study["run_root"]) / "candidates"
-    candidate_path = candidate_dir / f"{study['best']['candidate']['candidate_id']}.json"
+    candidate_id = str(study["best"]["candidate"]["candidate_id"])
+    candidate_path = next(path for path in candidate_result_paths(study["run_root"]) if path.stem == candidate_id)
     candidate = json.loads(candidate_path.read_text(encoding="utf-8"))
     scenarios = _selected_scenarios(candidate)
     worst = max(float(item["reflection_magnitude"]) for item in scenarios)

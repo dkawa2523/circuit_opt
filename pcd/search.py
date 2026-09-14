@@ -7,9 +7,11 @@ are owned by the StudyRunner and can never leak into this parameter space.
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from itertools import product
 from math import prod
+from numbers import Integral, Real
 from typing import Any
 
 import numpy as np
@@ -47,7 +49,10 @@ def sample_param(rng: np.random.Generator, spec: dict[str, Any]) -> Any:
         return bool(rng.integers(0, 2))
     lo, hi = spec.get("bounds", [0.0, 1.0])
     if spec.get("type") == "int":
-        return int(rng.integers(int(lo), int(hi) + 1))
+        low, high = math.ceil(float(lo)), math.floor(float(hi))
+        if low > high:
+            raise ValueError(f"integer bounds contain no integer: {spec}")
+        return int(rng.integers(low, high + 1))
     if spec.get("scale", "linear") == "log":
         lo_f, hi_f = float(lo), float(hi)
         if lo_f <= 0 or hi_f <= 0:
@@ -55,6 +60,70 @@ def sample_param(rng: np.random.Generator, spec: dict[str, Any]) -> Any:
         value = float(10 ** rng.uniform(math.log10(lo_f), math.log10(hi_f)))
         return min(max(value, lo_f), hi_f)
     return float(rng.uniform(float(lo), float(hi)))
+
+
+def validate_proposal(case: Case, proposal: Any) -> dict[str, Any]:
+    """Normalize one optimizer proposal and enforce the declared design space.
+
+    Optimizers may omit variables that have defaults, but may not introduce
+    undeclared axes or return values outside a variable's type/domain.  This is
+    deliberately the single runtime check between ``ask`` and simulation.
+    """
+
+    if not isinstance(proposal, Mapping):
+        raise TypeError("optimizer.ask() must return a mapping")
+    specs = variable_specs(case)
+    extras = sorted(str(name) for name in proposal if name not in specs)
+    if extras:
+        raise ValueError(f"optimizer proposed undeclared design variables: {extras}")
+    values = {**default_params(case), **dict(proposal)}
+    missing = sorted(name for name in specs if name not in values)
+    if missing:
+        raise ValueError(f"optimizer proposal is missing design variables without defaults: {missing}")
+    return {name: _validate_proposed_value(name, values[name], spec) for name, spec in specs.items()}
+
+
+def _validate_proposed_value(name: str, value: Any, spec: dict[str, Any]) -> Any:
+    if isinstance(value, np.generic):
+        value = value.item()
+    value = _normalize_proposed_type(name, value, str(spec.get("type", "")))
+    _validate_proposed_domain(name, value, spec)
+    return value
+
+
+def _normalize_proposed_type(name: str, value: Any, kind: str) -> Any:
+    if kind == "bool":
+        if not isinstance(value, bool):
+            raise ValueError(f"optimizer variable {name!r} must be bool")
+    elif kind == "int":
+        if isinstance(value, bool) or not isinstance(value, Integral):
+            raise ValueError(f"optimizer variable {name!r} must be int")
+        value = int(value)
+    elif kind in {"float", "number"}:
+        if isinstance(value, bool) or not isinstance(value, Real):
+            raise ValueError(f"optimizer variable {name!r} must be numeric")
+        value = float(value)
+    elif kind in {"str", "string"} and not isinstance(value, str):
+        raise ValueError(f"optimizer variable {name!r} must be a string")
+    return value
+
+
+def _validate_proposed_domain(name: str, value: Any, spec: dict[str, Any]) -> None:
+    if isinstance(value, Real) and not isinstance(value, bool) and not math.isfinite(float(value)):
+        raise ValueError(f"optimizer variable {name!r} must be finite")
+    choices = spec.get("choices")
+    if choices is not None and value not in choices:
+        raise ValueError(f"optimizer variable {name!r} must be one of {list(choices)!r}; got {value!r}")
+    if "bounds" in spec:
+        try:
+            number = float(value)
+            lo, hi = (float(item) for item in spec["bounds"])
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"optimizer variable {name!r} must be numeric within its bounds") from exc
+        if not math.isfinite(number) or number < lo or number > hi:
+            raise ValueError(f"optimizer variable {name!r}={value!r} is outside [{lo:g}, {hi:g}]")
+    if spec.get("scale") == "log" and isinstance(value, Real) and float(value) <= 0:
+        raise ValueError(f"optimizer variable {name!r} must be positive on a log scale")
 
 
 @dataclass
@@ -81,7 +150,7 @@ def create_optimizer(case: Case, optimizer_name: str | None = None, seed: int | 
     config = case.data.get("optimizer", {}) or {}
     name = optimizer_name or str(config.get("name", "random"))
     factory = get_optimizer(name)
-    return factory(case, seed=seed)
+    return factory(case.detached(), seed=seed)
 
 
 class RandomOptimizer(BaseOptimizer):

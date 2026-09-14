@@ -59,6 +59,7 @@ ROOT = HERE.parents[1]
 DEFAULT_RUN_ROOT = ROOT / "runs" / "benchmark_suite"
 DEFAULT_OUTPUT = HERE / "generated"
 DEFAULT_PDF_OUTPUT = ROOT / "output" / "pdf"
+SVG_HASHSALT = "pcd-benchmark-figures-v1"
 
 CASE_IDS = {
     "B1": "B1_fixed_nominal",
@@ -127,15 +128,18 @@ def _suite_case(payload: dict[str, Any], benchmark_id: str) -> dict[str, Any]:
 
 
 def _candidate_for_case(run_root: Path, case_id: str) -> tuple[dict[str, Any], Path]:
-    for path in sorted(run_root.glob("*/candidates/trial_*.json")):
-        payload = _read_json(path)
-        scenarios = payload.get("scenarios") or []
-        if not scenarios:
-            continue
-        selected = scenarios[0].get("selected") or {}
-        observations = (selected.get("raw") or {}).get("observations") or {}
-        if observations.get("case_id") == case_id:
-            return payload, path
+    from pcd.results import candidate_result_paths
+
+    for study_root in sorted(path for path in run_root.iterdir() if (path / "study_result.json").is_file()):
+        for path in candidate_result_paths(study_root):
+            payload = _read_json(path)
+            scenarios = payload.get("scenarios") or []
+            if not scenarios:
+                continue
+            selected = scenarios[0].get("selected") or {}
+            observations = (selected.get("raw") or {}).get("observations") or {}
+            if observations.get("case_id") == case_id:
+                return payload, path
     raise FileNotFoundError(f"candidate artifact not found for {case_id} under {run_root}")
 
 
@@ -144,7 +148,13 @@ def _scenario_map(case: dict[str, Any]) -> dict[str, dict[str, Any]]:
 
 
 def _archived_case_for_case_id(run_root: Path, case_id: str) -> tuple[dict[str, Any], Path]:
-    for path in sorted(run_root.glob("*/case.yaml")):
+    from pcd.results import study_artifact_path
+
+    study_roots = sorted(path for path in run_root.iterdir() if (path / "study_result.json").is_file())
+    for study_root in study_roots:
+        path = study_artifact_path(study_root, "case", "case.yaml")
+        if path is None or not path.is_file():
+            continue
         payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         if payload.get("case_id") == case_id:
             return dict(payload), path
@@ -183,10 +193,19 @@ def _scenario_scalar_from_candidate(candidate: dict[str, Any], key: str, scale: 
     }
 
 
+def _candidate_roots(candidate_path: Path) -> tuple[Path, Path]:
+    """Return the study root and the generation containing a candidate."""
+
+    generation_root = candidate_path.parents[1]
+    study_root = generation_root.parent.parent if generation_root.parent.name == "generations" else generation_root
+    return study_root, generation_root
+
+
 def _candidate_artifact(candidate_path: Path, item: dict[str, Any], key: str) -> Path:
     raw = str(item["selected"]["raw"]["artifacts"][key])
     relative = Path(*PureWindowsPath(raw).parts)
-    path = candidate_path.parents[1] / relative
+    study_root, _generation_root = _candidate_roots(candidate_path)
+    path = study_root / relative
     if not path.is_file():
         raise FileNotFoundError(f"candidate artifact is missing: {path}")
     return path
@@ -202,7 +221,8 @@ def _phasor_payload(value: complex) -> dict[str, float]:
 
 
 def _extract_b5(candidate: dict[str, Any], candidate_path: Path) -> dict[str, Any]:
-    case = load_case(candidate_path.parents[1] / "case.yaml")
+    _study_root, generation_root = _candidate_roots(candidate_path)
+    case = load_case(generation_root / "case.yaml")
     ac_columns = ac_probe_plan(case)[1]
     extra_columns = [AC_LOAD_VOLTAGE, *ac_columns] if ac_columns else None
     rows = []
@@ -1616,6 +1636,9 @@ def _export(fig: plt.Figure, output: Path, stem: str, pdf: PdfPages) -> None:
         "Title": stem.replace("-", " "),
         "Creator": "PCD benchmark figure generator",
         "Description": "RF circuit benchmark interpretation",
+        # Figure provenance is stored in figure_data.json. Omitting a wall-clock
+        # timestamp keeps identical source evidence byte-reproducible.
+        "Date": None,
     }
     assert_text_inside_canvas(fig)
     svg_path = output / f"{stem}.svg"
@@ -1636,6 +1659,7 @@ def generate(run_root: Path, output: Path, pdf_output: Path) -> dict[str, Any]:
     output.mkdir(parents=True, exist_ok=True)
     pdf_output.mkdir(parents=True, exist_ok=True)
     _configure_style()
+    mpl.rcParams["svg.hashsalt"] = SVG_HASHSALT
     data = build_figure_data(run_root)
     data_path = output / "figure_data.json"
     data_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
@@ -1654,7 +1678,13 @@ def generate(run_root: Path, output: Path, pdf_output: Path) -> dict[str, Any]:
     ]
     pdf_path = pdf_output / "benchmark-figure-pack.pdf"
     with PdfPages(
-        pdf_path, metadata={"Title": "PCD benchmark figure pack", "Author": "PCD benchmark figure generator"}
+        pdf_path,
+        metadata={
+            "Title": "PCD benchmark figure pack",
+            "Author": "PCD benchmark figure generator",
+            "CreationDate": None,
+            "ModDate": None,
+        },
     ) as pdf:
         for stem, fig in figures:
             _export(fig, output, stem, pdf)
@@ -1670,9 +1700,14 @@ def generate(run_root: Path, output: Path, pdf_output: Path) -> dict[str, Any]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--run-root", type=Path, default=DEFAULT_RUN_ROOT)
+    parser.add_argument(
+        "--run-root",
+        type=Path,
+        default=DEFAULT_RUN_ROOT,
+        help="completed core benchmark directory inside this repository",
+    )
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
-    parser.add_argument("--pdf-output", type=Path, default=DEFAULT_PDF_OUTPUT)
+    parser.add_argument("--pdf-output", type=Path, default=DEFAULT_PDF_OUTPUT, help="directory for the PDF pack")
     args = parser.parse_args(argv)
     result = generate(args.run_root.resolve(), args.output.resolve(), args.pdf_output.resolve())
     print(json.dumps(result, indent=2))

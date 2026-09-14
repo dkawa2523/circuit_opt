@@ -191,14 +191,14 @@ def test_an_external_netlist_is_used_verbatim(make_case):
         encoding="utf-8",
     )
     _name, circuit = build_circuit(case, {})
-    emitted = [c.to_spice() for c in circuit.components]
+    emitted = circuit.preamble
     assert "R1 src out 50" in emitted
     assert ".subckt blk p n" in emitted
     assert "Xb out 0 blk" in emitted
 
 
 def test_a_case_source_replaces_the_one_in_the_netlist(make_case):
-    """Two drivers would fight; the case wins and the drop is recorded."""
+    """The default policy replaces only a source with the generated name."""
 
     from pcd.netlist import build_circuit
 
@@ -209,10 +209,10 @@ def test_a_case_source_replaces_the_one_in_the_netlist(make_case):
             "circuit": {"builder": "from_netlist", "netlist_file": "c.cir"},
         }
     )
-    (case.base_dir / "c.cir").write_text("Vold src 0 DC 1\nR1 src out 50\n.end\n", encoding="utf-8")
+    (case.base_dir / "c.cir").write_text("Vsrc src 0 DC 1\nR1 src out 50\n.end\n", encoding="utf-8")
     _name, circuit = build_circuit(case, {})
-    assert "Vold src 0 DC 1" not in [c.to_spice() for c in circuit.components]
-    assert any("ignored conflicting source line" in note for note in circuit.notes)
+    assert "Vsrc src 0 DC 1" not in circuit.preamble
+    assert any("replaced same-named source line" in note for note in circuit.notes)
 
 
 def test_a_netlist_without_a_case_source_keeps_its_own(make_case):
@@ -221,7 +221,7 @@ def test_a_netlist_without_a_case_source_keeps_its_own(make_case):
     case = make_case({"case_id": "ext", "circuit": {"builder": "from_netlist", "netlist_file": "c.cir"}})
     (case.base_dir / "c.cir").write_text("Vold src 0 DC 1\nR1 src out 50\n.end\n", encoding="utf-8")
     _name, circuit = build_circuit(case, {})
-    assert "Vold src 0 DC 1" in [c.to_spice() for c in circuit.components]
+    assert "Vold src 0 DC 1" in circuit.preamble
 
 
 def test_coupled_inductors_can_be_declared():
@@ -248,12 +248,12 @@ def test_only_a_conflicting_source_line_is_dropped(make_case):
     )
     (case.base_dir / "c.cir").write_text("R1 src mid 50\nVload mid out DC 0\nR2 out 0 50\n.end\n", encoding="utf-8")
     _name, circuit = build_circuit(case, {})
-    spice = [c.to_spice() for c in circuit.components]
+    spice = circuit.preamble
     assert any("Vload" in line for line in spice), "the ammeter must survive"
     assert not any("ignored conflicting source line" in note for note in circuit.notes)
 
 
-def test_a_second_driver_on_the_source_node_is_dropped_even_under_another_name(make_case):
+def test_a_differently_named_source_is_not_inferred_to_be_a_conflict(make_case):
     from pcd.netlist import build_circuit
 
     case = make_case(
@@ -265,5 +265,109 @@ def test_a_second_driver_on_the_source_node_is_dropped_even_under_another_name(m
     )
     (case.base_dir / "c.cir").write_text("Vother src 0 DC 5\nR1 src out 50\n.end\n", encoding="utf-8")
     _name, circuit = build_circuit(case, {})
-    assert not any("Vother" in c.to_spice() for c in circuit.components)
-    assert any("ignored conflicting source line" in note for note in circuit.notes)
+    assert any("Vother" in line for line in circuit.preamble)
+    assert not circuit.notes
+
+
+def test_preserve_source_policy_keeps_even_a_same_named_source(make_case):
+    from pcd.netlist import build_circuit
+
+    case = make_case(
+        {
+            "case_id": "preserve",
+            "source": {"type": "sine_voltage", "name": "Vsrc", "amplitude_V": 1, "frequency_Hz": 1e6},
+            "circuit": {
+                "builder": "from_netlist",
+                "netlist_file": "c.cir",
+                "source_policy": "preserve",
+            },
+        }
+    )
+    (case.base_dir / "c.cir").write_text("Vsrc isolated 0 DC 5\nR1 src out 50\n", encoding="utf-8")
+
+    _name, circuit = build_circuit(case, {})
+
+    assert "Vsrc isolated 0 DC 5" in circuit.preamble
+
+
+def test_external_netlist_keeps_semantic_directives_but_not_execution_control(make_case):
+    from pcd.netlist import build_circuit
+
+    case = make_case({"case_id": "modelled", "circuit": {"builder": "from_netlist", "netlist_file": "c.cir"}})
+    include = case.base_dir / "models.lib"
+    include.write_text(".model local_diode D(Is=1e-12)\n", encoding="utf-8")
+    (case.base_dir / "c.cir").write_text(
+        ".param gain=2\n"
+        ".model inline_diode D(Is=2e-12)\n"
+        '.include "models.lib"\n'
+        "D1 src out inline_diode\n"
+        ".control\nrun\n.endc\n"
+        ".tran 1n 1u\n.end\n",
+        encoding="utf-8",
+    )
+
+    _name, circuit = build_circuit(case, {})
+    assert ".param gain=2" in circuit.preamble
+    assert ".model inline_diode D(Is=2e-12)" in circuit.preamble
+    assert ".model local_diode D(Is=1e-12)" in circuit.preamble
+    assert not any(line.lower().startswith(".include") for line in circuit.preamble)
+    assert "D1 src out inline_diode" in circuit.preamble
+    assert not any(line.lower().startswith((".control", ".tran", ".end")) for line in circuit.preamble)
+
+
+def test_execution_import_handles_common_include_and_library_forms(tmp_path):
+    from pcd.netlist_import import executable_netlist_lines, flatten_netlist_file
+
+    library = tmp_path / "models.lib"
+    library.write_text(".lib typical\n.model d D\n.endl typical\n", encoding="utf-8")
+    absolute = library.resolve().as_posix()
+
+    assert executable_netlist_lines("\n.model d D\n")[0].text == ".model d D"
+    assert executable_netlist_lines(".include relative.lib")[0].text == ".include relative.lib"
+    assert executable_netlist_lines(".include", tmp_path)[0].text == ".include"
+    assert executable_netlist_lines('.include ""', tmp_path)[0].text == '.include ""'
+    assert executable_netlist_lines(".lib typical", tmp_path)[0].text == ".lib typical"
+    assert executable_netlist_lines(f'.include "{absolute}"', tmp_path)[0].text == f'.include "{absolute}"'
+    assert executable_netlist_lines(".lib models.lib typical", tmp_path)[0].text == f'.lib "{absolute}" typical'
+    unterminated = executable_netlist_lines(".include 'models.lib", tmp_path)[0].text
+    assert unterminated == f'.include "{absolute}"'
+
+    deck = tmp_path / "deck.cir"
+    deck.write_text(".lib models.lib typical\nR1 src out 1\n.end\n", encoding="utf-8")
+    flattened, dependencies = flatten_netlist_file(deck)
+    assert ".model d D" in flattened
+    assert ".lib models.lib typical" not in flattened
+    assert dependencies == (library.resolve(),)
+
+
+def test_execution_import_distinguishes_complete_decks_from_fragments():
+    from pcd.netlist_import import executable_netlist_lines
+
+    text = "Exported circuit title\nR1 src out 50\n.end\n"
+    assert [item.text for item in executable_netlist_lines(text, mode="deck")] == ["R1 src out 50"]
+    assert executable_netlist_lines("R1 src out 50\n", mode="fragment")[0].text == "R1 src out 50"
+
+    with pytest.raises(ValueError, match="netlist_mode"):
+        executable_netlist_lines(text, mode="guess")
+
+
+def test_archived_external_netlist_is_self_contained_with_included_models(tmp_path, make_case):
+    import json
+
+    from pcd.netlist import build_circuit
+    from pcd.sim_core import archive_case_bundle
+
+    case = make_case({"case_id": "portable", "circuit": {"builder": "from_netlist", "netlist_file": "c.cir"}})
+    include = case.base_dir / "models.inc"
+    include.write_text(".model bundled D(Is=3e-12)\n", encoding="utf-8")
+    (case.base_dir / "c.cir").write_text('.include "models.inc"\nD1 src out bundled\n.end\n', encoding="utf-8")
+
+    snapshot, files = archive_case_bundle(case, tmp_path / "bundle")
+    include.unlink()
+    _name, circuit = build_circuit(snapshot, {})
+
+    assert ".model bundled D(Is=3e-12)" in circuit.preamble
+    assert files["imported_netlist"] == "imported_netlist.cir"
+    manifest = json.loads((snapshot.base_dir / "input_manifest.json").read_text(encoding="utf-8"))
+    assert len(manifest["inputs"]) == 2
+    assert all(item["status"] == "archived" for item in manifest["inputs"])

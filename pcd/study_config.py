@@ -108,6 +108,7 @@ def _objective_specs(case: Case) -> tuple[Objective, ...]:
 
 def study_spec_from_case(case: Case) -> StudySpec:
     study_cfg = mapping(case.data.get("study"), "study")
+    target_cfg = mapping(case.data.get("target"), "target")
     if "fidelities" in study_cfg:
         raise ValueError(
             "study.fidelities is no longer supported; select one solver in solver.name "
@@ -124,7 +125,7 @@ def study_spec_from_case(case: Case) -> StudySpec:
             "case_path": str(case.path),
             "case_schema": str(case.authored_data.get("schema", "case_yaml.v1")),
             "resolved_case_schema": str(case.data.get("schema", "case_yaml.v1")),
-            "objective_adapter": str((case.data.get("target", {}) or {}).get("objective", "waveform_l2")),
+            "objective_adapter": str(target_cfg.get("objective", "waveform_l2")),
         },
     )
 

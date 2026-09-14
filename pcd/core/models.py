@@ -9,6 +9,10 @@ from types import MappingProxyType
 from typing import Any
 
 
+class UnsettledMeasurementError(ValueError):
+    """Raised when a periodic metric would use a waveform still in transition."""
+
+
 def _freeze(value: Any) -> Any:
     """Copy nested containers into immutable equivalents."""
 
@@ -42,6 +46,14 @@ def _frozen_mapping(value: Mapping[str, Any]) -> Mapping[str, Any]:
     return _freeze(dict(value))
 
 
+def _validated_mapping(value: Mapping[str, Any], path: str) -> Mapping[str, Any]:
+    """Return an immutable JSON-ready mapping with no non-finite numbers."""
+
+    plain = to_plain(dict(value))
+    _require_finite_numbers(plain, path)
+    return _frozen_mapping(plain)
+
+
 def _require_finite_numbers(value: Any, path: str) -> None:
     if isinstance(value, Mapping):
         for name, item in value.items():
@@ -69,7 +81,7 @@ class Candidate:
 
     def __post_init__(self) -> None:
         _require_id(self.candidate_id, "candidate")
-        object.__setattr__(self, "values", _frozen_mapping(self.values))
+        object.__setattr__(self, "values", _validated_mapping(self.values, "candidate.values"))
 
     def to_dict(self) -> dict[str, Any]:
         return {"candidate_id": self.candidate_id, "values": to_plain(self.values)}
@@ -89,9 +101,14 @@ class Scenario:
 
     def __post_init__(self) -> None:
         _require_id(self.scenario_id, "scenario")
-        if self.weight <= 0:
-            raise ValueError("scenario weight must be positive")
-        object.__setattr__(self, "values", _frozen_mapping(self.values))
+        try:
+            weight = float(self.weight)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("scenario weight must be a positive finite number") from exc
+        if not math.isfinite(weight) or weight <= 0:
+            raise ValueError("scenario weight must be a positive finite number")
+        object.__setattr__(self, "weight", weight)
+        object.__setattr__(self, "values", _validated_mapping(self.values, "scenario.values"))
 
     def to_dict(self) -> dict[str, Any]:
         return {"scenario_id": self.scenario_id, "values": to_plain(self.values), "weight": self.weight}
@@ -108,7 +125,7 @@ class ControlState:
     values: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "values", _frozen_mapping(self.values))
+        object.__setattr__(self, "values", _validated_mapping(self.values, "control.values"))
 
     def to_dict(self) -> dict[str, Any]:
         return {"values": to_plain(self.values)}
@@ -133,8 +150,13 @@ class Objective:
             raise ValueError("objective direction must be 'minimize' or 'maximize'")
         if self.aggregation not in {"mean", "worst", "cvar"}:
             raise ValueError("objective aggregation must be mean, worst, or cvar")
-        if not 0 < self.cvar_alpha <= 1:
+        try:
+            alpha = float(self.cvar_alpha)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("objective cvar_alpha must be in (0, 1]") from exc
+        if not math.isfinite(alpha) or not 0 < alpha <= 1:
             raise ValueError("objective cvar_alpha must be in (0, 1]")
+        object.__setattr__(self, "cvar_alpha", alpha)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -177,7 +199,7 @@ class StudySpec:
             if not math.isfinite(margin) or not 0.0 <= margin <= 1.0:
                 raise ValueError("control_margin_min must be between 0 and 1")
             object.__setattr__(self, "control_margin_min", margin)
-        object.__setattr__(self, "metadata", _frozen_mapping(self.metadata))
+        object.__setattr__(self, "metadata", _validated_mapping(self.metadata, "study.metadata"))
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -239,9 +261,9 @@ class RawResult:
     def __post_init__(self) -> None:
         if self.status not in {"ok", "failed", "not_settled", "invalid"}:
             raise ValueError(f"unsupported raw result status: {self.status}")
-        object.__setattr__(self, "observations", _frozen_mapping(self.observations))
-        object.__setattr__(self, "artifacts", _frozen_mapping(self.artifacts))
-        object.__setattr__(self, "diagnostics", _frozen_mapping(self.diagnostics))
+        object.__setattr__(self, "observations", _validated_mapping(self.observations, "raw.observations"))
+        object.__setattr__(self, "artifacts", _validated_mapping(self.artifacts, "raw.artifacts"))
+        object.__setattr__(self, "diagnostics", _validated_mapping(self.diagnostics, "raw.diagnostics"))
 
     @property
     def ok(self) -> bool:
@@ -295,8 +317,20 @@ class ConstraintResult:
 
     def __post_init__(self) -> None:
         _require_id(self.name, "constraint")
-        if self.violation < 0:
-            raise ValueError("constraint violation must be non-negative")
+        violation = float(self.violation)
+        if not math.isfinite(violation) or violation < 0:
+            raise ValueError("constraint violation must be finite and non-negative")
+        for name, value in (("value", self.value), ("limit", self.limit)):
+            if value is None:
+                continue
+            try:
+                number = float(value)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"constraint {name} must be finite or null") from exc
+            if not math.isfinite(number):
+                raise ValueError(f"constraint {name} must be finite or null")
+            object.__setattr__(self, name, number)
+        object.__setattr__(self, "violation", violation)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -330,6 +364,15 @@ class EvaluationResult:
     raw_cache_key: str = ""
     duration_s: float = 0.0
     from_cache: bool = False
+
+    def __post_init__(self) -> None:
+        try:
+            duration = float(self.duration_s)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("evaluation duration_s must be finite and non-negative") from exc
+        if not math.isfinite(duration) or duration < 0:
+            raise ValueError("evaluation duration_s must be finite and non-negative")
+        object.__setattr__(self, "duration_s", duration)
 
     @property
     def feasible(self) -> bool:
@@ -380,6 +423,11 @@ class ScenarioResult:
             raise ValueError("a scenario result needs at least one control trial")
         if self.selected not in self.trials:
             raise ValueError("selected evaluation must be one of the scenario trials")
+        if self.control_margin is not None:
+            margin = float(self.control_margin)
+            if not math.isfinite(margin) or not 0.0 <= margin <= 1.0:
+                raise ValueError("control margin must be between 0 and 1")
+            object.__setattr__(self, "control_margin", margin)
 
     @property
     def edge_limited(self) -> bool:
@@ -414,7 +462,18 @@ class CandidateResult:
     total_violation: float
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "aggregates", _frozen_mapping(self.aggregates))
+        if not self.scenarios:
+            raise ValueError("a candidate result needs at least one scenario")
+        object.__setattr__(self, "aggregates", _validated_mapping(self.aggregates, "candidate.aggregates"))
+        for name in ("feasible_fraction", "success_fraction"):
+            value = float(getattr(self, name))
+            if not math.isfinite(value) or not 0.0 <= value <= 1.0:
+                raise ValueError(f"{name} must be between 0 and 1")
+            object.__setattr__(self, name, value)
+        violation = float(self.total_violation)
+        if not math.isfinite(violation) or violation < 0:
+            raise ValueError("total_violation must be finite and non-negative")
+        object.__setattr__(self, "total_violation", violation)
 
     @property
     def evaluations(self) -> tuple[EvaluationResult, ...]:

@@ -1,0 +1,4 @@
+interface:
+  display_name: "PCD Runner"
+  short_description: "Run and inspect this repository's RF circuit studies"
+  default_prompt: "Use $pcd-runner to validate and run a PCD case, then summarize the result and artifact paths."

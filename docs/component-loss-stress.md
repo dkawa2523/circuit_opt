@@ -68,7 +68,14 @@ network loss = source real power - load real power
 
 For transient analysis, the same metrics are calculated over the final common
 whole-cycle window using time-weighted RMS. Harmonics therefore contribute to
-RMS current and effective-resistance loss.
+RMS current and effective-resistance loss. Every component voltage/current and
+source/load signal used by the metric must pass the periodic-settling check;
+otherwise the evaluation is `not_settled` and cannot satisfy acceptance.
+Advanced cases can set `measurement.periodic_cycles`,
+`measurement.settling_comparisons`, `measurement.settling_tolerance`, and
+`measurement.harmonic_count`. These alter only the shared measurement policy;
+the defaults retain the original 3-cycle, 2-comparison, `1e-3`, 3-harmonic
+behavior.
 
 The source's `amplitude_V` is used as the AC peak magnitude. Set
 `ac_magnitude_V` only when the small-signal stress run intentionally uses a

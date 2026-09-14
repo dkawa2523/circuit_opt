@@ -18,10 +18,10 @@ from typing import Any
 
 Method = Callable[..., Any]
 
-#: Plugin files already executed, shared across registries.  One plugin file
-#: commonly registers both a circuit builder and an objective, so it must run
-#: exactly once no matter which layer asks for it first.
-_LOADED_PLUGIN_PATHS: set[Path] = set()
+#: Plugin files already executed and the exact content that was executed,
+#: shared across registries.  One file commonly registers multiple methods, so
+#: it must run exactly once no matter which layer asks for it first.
+_LOADED_PLUGIN_PATHS: dict[Path, str] = {}
 
 
 class Registry:
@@ -109,12 +109,18 @@ def load_plugin_files(paths: list[str] | None, base_dir: Path) -> None:
     for raw in paths or []:
         path = Path(raw)
         path = (path if path.is_absolute() else base_dir / path).resolve()
-        if path in _LOADED_PLUGIN_PATHS:
-            continue
         if not path.exists():
             raise FileNotFoundError(f"plugin not found: {path}")
+        content_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
+        loaded_sha256 = _LOADED_PLUGIN_PATHS.get(path)
+        if loaded_sha256 is not None:
+            if loaded_sha256 != content_sha256:
+                raise RuntimeError(
+                    f"plugin changed after it was loaded: {path}; restart the process before using the new code"
+                )
+            continue
         _import_file(path)
-        _LOADED_PLUGIN_PATHS.add(path)
+        _LOADED_PLUGIN_PATHS[path] = content_sha256
 
 
 def _import_file(path: Path) -> None:
@@ -129,4 +135,8 @@ def _import_file(path: Path) -> None:
         raise ImportError(f"cannot load plugin: {path}")
     module = importlib.util.module_from_spec(spec)
     sys.modules[mod_name] = module
-    spec.loader.exec_module(module)
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        sys.modules.pop(mod_name, None)
+        raise

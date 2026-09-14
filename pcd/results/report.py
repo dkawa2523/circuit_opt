@@ -11,6 +11,27 @@ import pandas as pd
 from pcd.core.models import CandidateResult, StudySpec
 
 
+def _study_result(root: Path) -> dict[str, Any]:
+    path = root / "study_result.json"
+    return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+
+
+def study_artifact_path(study_root: str | Path, name: str, legacy: str | None = None) -> Path | None:
+    """Resolve one artifact from the committed study generation, with v1 fallback."""
+
+    root = Path(study_root)
+    declared = (_study_result(root).get("artifacts") or {}).get(name)
+    if isinstance(declared, str) and declared:
+        path = Path(declared)
+        return path if path.is_absolute() else root / path
+    return root / legacy if legacy is not None else None
+
+
+def candidate_result_paths(study_root: str | Path) -> list[Path]:
+    directory = study_artifact_path(study_root, "candidate_directory", "candidates")
+    return sorted(directory.glob("*.json")) if directory is not None and directory.is_dir() else []
+
+
 def best_decision_summary(
     study: StudySpec,
     best: CandidateResult,
@@ -19,9 +40,9 @@ def best_decision_summary(
 ) -> dict[str, Any]:
     """Project the selected candidate into a compact engineering decision summary."""
 
-    if n_failed_evaluations:
+    if best.success_fraction < 1.0:
         status = "incomplete_evidence"
-        limitation = "failed_evaluations"
+        limitation = "selected_candidate_failed_conditions"
     elif best.feasible_fraction == 1.0 and best.success_fraction == 1.0:
         status = "meets_declared_acceptance"
         limitation = "none"
@@ -66,6 +87,8 @@ def best_decision_summary(
         "edge_limited": best.edge_limited,
         "status": status,
         "limitation": limitation,
+        "search_completeness": "complete" if n_failed_evaluations == 0 else "incomplete_evidence",
+        "search_limitation": "none" if n_failed_evaluations == 0 else "failed_evaluations",
         "coverage": {
             "conditions": len(conditions),
             "solved": sum(item["status"] != "failed" for item in conditions),
@@ -77,9 +100,8 @@ def best_decision_summary(
 
 def candidate_summary(study_root: str | Path) -> pd.DataFrame:
     root = Path(study_root)
-    directory = root / "candidates"
     rows: list[dict[str, Any]] = []
-    for path in sorted(directory.glob("*.json")) if directory.exists() else []:
+    for path in candidate_result_paths(root):
         data = json.loads(path.read_text(encoding="utf-8"))
         candidate = data.get("candidate", {}) or {}
         row: dict[str, Any] = {
@@ -98,9 +120,8 @@ def candidate_summary(study_root: str | Path) -> pd.DataFrame:
         objectives = [str(name) for name in frame.columns if str(name).startswith("objective.")]
         directions: dict[str, str] = {}
         selected_id: str | None = None
-        study_result = root / "study_result.json"
-        if study_result.is_file():
-            payload = json.loads(study_result.read_text(encoding="utf-8"))
+        payload = _study_result(root)
+        if payload:
             selected_id = ((payload.get("best") or {}).get("candidate") or {}).get("candidate_id")
             for objective in (payload.get("study") or {}).get("objectives") or []:
                 metric = str(objective.get("metric", ""))

@@ -15,6 +15,7 @@ from pcd.core import (
     Scenario,
     StudyRunner,
     StudySpec,
+    UnsettledMeasurementError,
 )
 from pcd.results import FileResultStore
 
@@ -61,6 +62,12 @@ def test_role_collisions_are_rejected_before_evaluation():
     )
     with pytest.raises(ValueError, match="belongs to both candidate and scenario"):
         request.merged_inputs()
+
+
+@pytest.mark.parametrize("weight", [0.0, -1.0, float("nan"), float("inf"), float("-inf")])
+def test_scenario_weights_must_be_positive_and_finite(weight):
+    with pytest.raises(ValueError, match="positive finite"):
+        Scenario("invalid", weight=weight)
 
 
 def test_worst_scenario_and_feasibility_are_aggregated(tmp_path):
@@ -433,6 +440,20 @@ def test_duplicate_metric_names_become_a_recorded_measurement_failure():
     assert all(item.raw.diagnostics["stage"] == "measure" for item in result.evaluations)
     assert all("duplicate values" in str(item.raw.error) for item in result.evaluations)
     assert all(item.cache_key == "" for item in result.evaluations)
+
+
+def test_unsettled_metric_is_recorded_distinctly_from_a_backend_failure():
+    class NotSettled:
+        def compute(self, request, raw):
+            del request, raw
+            raise UnsettledMeasurementError("current is still ringing")
+
+    result = StudyRunner(_study(), CountingEvaluator(), metrics=(NotSettled(),)).evaluate_candidate(
+        Candidate("candidate", {"x": 1.0})
+    )
+
+    assert all(item.raw.status == "not_settled" for item in result.evaluations)
+    assert all("still ringing" in str(item.raw.error) for item in result.evaluations)
 
 
 def test_missing_objective_metric_becomes_a_recorded_measurement_failure():

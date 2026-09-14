@@ -132,9 +132,16 @@ def aggregate_candidate(
 
 
 def evaluation_rank_key(study: StudySpec, result: EvaluationResult) -> tuple[float, ...]:
-    """Select a scenario's operating point with feasibility before objectives."""
+    """Select a scenario's operating point without preferring missing evidence."""
 
-    key: list[float] = [0.0 if result.feasible else 1.0, result.total_violation]
+    # A solver/measurement failure is unknown, not a small engineering
+    # violation.  It must never beat an evaluated control merely because the
+    # evaluated point exceeds a normalized limit by more than one.
+    key: list[float] = [
+        0.0 if result.raw.ok else 1.0,
+        0.0 if result.feasible else 1.0,
+        result.total_violation,
+    ]
     for objective in study.objectives:
         number = _finite_float(result.metrics.values.get(objective.metric))
         fallback = float("inf")

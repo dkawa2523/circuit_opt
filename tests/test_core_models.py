@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import cast
+from typing import Any, cast
 
 import numpy as np
 import pytest
@@ -79,8 +79,17 @@ def test_metric_values_must_be_persistable_finite_numbers():
         (lambda: Objective("loss", direction="sideways"), "direction"),
         (lambda: Objective("loss", aggregation="median"), "aggregation"),
         (lambda: Objective("loss", cvar_alpha=0), "cvar_alpha"),
+        (lambda: Objective("loss", cvar_alpha=cast(Any, "invalid")), "cvar_alpha"),
+        (lambda: Candidate("c", {"x": np.nan}), "candidate.values.x"),
+        (lambda: Scenario("s", {"x": np.inf}), "scenario.values.x"),
+        (lambda: ControlState({"x": -np.inf}), "control.values.x"),
+        (lambda: StudySpec("s", metadata={"x": np.nan}), "study.metadata.x"),
         (lambda: RawResult("maybe"), "unsupported"),
+        (lambda: RawResult("ok", {"x": np.inf}), "raw.observations.x"),
         (lambda: ConstraintResult("limit", False, violation=-1), "non-negative"),
+        (lambda: ConstraintResult("limit", False, violation=np.nan), "finite"),
+        (lambda: ConstraintResult("limit", False, value=cast(Any, "bad")), "value must be finite"),
+        (lambda: EvaluationResult(_request(), RawResult("ok"), duration_s=np.inf), "duration_s"),
     ],
 )
 def test_invalid_domain_values_are_rejected_at_the_boundary(factory, message):

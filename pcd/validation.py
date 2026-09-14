@@ -41,6 +41,10 @@ class ValidationReport:
         return "\n".join(f"{i.level.upper()} {i.code} {i.path}: {i.message}" for i in self.issues)
 
 
+def _mapping_or_empty(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
 def validate_case(case: Case, strict: bool = False) -> ValidationReport:
     report = ValidationReport(strict=strict)
     data = case.data
@@ -50,13 +54,54 @@ def validate_case(case: Case, strict: bool = False) -> ValidationReport:
 
     _validate_sources(data, report)
     _validate_variables(case, report)
+    _validate_plugins(case, report)
+    _validate_circuit(case, report)
     _validate_solver(case, report)
     _validate_load(case, report)
     _validate_measurement(case, report)
-    _validate_plugins(case, report)
     _validate_target(case, report)
     _validate_study(case, report)
     return report
+
+
+def _validate_circuit(case: Case, report: ValidationReport) -> None:
+    """Validate only the explicit choices needed by an imported SPICE file."""
+
+    circuit = case.data.get("circuit")
+    if circuit is None:
+        return
+    if not isinstance(circuit, dict):
+        report.add("error", "circuit.not_mapping", "circuit must be a mapping", "$.circuit")
+        return
+    if str(circuit.get("builder", "from_yaml")) != "from_netlist":
+        return
+
+    from .netlist_import import NETLIST_IMPORT_MODES, SOURCE_POLICIES
+
+    declared = circuit.get("netlist_file")
+    if not isinstance(declared, str) or not declared.strip():
+        report.add(
+            "error",
+            "circuit.missing_netlist_file",
+            "from_netlist requires a non-empty circuit.netlist_file",
+            "$.circuit.netlist_file",
+        )
+    mode = str(circuit.get("netlist_mode", "fragment")).strip().lower()
+    if mode not in NETLIST_IMPORT_MODES:
+        report.add(
+            "error",
+            "circuit.invalid_netlist_mode",
+            f"netlist_mode must be one of {sorted(NETLIST_IMPORT_MODES)}",
+            "$.circuit.netlist_mode",
+        )
+    source_policy = str(circuit.get("source_policy", "replace_named")).strip().lower()
+    if source_policy not in SOURCE_POLICIES:
+        report.add(
+            "error",
+            "circuit.invalid_source_policy",
+            f"source_policy must be one of {sorted(SOURCE_POLICIES)}",
+            "$.circuit.source_policy",
+        )
 
 
 def _validate_sources(data: dict[str, Any], report: ValidationReport) -> None:
@@ -66,6 +111,26 @@ def _validate_sources(data: dict[str, Any], report: ValidationReport) -> None:
         report.add("error", "case.source_not_mapping", "source must be a mapping", "$.source")
     if data.get("sources") is not None and not isinstance(data.get("sources"), list):
         report.add("error", "case.sources_not_list", "sources must be a list", "$.sources")
+        return
+    sources = data.get("sources")
+    if not isinstance(sources, list):
+        return
+    names: set[str] = set()
+    for index, source in enumerate(sources):
+        path = f"$.sources[{index}]"
+        if not isinstance(source, dict):
+            report.add("error", "case.source_not_mapping", "each source must be a mapping", path)
+            continue
+        if "raw" in source:
+            continue
+        name = str(source.get("name", "Vsrc" if index == 0 else f"Vsrc{index}")).strip()
+        if not name:
+            report.add("error", "case.source_empty_name", "structured source name must not be empty", f"{path}.name")
+        elif name in names:
+            report.add(
+                "error", "case.duplicate_source_name", f"duplicate structured source name {name!r}", f"{path}.name"
+            )
+        names.add(name)
 
 
 def _validate_variables(case: Case, report: ValidationReport) -> None:
@@ -79,13 +144,30 @@ def _validate_variables(case: Case, report: ValidationReport) -> None:
 
 
 def _validate_variable_choices(spec: dict[str, Any], report: ValidationReport, path: str) -> None:
+    if "default" in spec:
+        _validate_finite_tree(spec["default"], report, f"{path}.default")
     choices = spec.get("choices")
     if choices is None:
         return
     if not isinstance(choices, list) or not choices:
         report.add("error", "variable.empty_choices", "choices must be a non-empty list", path)
-    elif "default" in spec and spec["default"] not in choices:
-        report.add("warning", "variable.default_not_in_choices", "default is not present in choices", path)
+    else:
+        _validate_finite_tree(choices, report, f"{path}.choices")
+        if "default" in spec and spec["default"] not in choices:
+            report.add("warning", "variable.default_not_in_choices", "default is not present in choices", path)
+
+
+def _validate_finite_tree(value: Any, report: ValidationReport, path: str) -> None:
+    if isinstance(value, dict):
+        for name, item in value.items():
+            _validate_finite_tree(item, report, f"{path}.{name}")
+        return
+    if isinstance(value, list | tuple):
+        for index, item in enumerate(value):
+            _validate_finite_tree(item, report, f"{path}[{index}]")
+        return
+    if isinstance(value, float) and not math.isfinite(value):
+        report.add("error", "variable.non_finite_value", "numeric variable values must be finite", path)
 
 
 def _parse_bounds(bounds: Any, report: ValidationReport, path: str) -> tuple[float, float] | None:
@@ -95,10 +177,14 @@ def _parse_bounds(bounds: Any, report: ValidationReport, path: str) -> tuple[flo
         report.add("error", "variable.invalid_bounds", "bounds must be a two-item list", path)
         return None
     try:
-        return float(bounds[0]), float(bounds[1])
+        lo, hi = float(bounds[0]), float(bounds[1])
     except (TypeError, ValueError):
         report.add("error", "variable.non_numeric_bounds", "bounds must be numeric", path)
         return None
+    if not math.isfinite(lo) or not math.isfinite(hi):
+        report.add("error", "variable.non_finite_bounds", "bounds must be finite", path)
+        return None
+    return lo, hi
 
 
 def _validate_variable_bounds(spec: dict[str, Any], report: ValidationReport, path: str) -> None:
@@ -110,6 +196,8 @@ def _validate_variable_bounds(spec: dict[str, Any], report: ValidationReport, pa
     lo, hi = parsed
     if lo > hi:
         report.add("error", "variable.bounds_reversed", "lower bound must be <= upper bound", path)
+    if spec.get("type") == "int" and math.ceil(lo) > math.floor(hi):
+        report.add("error", "variable.empty_integer_bounds", "integer bounds must contain an integer", path)
     if spec.get("scale") == "log" and (lo <= 0 or hi <= 0):
         report.add("error", "variable.log_bounds_non_positive", "log-scale bounds must be positive", path)
     _validate_default_within_bounds(spec, lo, hi, report, path)
@@ -134,22 +222,23 @@ def _validate_default_within_bounds(
 
 
 def _validate_solver(case: Case, report: ValidationReport) -> None:
-    solver = case.data.get("solver", {}) or {}
+    solver = case.data.get("solver")
+    if solver is None:
+        solver = {}
     if not isinstance(solver, dict):
         report.add("error", "solver.not_mapping", "solver must be a mapping", "$.solver")
         return
     name = str(solver.get("name", "ngspice_cli"))
-    if name == "dummy" or not case.data.get("plugins"):
-        from .sim_registry import available
+    from .sim_registry import available
 
-        known = available()["solver"]
-        if name not in known:
-            report.add(
-                "error",
-                "solver.unknown",
-                f"unknown solver {name!r}; available={known}",
-                "$.solver.name",
-            )
+    known = available()["solver"]
+    if name not in known:
+        report.add(
+            "error",
+            "solver.unknown",
+            f"unknown solver {name!r}; available={known}",
+            "$.solver.name",
+        )
     if "tran" in solver or "ac" not in solver:
         _validate_tran(solver.get("tran", {}) or {}, report)
     if "ac" in solver:
@@ -169,7 +258,9 @@ def _validate_tran(tran: Any, report: ValidationReport) -> None:
     except (TypeError, ValueError):
         report.add("error", "solver.tran_non_numeric", "tran step_s and stop_s must be numeric", "$.solver.tran")
         return
-    if step <= 0 or stop <= 0:
+    if not math.isfinite(step) or not math.isfinite(stop):
+        report.add("error", "solver.tran_non_finite", "tran step_s and stop_s must be finite", "$.solver.tran")
+    elif step <= 0 or stop <= 0:
         report.add("error", "solver.tran_non_positive", "tran step_s and stop_s must be positive", "$.solver.tran")
     if step > stop:
         report.add("warning", "solver.step_exceeds_stop", "tran step_s exceeds stop_s", "$.solver.tran")
@@ -185,13 +276,22 @@ def _validate_ac(ac: Any, report: ValidationReport) -> None:
     if str(ac.get("sweep", "dec")) not in {"lin", "dec", "oct"}:
         report.add("error", "solver.ac_invalid_sweep", "ac sweep must be lin, dec, or oct", "$.solver.ac.sweep")
     try:
-        points = int(ac.get("points", 20))
+        points_value = float(ac.get("points", 20))
         start = float(ac.get("start_Hz", 1e6))
         stop = float(ac.get("stop_Hz", 1e8))
     except (TypeError, ValueError):
         report.add("error", "solver.ac_non_numeric", "ac points/start_Hz/stop_Hz must be numeric", "$.solver.ac")
         return
-    if points <= 0 or start <= 0 or stop <= 0 or stop < start:
+    if not points_value.is_integer():
+        report.add("error", "solver.ac_non_integer_points", "ac points must be an integer", "$.solver.ac.points")
+    points = int(points_value) if math.isfinite(points_value) else 0
+    if (
+        not all(math.isfinite(value) for value in (points_value, start, stop))
+        or points <= 0
+        or start <= 0
+        or stop <= 0
+        or stop < start
+    ):
         report.add(
             "error",
             "solver.ac_invalid_range",
@@ -231,7 +331,9 @@ def _validate_ac_point(ac: dict[str, Any], report: ValidationReport) -> None:
 
 
 def _validate_load(case: Case, report: ValidationReport) -> None:
-    cfg = case.data.get("load", {}) or {}
+    cfg = case.data.get("load")
+    if cfg is None:
+        cfg = {}
     if not isinstance(cfg, dict):
         report.add("error", "load.not_mapping", "load must be a mapping", "$.load")
         return
@@ -249,6 +351,7 @@ def _validate_load(case: Case, report: ValidationReport) -> None:
         missing = [field for field in required or () if field not in cfg]
         if missing:
             report.add("error", "load.missing_parameters", f"{name} is missing parameters: {missing}", "$.load")
+    _validate_load_parameters(name, cfg, report)
     if not str(cfg.get("reference_plane", "")).strip():
         report.add("error", "load.missing_reference_plane", f"{name} requires load.reference_plane", "$.load")
     if not isinstance(cfg.get("characterization"), dict):
@@ -259,7 +362,8 @@ def _validate_load(case: Case, report: ValidationReport) -> None:
             "$.load.characterization",
         )
     if name == "impedance_point":
-        ac = (case.data.get("solver", {}) or {}).get("ac")
+        solver = case.data.get("solver", {}) or {}
+        ac = solver.get("ac") if isinstance(solver, dict) else None
         if isinstance(ac, dict) and "frequency_Hz" not in ac:
             report.add(
                 "error",
@@ -286,68 +390,179 @@ def _validate_icp_parameters(cfg: dict[str, Any], report: ValidationReport) -> N
         )
 
 
+def _literal_float(value: Any) -> float | None:
+    """Return a literal number; bare strings may intentionally be parameters."""
+
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _validate_load_parameters(name: str, cfg: dict[str, Any], report: ValidationReport) -> None:
+    """Apply the same physical domain rules used by the load renderers."""
+
+    from .rf_loads import ccp_lumped_impedance, icp_effective_impedance, impedance_point
+
+    try:
+        if name == "impedance_point":
+            values = [_literal_float(cfg.get(field)) for field in ("resistance_ohm", "reactance_ohm")]
+            if all(value is not None for value in values):
+                impedance_point(*values)  # type: ignore[arg-type]
+            frequency = _literal_float(cfg.get("model_frequency_Hz"))
+            if frequency is not None and (not math.isfinite(frequency) or frequency <= 0):
+                raise ValueError("model_frequency_Hz must be positive and finite")
+        elif name == "ccp_lumped":
+            fields = ("R_eff_ohm", "L_eff_H", "C_sheath_eq_F")
+            values = [_literal_float(cfg.get(field)) for field in fields]
+            if all(value is not None for value in values):
+                ccp_lumped_impedance(1.0, *values)  # type: ignore[arg-type]
+        elif name == "icp_transformer":
+            fields = (
+                "R_coil_ohm",
+                "L_coil_H",
+                "reflected_inductance_H",
+                "secondary_damping_rate_rad_s",
+            )
+            values = [_literal_float(cfg.get(field)) for field in fields]
+            parallel = _literal_float(cfg.get("C_parallel_F", 0.0))
+            if all(value is not None for value in values) and parallel is not None:
+                icp_effective_impedance(1.0, *values, parallel)  # type: ignore[arg-type]
+    except (TypeError, ValueError) as exc:
+        report.add("error", "load.invalid_parameters", str(exc), "$.load")
+
+
 def _validate_timeout(timeout: Any, report: ValidationReport) -> None:
     if timeout is None:
         return
     try:
-        if float(timeout) <= 0:
+        value = float(timeout)
+        if not math.isfinite(value) or value <= 0:
             report.add("error", "solver.timeout_non_positive", "timeout_s must be positive", "$.solver.timeout_s")
     except (TypeError, ValueError):
         report.add("error", "solver.timeout_non_numeric", "timeout_s must be numeric", "$.solver.timeout_s")
 
 
-MIN_MEASUREMENT_CYCLES = 3
-
-
 def _validate_measurement(case: Case, report: ValidationReport) -> None:
     """`load_current: auto` meters the load, so there has to be a load."""
 
-    if (case.data.get("measurement", {}) or {}).get("load_current") != "auto":
+    measurement = case.data.get("measurement")
+    if measurement is None:
+        measurement = {}
+    if not isinstance(measurement, dict):
+        report.add("error", "measurement.not_mapping", "measurement must be a mapping", "$.measurement")
         return
-    if str((case.data.get("load", {}) or {}).get("name", "none")) == "none":
-        report.add(
-            "error",
-            "measurement.auto_meter_without_load",
-            "measurement.load_current: auto inserts an ammeter in series with the load, but no load is declared",
-            "$.measurement.load_current",
-        )
+    _validate_reference_impedance(measurement, report)
+    try:
+        from .analysis import rf_measurement_options
+
+        rf_measurement_options(measurement)
+    except ValueError as exc:
+        report.add("error", "measurement.invalid_periodic_options", str(exc), "$.measurement")
+    if measurement.get("load_current") == "auto":
+        load = case.data.get("load", {}) or {}
+        if isinstance(load, dict) and str(load.get("name", "none")) == "none":
+            report.add(
+                "error",
+                "measurement.auto_meter_without_load",
+                "measurement.load_current: auto inserts an ammeter in series with the load, but no load is declared",
+                "$.measurement.load_current",
+            )
+    try:
+        from .analysis import probe_plan
+
+        probe_plan(case)
+    except (TypeError, ValueError) as exc:
+        report.add("error", "measurement.invalid_probe", str(exc), "$.measurement")
     _validate_measurement_duration(case, report)
 
 
-def _validate_measurement_duration(case: Case, report: ValidationReport) -> None:
-    """Require enough history for the shared three-cycle measurement window."""
+def _validate_reference_impedance(measurement: dict[str, Any], report: ValidationReport) -> None:
+    if "reference_impedance_ohm" not in measurement:
+        return
+    try:
+        reference = float(measurement["reference_impedance_ohm"])
+    except (TypeError, ValueError):
+        report.add(
+            "error",
+            "measurement.invalid_reference_impedance",
+            "reference_impedance_ohm must be numeric",
+            "$.measurement.reference_impedance_ohm",
+        )
+        return
+    if not math.isfinite(reference) or reference <= 0:
+        report.add(
+            "error",
+            "measurement.invalid_reference_impedance",
+            "reference_impedance_ohm must be positive and finite",
+            "$.measurement.reference_impedance_ohm",
+        )
 
-    tran = (case.data.get("solver", {}) or {}).get("tran", {}) or {}
+
+def _validate_measurement_duration(case: Case, report: ValidationReport) -> None:
+    """Require enough history for the configured periodic measurement window."""
+
+    solver = case.data.get("solver", {}) or {}
+    source = case.data.get("source", {}) or {}
+    if not isinstance(solver, dict) or not isinstance(source, dict):
+        return
+    tran = solver.get("tran", {}) or {}
+    if not isinstance(tran, dict):
+        return
     try:
         stop_s = float(tran.get("stop_s", 0.0))
-        frequency = float((case.data.get("source", {}) or {}).get("frequency_Hz", 0.0))
+        frequency = float(source.get("frequency_Hz", 0.0))
     except (TypeError, ValueError):
         return  # a design-variable reference; nothing to check statically
     if stop_s <= 0 or frequency <= 0:
         return
 
+    from .analysis import rf_measurement_options
+
+    try:
+        options = rf_measurement_options(case.data.get("measurement"))
+    except ValueError:
+        return
+    required_cycles = max(int(options["periodic_cycles"]), int(options["settling_comparisons"]) + 1)
     cycles = stop_s * frequency
-    if cycles < MIN_MEASUREMENT_CYCLES:
+    if cycles < required_cycles:
         report.add(
             "warning",
             "solver.insufficient_rf_cycles",
             f"solver.tran.stop_s spans only {cycles:.3f} RF cycles; periodic power and harmonic measurement "
-            f"needs at least {MIN_MEASUREMENT_CYCLES} cycles ({MIN_MEASUREMENT_CYCLES / frequency:.7g} s)",
+            f"needs at least {required_cycles} cycles ({required_cycles / frequency:.7g} s)",
             "$.solver.tran.stop_s",
         )
 
 
 def _validate_plugins(case: Case, report: ValidationReport) -> None:
-    plugins = case.data.get("plugins") or []
+    plugins = case.data.get("plugins")
+    if plugins is None:
+        plugins = []
     if not isinstance(plugins, list):
         report.add("error", "plugins.not_list", "plugins must be a list", "$.plugins")
         return
+    valid = True
     for i, raw in enumerate(plugins):
-        path = Path(raw)
+        try:
+            path = Path(raw)
+        except TypeError:
+            report.add("error", "plugin.invalid_path", "plugin path must be a string", f"$.plugins[{i}]")
+            valid = False
+            continue
         if not path.is_absolute():
             path = case.base_dir / path
-        if not path.exists():
+        if not path.is_file():
             report.add("error", "plugin.not_found", f"plugin not found: {path}", f"$.plugins[{i}]")
+            valid = False
+    if not valid or not plugins:
+        return
+    try:
+        from .sim_registry import load_plugins
+
+        load_plugins(plugins, case.base_dir)
+    except Exception as exc:
+        report.add("error", "plugin.load_failed", f"{type(exc).__name__}: {exc}", "$.plugins")
 
 
 def _validate_study(case: Case, report: ValidationReport) -> None:
@@ -370,14 +585,16 @@ def _validate_study(case: Case, report: ValidationReport) -> None:
 
 
 def _validate_target(case: Case, report: ValidationReport) -> None:
-    target = case.data.get("target", {}) or {}
-    if not target:
+    target = case.data.get("target")
+    if target is None:
         return
     if not isinstance(target, dict):
         report.add("error", "target.not_mapping", "target must be a mapping", "$.target")
         return
+    if not target:
+        return
     objective = str(target.get("objective", "waveform_l2"))
-    solver = case.data.get("solver", {}) or {}
+    solver = _mapping_or_empty(case.data.get("solver"))
     if objective == "impedance_match" and "ac" not in solver:
         report.add(
             "error",
@@ -388,18 +605,37 @@ def _validate_target(case: Case, report: ValidationReport) -> None:
     if objective == "rf_load":
         if "tran" not in solver and "ac" in solver:
             report.add("error", "target.rf_load_without_tran", "rf_load requires solver.tran", "$.target.objective")
-        if not (case.data.get("measurement", {}) or {}).get("load_current"):
+        measurement = case.data.get("measurement", {}) or {}
+        if isinstance(measurement, dict) and not measurement.get("load_current"):
             report.add(
                 "error",
                 "target.rf_load_without_current",
                 "rf_load requires measurement.load_current; use auto for a built-in load",
                 "$.measurement.load_current",
             )
+    _validate_target_waveform(case, target, objective, report)
+
+
+def _validate_target_waveform(
+    case: Case,
+    target: dict[str, Any],
+    objective: str,
+    report: ValidationReport,
+) -> None:
     raw = target.get("waveform_file")
     if raw is None:
         if objective.startswith("waveform_"):
             report.add("warning", "target.no_waveform", "target.waveform_file is not set", "$.target.waveform_file")
         return
-    path = resolve_path(case, raw)
+    try:
+        path = resolve_path(case, raw)
+    except TypeError:
+        report.add(
+            "error",
+            "target.invalid_waveform_path",
+            "target.waveform_file must be a path string",
+            "$.target.waveform_file",
+        )
+        return
     if not path.exists():
         report.add("error", "target.waveform_not_found", f"target waveform not found: {path}", "$.target.waveform_file")

@@ -18,6 +18,7 @@ from .models import (
     Scenario,
     ScenarioResult,
     StudySpec,
+    UnsettledMeasurementError,
 )
 from .pipeline import StudyRunner
 
@@ -35,4 +36,5 @@ __all__ = [
     "ScenarioResult",
     "StudyRunner",
     "StudySpec",
+    "UnsettledMeasurementError",
 ]

@@ -254,6 +254,49 @@ def test_ccp_and_icp_are_explicit_load_choices_not_plasma_state_solvers():
     assert resolved["reflected_inductance_H"] == pytest.approx(0.18e-6)
 
 
+@pytest.mark.parametrize(
+    ("load", "message"),
+    [
+        (
+            {
+                "type": "impedance_point",
+                "resistance_ohm": -1,
+                "reactance_ohm": 0,
+                "reference_plane": "port",
+            },
+            "non-negative",
+        ),
+        (
+            {
+                "type": "ccp_lumped",
+                "reference_plane": "port",
+                "parameters": {"R_eff_ohm": 1, "L_eff_H": 0, "C_sheath_eq_F": 1e-9},
+            },
+            "must be positive",
+        ),
+        (
+            {
+                "type": "icp_transformer",
+                "reference_plane": "port",
+                "parameters": {
+                    "R_coil_ohm": 1,
+                    "L_coil_H": 1e-6,
+                    "reflected_inductance_H": 2e-6,
+                    "secondary_damping_rate_rad_s": 1e6,
+                },
+            },
+            "less than or equal",
+        ),
+    ],
+)
+def test_public_load_parameters_obey_the_renderer_domain(load, message):
+    data = _base()
+    data["load"] = load
+
+    with pytest.raises(ValueError, match=message):
+        compile_rf_case(data, Path.cwd())
+
+
 def test_characterization_is_optional_but_visible_as_a_strict_warning(tmp_path):
     data = _base()
     data["load"].pop("evidence")
@@ -485,6 +528,21 @@ def test_table_rejects_missing_empty_and_frequency_ambiguous_data(tmp_path):
     with pytest.raises(ValueError, match="value is empty"):
         compile_rf_case(data, tmp_path)
 
+    table.write_text(
+        "scenario_id,resistance_ohm,reactance_ohm\nvalid,25,-80\nbad,-1,-40\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="resistance_ohm must be non-negative"):
+        compile_rf_case(data, tmp_path)
+
+
+def test_public_enumeration_limits_must_be_exact_integers():
+    data = _base()
+    data["execution"] = {"candidate_state_limit": 1.5}
+
+    with pytest.raises(ValueError, match="must be an integer"):
+        compile_rf_case(data, Path.cwd())
+
 
 def test_table_and_inline_conditions_are_not_implicitly_crossed():
     case = load_case(BENCH / "match_fixed_nominal.yaml")
@@ -530,6 +588,23 @@ def test_required_public_sections_fail_with_a_local_error(change, message):
     data = _base()
     change(data)
     with pytest.raises(ValueError, match=message):
+        compile_rf_case(data, Path.cwd())
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("weight", 0.0),
+        ("weight", float("nan")),
+        ("frequency_Hz", 0.0),
+        ("drive_peak_V", float("inf")),
+    ],
+)
+def test_condition_numeric_fields_must_be_positive_and_finite(field, value):
+    data = _base()
+    data["conditions"] = [{"id": "invalid", field: value}]
+
+    with pytest.raises(ValueError, match=rf"conditions\[0\]\.{field} must be (positive|finite)"):
         compile_rf_case(data, Path.cwd())
 
 

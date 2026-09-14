@@ -10,12 +10,15 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
+
 from . import __version__
 from .artifacts import file_sha256, package_source_sha256, write_json
 from .case import Case, default_params
 from .core.aggregation import candidate_rank_key
 from .core.models import (
     Candidate,
+    CandidateResult,
     EvaluationRequest,
     MetricSet,
     RawResult,
@@ -23,8 +26,9 @@ from .core.models import (
 )
 from .core.pipeline import StudyRunner
 from .metrics import constraints_from_case, measure_record
+from .netlist_import import flatten_netlist_file
 from .results import FileResultStore, best_decision_summary
-from .search import create_optimizer
+from .search import create_optimizer, validate_proposal
 from .sim_core import archive_case_bundle, simulate_case
 from .solver import solver_identity
 from .study_config import CaseControlPolicy, candidate_case, mapping, study_spec_from_case
@@ -33,10 +37,20 @@ from .study_config import CaseControlPolicy, candidate_case, mapping, study_spec
 class CaseEvaluator:
     """Run one declared electrical circuit evaluation."""
 
-    def __init__(self, case: Case, study_root: Path, solver_override: str | None = None) -> None:
+    def __init__(
+        self,
+        case: Case,
+        study_root: Path,
+        solver_override: str | None = None,
+        *,
+        case_archive_root: Path | None = None,
+        artifact_namespace: str = "default",
+    ) -> None:
         self.case = case
         self.study_root = study_root
         self.solver_override = solver_override
+        self.case_archive_root = case_archive_root or study_root
+        self.artifact_namespace = artifact_namespace
 
     def evaluate(self, request: EvaluationRequest) -> RawResult:
         digest = hashlib.sha256(
@@ -47,9 +61,9 @@ class CaseEvaluator:
             self.case,
             params=request.merged_inputs(),
             run_root=self.study_root / "artifacts",
-            run_id=f"e_{digest}",
+            run_id=f"e_{self.artifact_namespace}_{digest}",
             solver_override=solver_name,
-            case_archive_root=self.study_root,
+            case_archive_root=self.case_archive_root,
         )
         return self._raw_from_manifest(record.manifest(), request)
 
@@ -139,6 +153,14 @@ def _referenced_file_fingerprints(case: Case, data: Mapping[str, Any]) -> dict[s
                 visit(item)
 
     visit(data)
+    circuit = data.get("circuit")
+    if isinstance(circuit, Mapping) and isinstance(circuit.get("netlist_file"), str):
+        path = Path(circuit["netlist_file"])
+        path = (path if path.is_absolute() else case.base_dir / path).resolve()
+        if path.is_file():
+            _flattened, dependencies = flatten_netlist_file(path)
+            for dependency in dependencies:
+                files[str(dependency)] = file_sha256(dependency)
     return files
 
 
@@ -200,18 +222,29 @@ def build_case_runner(
     case: Case,
     run_root: str | Path,
     solver_override: str | None = None,
+    *,
+    transactional: bool = False,
 ) -> tuple[StudySpec, StudyRunner, FileResultStore]:
+    runtime_fingerprint = _runtime_fingerprint(case, solver_override)
+    simulation_fingerprint = _simulation_fingerprint(case, solver_override)
     store = FileResultStore(
         run_root,
         case.case_id,
-        _runtime_fingerprint(case, solver_override),
-        raw_runtime_fingerprint=_simulation_fingerprint(case, solver_override),
+        runtime_fingerprint,
+        raw_runtime_fingerprint=simulation_fingerprint,
     )
-    snapshot, _case_files = archive_case_bundle(case, store.root)
+    archive_root = store.begin_generation() if transactional else store.root
+    snapshot, _case_files = archive_case_bundle(case, archive_root)
     spec = study_spec_from_case(snapshot)
     runner = StudyRunner(
         study=spec,
-        evaluator=CaseEvaluator(snapshot, store.root, solver_override),
+        evaluator=CaseEvaluator(
+            snapshot,
+            store.root,
+            solver_override,
+            case_archive_root=archive_root,
+            artifact_namespace=_sha256_json(simulation_fingerprint)[:16],
+        ),
         metrics=(CaseMetrics(snapshot, store.root),),
         constraints=constraints_from_case(snapshot),
         control_policy=CaseControlPolicy(snapshot),
@@ -224,19 +257,87 @@ def _feasibility_first_loss(rank: tuple[float, ...]) -> float:
     """Map the lexicographic design rank to one bounded optimizer signal.
 
     Complete feasible candidates always occupy ``[0, 1)``.  All other
-    candidates occupy ``[1, 2)``, guided only by feasible-scenario shortfall.
-    Constraint violation and the distinction between failed and infeasible
-    evaluations remain in the complete rank used for final design selection;
-    a scalar optimizer signal cannot preserve that lexicographic order.
+    candidates occupy ``[1, 2)``.  Within the latter band, missing solver
+    evidence, feasibility coverage, and normalized constraint violation all
+    provide progress signals.  Final design selection still uses the complete
+    lexicographic rank because no scalar can preserve that order exactly.
     """
 
     feasible = bool(rank) and rank[0] == 0.0
     if not feasible:
-        feasible_shortfall = max(0.0, rank[2] if len(rank) > 2 else 1.0)
-        return 1.0 + min(feasible_shortfall, 1.0 - 1e-12)
+        success_shortfall = min(max(0.0, rank[1] if len(rank) > 1 else 1.0), 1.0)
+        feasible_shortfall = min(max(0.0, rank[2] if len(rank) > 2 else 1.0), 1.0)
+        violation = max(0.0, rank[3] if len(rank) > 3 else 0.0)
+        normalized_violation = 2.0 * math.atan(violation) / math.pi
+        progress = 0.5 * success_shortfall + 0.4 * feasible_shortfall + 0.1 * normalized_violation
+        return 1.0 + min(progress, 1.0 - 1e-12)
     primary = rank[4] if len(rank) > 4 else 0.0
     bounded = 0.5 + math.atan(primary) / math.pi
     return min(max(bounded, 0.0), 1.0 - 1e-12)
+
+
+def _flatten_table_values(prefix: str, values: Mapping[str, Any]) -> dict[str, Any]:
+    """Flatten nested mappings while retaining non-scalar values as JSON."""
+
+    flattened: dict[str, Any] = {}
+    for raw_name, value in values.items():
+        name = f"{prefix}.{raw_name}"
+        if isinstance(value, Mapping):
+            flattened.update(_flatten_table_values(name, value))
+        elif isinstance(value, list | tuple):
+            flattened[name] = json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=str)
+        else:
+            flattened[name] = value
+    return flattened
+
+
+def _evaluation_table_rows(
+    trial: int,
+    result: CandidateResult,
+    dataset_identity: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    """One analysis-ready row for every candidate/scenario/control solve."""
+
+    rows: list[dict[str, Any]] = []
+    design = _flatten_table_values("design", result.candidate.values)
+    for scenario_result in result.scenarios:
+        scenario = scenario_result.scenario
+        scenario_values = _flatten_table_values("scenario", scenario.values)
+        for evaluation in scenario_result.trials:
+            row: dict[str, Any] = {
+                **dataset_identity,
+                "trial": trial,
+                "candidate_id": result.candidate.candidate_id,
+                "scenario_id": scenario.scenario_id,
+                "scenario_weight": scenario.weight,
+                "selected_control": evaluation is scenario_result.selected,
+                "status": evaluation.raw.status,
+                "feasible": evaluation.feasible,
+                "total_violation": evaluation.total_violation,
+                "duration_s": evaluation.duration_s,
+                "from_cache": evaluation.from_cache,
+                "cache_key": evaluation.cache_key,
+                "raw_cache_key": evaluation.raw_cache_key,
+                "error": evaluation.raw.error,
+                **design,
+                **scenario_values,
+                **_flatten_table_values("control", evaluation.request.control.values),
+                **_flatten_table_values("metric", evaluation.metrics.values),
+                **_flatten_table_values("observation", evaluation.raw.observations),
+                **_flatten_table_values("artifact", evaluation.raw.artifacts),
+            }
+            for constraint in evaluation.constraints:
+                prefix = f"constraint.{constraint.name}"
+                row.update(
+                    {
+                        f"{prefix}.satisfied": constraint.satisfied,
+                        f"{prefix}.violation": constraint.violation,
+                        f"{prefix}.value": constraint.value,
+                        f"{prefix}.limit": constraint.limit,
+                    }
+                )
+            rows.append(row)
+    return rows
 
 
 def resolve_study_case(
@@ -338,18 +439,34 @@ def run_case_study(
     if not report.ok:
         raise ValueError(report.format_text())
 
-    optimizer = create_optimizer(candidate_case(case))
+    optimizer_case = candidate_case(case)
+    optimizer = create_optimizer(optimizer_case)
     grid_size = getattr(optimizer, "n_points", None)
     if grid_size is not None and effective_trials != int(grid_size):
         raise ValueError(f"grid optimizer requires exactly {grid_size} trials, got {effective_trials}")
-    spec, runner, store = build_case_runner(case, run_root)
+    spec, runner, store = build_case_runner(case, run_root, transactional=True)
+    generation_root = store.generation_root
+    if generation_root is None:  # pragma: no cover - an internal construction invariant
+        raise RuntimeError("study result generation was not initialized")
+    generation = generation_root.relative_to(store.root)
+    dataset_identity = {
+        "table_schema": "evaluation_table.v1",
+        "dataset_id": f"{store.study_id}/{generation_root.name}",
+        "study_id": store.study_id,
+        "case_schema": str(case.authored_data.get("schema", "case_yaml.v1")),
+        "resolved_case_schema": str(case.data.get("schema", "case_yaml.v1")),
+        "runtime_fingerprint_sha256": _sha256_json(store.runtime_fingerprint),
+        "solver_fingerprint_sha256": _sha256_json(store.raw_runtime_fingerprint.get("solver", {})),
+    }
     results = []
     history: list[dict[str, Any]] = []
+    evaluation_rows: list[dict[str, Any]] = []
     for index in range(effective_trials):
-        params = optimizer.ask()
+        params = validate_proposal(optimizer_case, optimizer.ask())
         candidate = Candidate(f"trial_{index:04d}", params)
         result = runner.evaluate_candidate(candidate)
         results.append(result)
+        evaluation_rows.extend(_evaluation_table_rows(index, result, dataset_identity))
         rank = tuple(value if math.isfinite(value) else 1e30 for value in candidate_rank_key(spec, result))
         optimizer_loss = _feasibility_first_loss(rank)
         feedback = {
@@ -383,6 +500,10 @@ def run_case_study(
     ordered = sorted(results, key=lambda item: candidate_rank_key(spec, item))
     best = ordered[0]
     n_failed = sum(not evaluation.raw.ok for result in results for evaluation in result.control_evaluations)
+
+    def generated(name: str) -> str:
+        return str(generation / name).replace("\\", "/")
+
     payload = {
         "schema": "study_result.v1",
         "study": spec.to_dict(),
@@ -392,12 +513,26 @@ def run_case_study(
             "trials": effective_trials,
             "seed": int((case.data.get("optimizer") or {}).get("seed", 0)),
         },
+        "dataset": dataset_identity,
         "run_root": str(store.root),
         "artifacts": {
-            "case": "case.yaml",
-            "input_manifest": "input_manifest.json",
-            **({"input_case": "input_case.yaml"} if (store.root / "input_case.yaml").is_file() else {}),
-            **({"resolved_plan": "resolved_plan.yaml"} if (store.root / "resolved_plan.yaml").is_file() else {}),
+            "generation": str(generation).replace("\\", "/"),
+            "case": generated("case.yaml"),
+            "input_manifest": generated("input_manifest.json"),
+            "candidate_directory": generated("candidates"),
+            "history": generated("study_history.json"),
+            "evaluation_table": generated("evaluations.csv"),
+            **({"input_case": generated("input_case.yaml")} if (generation_root / "input_case.yaml").is_file() else {}),
+            **(
+                {"resolved_plan": generated("resolved_plan.yaml")}
+                if (generation_root / "resolved_plan.yaml").is_file()
+                else {}
+            ),
+            **(
+                {"imported_netlist": generated("imported_netlist.cir")}
+                if (generation_root / "imported_netlist.cir").is_file()
+                else {}
+            ),
         },
         "n_candidates": len(results),
         "n_evaluations": sum(len(item.control_evaluations) for item in results),
@@ -405,6 +540,10 @@ def run_case_study(
         "best": best_decision_summary(spec, best, n_failed_evaluations=n_failed),
         "optimizer_state": optimizer.state(),
     }
+    # Everything referenced by the root result exists before this final atomic
+    # replacement.  An interrupted rerun therefore leaves the previous complete
+    # generation authoritative instead of publishing a mixed candidate set.
+    write_json(generation_root / "study_history.json", history)
+    pd.DataFrame(evaluation_rows).to_csv(generation_root / "evaluations.csv", index=False)
     write_json(store.root / "study_result.json", payload)
-    write_json(store.root / "study_history.json", history)
     return payload

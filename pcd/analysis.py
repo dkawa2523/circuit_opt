@@ -1,4 +1,4 @@
-"""What to ask the solver for, and how to read the answer back.
+"""Plan ngspice probes and compute RF measurements from solver results.
 
 Two analyses are supported, and a single solver run can produce both:
 
@@ -9,8 +9,10 @@ AC matters for a matching network because matching is a frequency-domain
 problem: the quantity you actually want is the impedance looking into the
 network, and how far it sits from the source impedance.
 
-Like :mod:`pcd.spice`, this module is shared vocabulary — it imports nothing
-else from ``pcd`` and knows nothing about cases being simulated or scored.
+This module is the compatibility-facing analysis surface. It coordinates the
+generic :mod:`pcd.signals` primitives with circuit observations and the small
+case fields needed to plan probes; it neither runs a solver nor selects a
+design candidate.
 """
 
 from __future__ import annotations
@@ -24,6 +26,7 @@ import numpy as np
 import pandas as pd
 
 from .component_models import ComponentObservation, observed_components
+from .core.models import UnsettledMeasurementError
 from .signals import harmonic_phasors, periodic_window, time_average
 
 #: Reference impedance for reflection coefficient / VSWR, in ohms.
@@ -31,6 +34,39 @@ DEFAULT_Z0 = 50.0
 
 AC_FILE = "ac.csv"
 WAVEFORM_FILE = "waveform.csv"
+
+DEFAULT_PERIODIC_CYCLES = 3
+DEFAULT_SETTLING_COMPARISONS = 2
+DEFAULT_SETTLING_TOLERANCE = 1e-3
+DEFAULT_HARMONIC_COUNT = 3
+
+
+def rf_measurement_options(measurement: Mapping[str, Any] | None = None) -> dict[str, int | float]:
+    """Read the small set of configurable periodic RF measurement controls."""
+
+    cfg = measurement or {}
+
+    def positive_integer(name: str, default: int) -> int:
+        try:
+            number = float(cfg.get(name, default))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"measurement.{name} must be a positive integer") from exc
+        if not np.isfinite(number) or not number.is_integer() or number < 1:
+            raise ValueError(f"measurement.{name} must be a positive integer")
+        return int(number)
+
+    try:
+        tolerance = float(cfg.get("settling_tolerance", DEFAULT_SETTLING_TOLERANCE))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("measurement.settling_tolerance must be positive and finite") from exc
+    if not np.isfinite(tolerance) or tolerance <= 0:
+        raise ValueError("measurement.settling_tolerance must be positive and finite")
+    return {
+        "periodic_cycles": positive_integer("periodic_cycles", DEFAULT_PERIODIC_CYCLES),
+        "settling_comparisons": positive_integer("settling_comparisons", DEFAULT_SETTLING_COMPARISONS),
+        "settling_tolerance": tolerance,
+        "harmonic_count": positive_integer("harmonic_count", DEFAULT_HARMONIC_COUNT),
+    }
 
 
 @dataclass(frozen=True)
@@ -100,14 +136,79 @@ SOURCE_VOLTAGE = "source_voltage_V"
 LOAD_AMMETER = "Vload_meter"
 LOAD_CURRENT = "load_current_A"
 AC_LOAD_VOLTAGE = "load_voltage_V"
+RESERVED_PROBE_COLUMNS = frozenset(
+    {
+        "time_s",
+        "voltage_V",
+        "current_A",
+        SOURCE_VOLTAGE,
+        LOAD_CURRENT,
+        AC_LOAD_VOLTAGE,
+        "frequency_Hz",
+        # AC probe names are expanded to ``<name>_re``/``<name>_im``.
+        "voltage",
+        "current",
+    }
+)
+
+
+def _source_specs(case: Any) -> list[Mapping[str, Any]]:
+    data = case.data
+    sources = data.get("sources")
+    if isinstance(sources, list):
+        return [item for item in sources if isinstance(item, Mapping)]
+    source = data.get("source")
+    return [source] if isinstance(source, Mapping) else []
+
+
+def _effective_source_name(source: Mapping[str, Any], index: int) -> str:
+    return str(source.get("name", "Vsrc" if index == 0 else f"Vsrc{index}"))
+
+
+def source_name(case: Any) -> str:
+    """Name of the one source whose current defines the measured input port."""
+
+    sources = _source_specs(case)
+    structured = [
+        (_effective_source_name(source, index), source) for index, source in enumerate(sources) if "raw" not in source
+    ]
+    names = [name for name, _source in structured]
+    if any(not name.strip() for name in names):
+        raise ValueError("structured source names must not be empty")
+    if len(names) != len(set(names)):
+        raise ValueError("structured source names must be unique")
+    measurement = case.data.get("measurement", {}) or {}
+    requested = str(measurement.get("current_source", "")).strip() if isinstance(measurement, Mapping) else ""
+    if requested:
+        if names and requested not in names:
+            raise ValueError(f"measurement.current_source {requested!r} is not a declared structured source")
+        return requested
+    return names[0] if names else "Vsrc"
+
+
+def _active_source(case: Any) -> Mapping[str, Any] | None:
+    active = source_name(case)
+    for index, source in enumerate(_source_specs(case)):
+        if "raw" not in source and _effective_source_name(source, index) == active:
+            return source
+    return None
 
 
 def source_node(case: Any) -> str:
     """The node the source drives, i.e. its positive terminal."""
 
-    data = case.data
-    sources = data.get("sources") or ([data["source"]] if data.get("source") else [])
-    return str(sources[0].get("p", "src")) if sources else "src"
+    source = _active_source(case)
+    return str(source.get("p", "src")) if source else "src"
+
+
+def source_voltage_vector(case: Any) -> str:
+    """Differential voltage across the source that defines the input port."""
+
+    source = _active_source(case)
+    if source is None:
+        return "v(src)"
+    positive, negative = str(source.get("p", "src")), str(source.get("n", "0"))
+    return f"v({positive})" if negative == "0" else f"v({positive},{negative})"
 
 
 def load_current(case: Any) -> str | None:
@@ -146,6 +247,8 @@ def _declared_probe_pairs(case: Any) -> list[tuple[str, str]]:
         )
     names: dict[str, str] = {}
     for vector, name in pairs:
+        if name in RESERVED_PROBE_COLUMNS:
+            raise ValueError(f"probe column {name!r} is reserved by the waveform/AC result format")
         if name in names and names[name] != vector:
             raise ValueError(f"probe column {name!r} names both {names[name]!r} and {vector!r}")
         names[name] = vector
@@ -167,7 +270,7 @@ def probe_plan(case: Any) -> tuple[list[str], list[str]]:
     if load_current(case) == LOAD_CURRENT:
         vectors.append(f"i({LOAD_AMMETER})")
         columns.append(LOAD_CURRENT)
-    return [*vectors, f"v({source_node(case)})"], [*columns, SOURCE_VOLTAGE]
+    return [*vectors, source_voltage_vector(case)], [*columns, SOURCE_VOLTAGE]
 
 
 def ac_probe_plan(case: Any) -> tuple[list[str], list[str]]:
@@ -186,7 +289,7 @@ def control_lines(
     solver_cfg: dict[str, Any],
     output_vector: str,
     source: str,
-    drive_node: str,
+    drive_voltage: str,
     probes: list[str],
     params: dict[str, Any] | None = None,
     ac_probes: list[str] | None = None,
@@ -196,6 +299,7 @@ def control_lines(
     voltage_vector = output_vector if output_vector.strip().lower().startswith("v(") else f"v({output_vector})"
     vectors = [voltage_vector, f"i({source})", *probes]
     sweep = ac_sweep(solver_cfg, params)
+    drive_vector = drive_voltage if drive_voltage.strip().lower().startswith("v(") else f"v({drive_voltage})"
     # The declared output is part of the minimum AC result, even when no
     # optional probes are requested.  This keeps source-to-output gain and
     # phase available for later interpretation without asking users to add a
@@ -203,7 +307,7 @@ def control_lines(
     ac_extras = [voltage_vector, *(ac_probes or [])]
     saved = list(vectors) if transient_requested(solver_cfg) else []
     if sweep:
-        saved += [f"v({drive_node})", f"i({source})", *ac_extras]
+        saved += [drive_vector, f"i({source})", *ac_extras]
     saved = list(dict.fromkeys(saved))
     lines = [
         f".save {' '.join(saved)}",
@@ -222,7 +326,7 @@ def control_lines(
     if sweep:
         # The drive-node voltage and the source current together give the
         # impedance the source sees, which is the point of running AC here.
-        ac_vectors = [f"v({drive_node})", f"i({source})", *ac_extras]
+        ac_vectors = [drive_vector, f"i({source})", *ac_extras]
         lines += [sweep.command(), f"wrdata {AC_FILE} {' '.join(ac_vectors)}"]
     lines += ["quit", ".endc", ".end"]
     return lines
@@ -234,13 +338,19 @@ def control_lines(
 
 
 def read_ac(path: str | Path, extra_columns: list[str] | tuple[str, ...] | None = None) -> pd.DataFrame:
-    """Parse an ngspice AC `wrdata` file.
+    """Parse a canonical AC CSV or a legacy ngspice ``wrdata`` file.
 
     ngspice writes each complex vector as ``(scale, real, imag)``, so a file
     holding v and i has six columns.  The result keeps real and imaginary parts
     in separate float columns: a complex dtype would not survive a CSV round
     trip, and mixing complex with real columns silently upcasts a whole row.
     """
+
+    path = Path(path)
+    with path.open("r", encoding="utf-8-sig", errors="replace") as handle:
+        first_line = handle.readline().strip()
+    if first_line.split(",", 1)[0].strip() == "frequency_Hz":
+        return _read_canonical_ac(path, extra_columns)
 
     arr = np.loadtxt(path)
     if arr.ndim == 1:
@@ -261,6 +371,18 @@ def read_ac(path: str | Path, extra_columns: list[str] | tuple[str, ...] | None 
         data[f"{name}_re"] = arr[:, base + 1]
         data[f"{name}_im"] = arr[:, base + 2]
     return pd.DataFrame(data)
+
+
+def _read_canonical_ac(path: Path, extra_columns: list[str] | tuple[str, ...] | None) -> pd.DataFrame:
+    frame = pd.read_csv(path)
+    required = ["frequency_Hz", "voltage_re", "voltage_im", "current_re", "current_im"]
+    required.extend(f"{name}_{part}" for name in (extra_columns or ()) for part in ("re", "im"))
+    missing = [name for name in required if name not in frame]
+    if missing:
+        raise ValueError(f"canonical AC output is missing columns {missing}: {path}")
+    for name in required:
+        frame[name] = pd.to_numeric(frame[name], errors="raise").astype(float)
+    return frame
 
 
 def input_impedance(ac: pd.DataFrame, z0: float = DEFAULT_Z0) -> pd.DataFrame:
@@ -472,7 +594,7 @@ def power_flow(waveform: pd.DataFrame, load_current: str | None = None) -> dict[
         return {}
     time_s = waveform["time_s"].to_numpy(float)
     out: dict[str, float] = {}
-    if "source_voltage_V" in waveform and "current_A" in waveform:
+    if _has_finite_samples(waveform, ("source_voltage_V", "current_A")):
         v_src = waveform["source_voltage_V"].to_numpy(float)
         i_src = waveform["current_A"].to_numpy(float)
         # ngspice reports current into the source's + terminal, so delivered
@@ -486,7 +608,7 @@ def power_flow(waveform: pd.DataFrame, load_current: str | None = None) -> dict[
                 "source_apparent_power_VA": source_voltage_rms * source_current_rms,
             }
         )
-    if load_current and load_current in waveform:
+    if load_current and _has_finite_samples(waveform, ("voltage_V", load_current)):
         v_load = waveform["voltage_V"].to_numpy(float)
         i_load = waveform[load_current].to_numpy(float)
         p_load = mean_over_time(v_load * i_load, time_s)
@@ -498,16 +620,60 @@ def power_flow(waveform: pd.DataFrame, load_current: str | None = None) -> dict[
     return out
 
 
-def _final_periodic_cycles(waveform: pd.DataFrame, fundamental_hz: float) -> tuple[pd.DataFrame, dict[str, Any]]:
-    """Trim a waveform to final whole cycles and retain convergence evidence."""
+def _has_finite_samples(waveform: pd.DataFrame, columns: tuple[str, ...]) -> bool:
+    """Whether at least two time-aligned samples can support a measurement."""
+
+    required = ("time_s", *columns)
+    if any(column not in waveform for column in required):
+        return False
+    values = waveform.loc[:, required].to_numpy(dtype=float)
+    return int(np.all(np.isfinite(values), axis=1).sum()) >= 2
+
+
+def _final_periodic_cycles(
+    waveform: pd.DataFrame,
+    fundamental_hz: float,
+    signal_columns: tuple[str, ...] = ("voltage_V",),
+    *,
+    periodic_cycles: int = DEFAULT_PERIODIC_CYCLES,
+    settling_comparisons: int = DEFAULT_SETTLING_COMPARISONS,
+    settling_tolerance: float = DEFAULT_SETTLING_TOLERANCE,
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """Trim to final whole cycles and check every signal used by a metric."""
 
     if waveform.empty:
         return waveform, {}
     time_s = waveform["time_s"].to_numpy(float)
-    voltage = waveform["voltage_V"].to_numpy(float)
-    window = periodic_window(time_s, voltage, fundamental_hz, measure_cycles=3, consecutive=2, tolerance=1e-3)
-    if window is None or len(waveform) < 4:
-        return waveform, {"periodic_settled": False, "periodic_residual": None, "measurement_cycles": 0}
+    columns = tuple(dict.fromkeys(signal_columns))
+    missing = [column for column in columns if column not in waveform]
+    if missing:
+        raise ValueError(f"waveform is missing periodic measurement signals: {missing}")
+    windows = {
+        column: periodic_window(
+            time_s,
+            waveform[column].to_numpy(float),
+            fundamental_hz,
+            measure_cycles=periodic_cycles,
+            consecutive=settling_comparisons,
+            tolerance=settling_tolerance,
+        )
+        for column in columns
+    }
+    available = [window for window in windows.values() if window is not None]
+    residuals = {column: None if window is None else window.residual for column, window in windows.items()}
+    if not available or len(available) != len(windows) or len(waveform) < 4:
+        return waveform, {
+            "periodic_settled": False,
+            "periodic_residual": None,
+            "periodic_residuals": residuals,
+            "measurement_cycles": 0,
+            "available_cycles": 0,
+            "required_cycles": max(periodic_cycles, settling_comparisons + 1),
+        }
+
+    window = available[0]
+    settled = all(item.settled for item in available)
+    finite_residuals = [float(item) for item in residuals.values() if item is not None]
 
     grid = np.linspace(window.start_s, window.end_s, max(len(waveform), 16))
     measured = pd.DataFrame(
@@ -521,22 +687,53 @@ def _final_periodic_cycles(waveform: pd.DataFrame, fundamental_hz: float) -> tup
         }
     )
     return measured, {
-        "periodic_settled": bool(window.settled),
-        "periodic_residual": window.residual,
+        "periodic_settled": settled,
+        "periodic_residual": max(finite_residuals) if finite_residuals else None,
+        "periodic_residuals": residuals,
         "measurement_cycles": window.cycles,
+        "available_cycles": min(item.available_cycles for item in available),
+        "required_cycles": max(item.required_cycles for item in available),
     }
+
+
+def _require_periodic_settle(evidence: Mapping[str, Any]) -> None:
+    if evidence.get("periodic_settled"):
+        return
+    residuals = evidence.get("periodic_residuals") or {}
+    detail = ", ".join(f"{name}={value!r}" for name, value in residuals.items())
+    cycles = f"available={evidence.get('available_cycles', 0)}, required={evidence.get('required_cycles', 0)}"
+    raise UnsettledMeasurementError(
+        f"periodic measurement signals have not settled ({cycles}; {detail or 'insufficient cycles'})"
+    )
 
 
 def transient_component_metrics(
     waveform: pd.DataFrame,
     fundamental_hz: float,
     components: tuple[ComponentObservation, ...],
+    *,
+    require_settled: bool = True,
+    periodic_cycles: int = DEFAULT_PERIODIC_CYCLES,
+    settling_comparisons: int = DEFAULT_SETTLING_COMPARISONS,
+    settling_tolerance: float = DEFAULT_SETTLING_TOLERANCE,
 ) -> dict[str, float]:
     """Component stress/loss over the same final-cycle window as RF-port power."""
 
     if waveform.empty or not components:
         return {}
-    measured, _evidence = _final_periodic_cycles(waveform, fundamental_hz)
+    signal_columns = tuple(
+        column for component in components for column in (component.voltage_column, component.current_column)
+    )
+    measured, evidence = _final_periodic_cycles(
+        waveform,
+        fundamental_hz,
+        signal_columns,
+        periodic_cycles=periodic_cycles,
+        settling_comparisons=settling_comparisons,
+        settling_tolerance=settling_tolerance,
+    )
+    if require_settled:
+        _require_periodic_settle(evidence)
     time_s = measured["time_s"].to_numpy(float)
     out: dict[str, float] = {}
     losses: list[float] = []
@@ -575,6 +772,12 @@ def rf_port_metrics(
     waveform: pd.DataFrame,
     fundamental_hz: float,
     load_current_column: str | None,
+    *,
+    require_settled: bool = True,
+    periodic_cycles: int = DEFAULT_PERIODIC_CYCLES,
+    settling_comparisons: int = DEFAULT_SETTLING_COMPARISONS,
+    settling_tolerance: float = DEFAULT_SETTLING_TOLERANCE,
+    harmonic_count: int = DEFAULT_HARMONIC_COUNT,
 ) -> dict[str, Any]:
     """Measure the electrical RF-load port without inferring plasma physics.
 
@@ -589,16 +792,30 @@ def rf_port_metrics(
         raise ValueError("waveform is empty; RF-port metrics are unavailable")
     if not load_current_column or load_current_column not in waveform:
         raise ValueError("RF-port metrics require measurement.load_current (use 'auto' for built-in loads)")
+    if not _has_finite_samples(waveform, ("voltage_V", load_current_column)):
+        raise ValueError("RF-port metrics require finite load voltage/current samples")
     if fundamental_hz <= 0:
         raise ValueError("a positive source fundamental frequency is required for RF-port metrics")
 
-    measured, evidence = _final_periodic_cycles(waveform, fundamental_hz)
+    signals = ["voltage_V", load_current_column]
+    if _has_finite_samples(waveform, ("source_voltage_V", "current_A")):
+        signals.extend(("source_voltage_V", "current_A"))
+    measured, evidence = _final_periodic_cycles(
+        waveform,
+        fundamental_hz,
+        tuple(signals),
+        periodic_cycles=periodic_cycles,
+        settling_comparisons=settling_comparisons,
+        settling_tolerance=settling_tolerance,
+    )
+    if require_settled:
+        _require_periodic_settle(evidence)
     time_s = measured["time_s"].to_numpy(float)
     voltage = measured["voltage_V"].to_numpy(float)
     current = measured[load_current_column].to_numpy(float)
     flow = power_flow(measured, load_current_column)
-    voltage_h = harmonic_spectrum(time_s, voltage, fundamental_hz, 3)
-    current_h = harmonic_spectrum(time_s, current, fundamental_hz, 3)
+    voltage_h = harmonic_spectrum(time_s, voltage, fundamental_hz, harmonic_count)
+    current_h = harmonic_spectrum(time_s, current, fundamental_hz, harmonic_count)
     z1: complex | None = None
     if voltage_h is not None and current_h is not None and abs(current_h[0]) > 1e-30:
         z1 = complex(voltage_h[0] / current_h[0])

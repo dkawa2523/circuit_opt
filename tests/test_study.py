@@ -4,6 +4,7 @@ import copy
 import json
 from pathlib import Path
 
+import pandas as pd
 import pytest
 
 from pcd.case import Case, load_case
@@ -19,9 +20,10 @@ from pcd.core import (
     RawResult,
     Scenario,
     ScenarioResult,
+    StudyRunner,
     StudySpec,
 )
-from pcd.results import best_decision_summary, candidate_summary
+from pcd.results import best_decision_summary, candidate_result_paths, candidate_summary, study_artifact_path
 from pcd.results import store as store_module
 from pcd.sim_core import archive_case_bundle
 from pcd.study import (
@@ -79,10 +81,29 @@ def test_case_study_runs_through_the_generic_pipeline(tmp_path, topology_case):
         "seed": 3,
     }
     assert (study_root / "study_result.json").exists()
+    evaluation_table = pd.read_csv(study_root / result["artifacts"]["evaluation_table"])
+    assert len(evaluation_table) == 2
+    assert {
+        "table_schema",
+        "dataset_id",
+        "study_id",
+        "case_schema",
+        "runtime_fingerprint_sha256",
+        "solver_fingerprint_sha256",
+        "candidate_id",
+        "scenario_id",
+        "status",
+        "feasible",
+        "metric.loss",
+    } <= set(evaluation_table)
+    assert evaluation_table["dataset_id"].nunique() == 1
+    assert result["dataset"]["table_schema"] == "evaluation_table.v1"
     assert len(list((study_root / "evaluations").glob("*/result.json"))) == 2
     stored = json.loads((study_root / "study_result.json").read_text(encoding="utf-8"))
     assert stored["study"]["study_id"] == topology_case.case_id
-    archived_case = load_case(study_root / "case.yaml")
+    archived_case_path = study_artifact_path(study_root, "case", "case.yaml")
+    assert archived_case_path is not None
+    archived_case = load_case(archived_case_path)
     assert archived_case.data["run"]["trials"] == 2
     assert archived_case.data["optimizer"]["seed"] == 3
     summary = candidate_summary(study_root)
@@ -91,6 +112,71 @@ def test_case_study_runs_through_the_generic_pipeline(tmp_path, topology_case):
     assert summary.loc[summary["selected"], "candidate_id"].item() == result["best"]["candidate"]["candidate_id"]
     assert "objective.loss" in summary
     assert "control_margin" in summary
+
+
+def test_rerunning_a_study_publishes_one_new_candidate_generation(tmp_path, topology_case):
+    first = run_case_study(
+        topology_case,
+        n_trials=3,
+        run_root=tmp_path,
+        optimizer_name="random",
+        solver_override="test_fake",
+        seed=3,
+    )
+    second = run_case_study(
+        topology_case,
+        n_trials=1,
+        run_root=tmp_path,
+        optimizer_name="random",
+        solver_override="test_fake",
+        seed=4,
+    )
+
+    study_root = Path(second["run_root"])
+    assert first["run_root"] == second["run_root"]
+    assert second["n_candidates"] == 1
+    first_candidates = study_root / first["artifacts"]["candidate_directory"]
+    second_candidates = study_root / second["artifacts"]["candidate_directory"]
+    assert first_candidates != second_candidates
+    assert len(list(first_candidates.glob("*.json"))) == 3
+    assert [path.name for path in second_candidates.glob("*.json")] == ["trial_0000.json"]
+    assert candidate_summary(study_root)["candidate_id"].tolist() == ["trial_0000"]
+
+
+def test_an_interrupted_rerun_keeps_the_previous_generation_committed(tmp_path, topology_case, monkeypatch):
+    first = run_case_study(
+        topology_case,
+        n_trials=1,
+        run_root=tmp_path,
+        optimizer_name="random",
+        solver_override="test_fake",
+        seed=3,
+    )
+    study_root = Path(first["run_root"])
+    committed = (study_root / "study_result.json").read_bytes()
+    original = StudyRunner.evaluate_candidate
+    calls = 0
+
+    def interrupt_second_candidate(self, candidate):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError("interrupted rerun")
+        return original(self, candidate)
+
+    monkeypatch.setattr(StudyRunner, "evaluate_candidate", interrupt_second_candidate)
+    with pytest.raises(RuntimeError, match="interrupted rerun"):
+        run_case_study(
+            topology_case,
+            n_trials=2,
+            run_root=tmp_path,
+            optimizer_name="random",
+            solver_override="test_fake",
+            seed=4,
+        )
+
+    assert (study_root / "study_result.json").read_bytes() == committed
+    assert len(candidate_result_paths(study_root)) == 1
 
 
 def test_best_decision_summary_distinguishes_failed_evidence_and_control_margin():
@@ -115,11 +201,25 @@ def test_best_decision_summary_distinguishes_failed_evidence_and_control_margin(
     study = StudySpec("decision", (scenario,), (Objective("score"),))
 
     incomplete = best_decision_summary(study, accepted_result, n_failed_evaluations=1)
-    assert incomplete["status"] == "incomplete_evidence"
-    assert incomplete["limitation"] == "failed_evaluations"
+    assert incomplete["status"] == "meets_declared_acceptance"
+    assert incomplete["limitation"] == "none"
+    assert incomplete["search_completeness"] == "incomplete_evidence"
+    assert incomplete["search_limitation"] == "failed_evaluations"
     assert incomplete["coverage"] == {"conditions": 1, "solved": 1, "accepted": 1}
     assert incomplete["conditions"][0]["selected_control"] == {"tune_F": 2e-10}
     assert incomplete["conditions"][0]["values"] == {"pressure_Pa": 5.0}
+
+    failed_result = CandidateResult(
+        candidate,
+        (ScenarioResult(scenario, failed_trial, (failed_trial,), None),),
+        {"score": None},
+        feasible_fraction=0.0,
+        success_fraction=0.0,
+        total_violation=1.0,
+    )
+    failed = best_decision_summary(study, failed_result, n_failed_evaluations=1)
+    assert failed["status"] == "incomplete_evidence"
+    assert failed["limitation"] == "selected_candidate_failed_conditions"
 
     margin_constraint = ConstraintResult("min_control_margin", False, violation=1.0, value=0.0, limit=0.2)
     margin_limited = EvaluationResult(request, RawResult("ok"), MetricSet({"score": 0.2}), (margin_constraint,))
@@ -245,6 +345,26 @@ def test_shortened_raw_cache_collision_is_rejected(tmp_path, monkeypatch):
     store.save_raw(first, RawResult("ok", {"score": 1.0}))
     with pytest.raises(ValueError, match="shortened raw cache path collision"):
         store.save_raw(second, RawResult("ok", {"score": 2.0}))
+
+
+def test_raw_cache_is_invalidated_when_a_declared_artifact_changes(tmp_path):
+    store = store_module.FileResultStore(tmp_path, "artifact_digest")
+    request = EvaluationRequest(Candidate("c", {"x": 1}), Scenario("s"), ControlState())
+    waveform = store.root / "artifacts" / "waveform.csv"
+    waveform.parent.mkdir(parents=True)
+    waveform.write_text("first", encoding="utf-8")
+    raw = RawResult("ok", {"score": 1.0}, {"waveform": "artifacts/waveform.csv"})
+
+    store.save_raw(request, raw)
+    assert store.load_raw(request) is not None
+    waveform.write_text("changed", encoding="utf-8")
+    assert store.load_raw(request) is None
+
+    cache_path = store.raw_dir(request) / "raw_result.json"
+    cache_path.write_text("{broken", encoding="utf-8")
+    assert store.load_raw(request) is None
+    store.save_raw(request, raw)
+    assert store.load_raw(request) is not None
 
 
 def test_explicit_objective_and_control_axes_are_translated(topology_case):
@@ -422,8 +542,10 @@ def test_simulation_fingerprint_excludes_study_interpretation_but_keeps_physics(
 
 def test_fingerprints_track_external_physics_and_metric_files_separately(tmp_path, topology_case):
     netlist = tmp_path / "circuit.cir"
+    model = tmp_path / "model.inc"
     target = tmp_path / "target.csv"
-    netlist.write_text("R1 in out 50\n", encoding="utf-8")
+    model.write_text(".model d D(Is=1e-12)\n", encoding="utf-8")
+    netlist.write_text('.include "model.inc"\nR1 in out 50\n', encoding="utf-8")
     target.write_text("time_s,voltage_V\n0,0\n", encoding="utf-8")
     data = copy.deepcopy(topology_case.data)
     data.setdefault("circuit", {})["netlist_file"] = str(netlist)
@@ -435,6 +557,10 @@ def test_fingerprints_track_external_physics_and_metric_files_separately(tmp_pat
     target.write_text("time_s,voltage_V\n0,1\n", encoding="utf-8")
     assert _simulation_fingerprint(case, "test_fake") == raw_before
     assert _runtime_fingerprint(case, "test_fake") != evaluation_before
+
+    model.write_text(".model d D(Is=2e-12)\n", encoding="utf-8")
+    assert _simulation_fingerprint(case, "test_fake") != raw_before
+    raw_before = _simulation_fingerprint(case, "test_fake")
 
     netlist.write_text("R1 in out 75\n", encoding="utf-8")
     assert _simulation_fingerprint(case, "test_fake") != raw_before
@@ -493,4 +619,4 @@ def test_optimizer_signal_uses_coverage_while_final_rank_keeps_the_full_order():
     same_coverage_lower_violation = _feasibility_first_loss((1.0, 0.0, 0.25, 0.0, -1e30))
 
     assert feasible_bad_objective < higher_coverage < lower_coverage
-    assert higher_coverage == same_coverage_lower_violation
+    assert same_coverage_lower_violation < higher_coverage

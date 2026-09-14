@@ -79,7 +79,7 @@ def test_scenario_aware_study_journey(tmp_path):
     payload = json.loads(result.stdout)
     assert payload["n_candidates"] == 5
     assert payload["n_failed_evaluations"] == 0
-    history = json.loads((Path(payload["run_root"]) / "study_history.json").read_text(encoding="utf-8"))
+    history = json.loads((Path(payload["run_root"]) / payload["artifacts"]["history"]).read_text(encoding="utf-8"))
     assert len(history) == 5
     summary = tmp_path / "summary.csv"
     pcd("result-summary", payload["run_root"], "--out", str(summary))
@@ -88,7 +88,7 @@ def test_scenario_aware_study_journey(tmp_path):
 
 @pytest.mark.skipif(not ngspice_available, reason="ngspice is not installed on this machine")
 def test_production_safe_journey_uses_strict_flags(tmp_path):
-    """validate-case --strict gates the run; --strict-exit gates the batch."""
+    """Strict validation gates input; the legacy run flag remains compatible."""
 
     result = pcd("validate-case", str(RC_CASE), "--strict", expect_success=False)
     assert result.returncode == 0
@@ -174,7 +174,11 @@ def test_measured_frequency_points_are_solved_only_at_their_own_frequency(tmp_pa
         "--json",
     )
     payload = json.loads(result.stdout)
-    candidate = json.loads((Path(payload["run_root"]) / "candidates" / "trial_0000.json").read_text(encoding="utf-8"))
+    candidate = json.loads(
+        (Path(payload["run_root"]) / payload["artifacts"]["candidate_directory"] / "trial_0000.json").read_text(
+            encoding="utf-8"
+        )
+    )
 
     assert payload["n_evaluations"] == 3
     assert payload["n_failed_evaluations"] == 0
@@ -201,7 +205,11 @@ def test_public_component_stress_and_loss_are_internally_consistent(tmp_path):
         "--json",
     )
     payload = json.loads(result.stdout)
-    candidate = json.loads((Path(payload["run_root"]) / "candidates" / "trial_0000.json").read_text(encoding="utf-8"))
+    candidate = json.loads(
+        (Path(payload["run_root"]) / payload["artifacts"]["candidate_directory"] / "trial_0000.json").read_text(
+            encoding="utf-8"
+        )
+    )
     metrics = candidate["scenarios"][0]["selected"]["metrics"]
 
     for ref, resistance in {"C1": 0.1, "L1": 0.5, "C2": 0.1}.items():
@@ -416,7 +424,9 @@ solver:
     assert row["reactance_ohm"] == pytest.approx(expected_z.imag, rel=2e-3)
     assert row["resistance_ohm"] == pytest.approx(expected_z.real, rel=0.05)
 
-    metrics = rf_port_metrics(frame, f0, "load_current_A")
+    # This fixture intentionally demonstrates a high-Q startup transient; it
+    # is a diagnostic of ringing rather than a settled operating-point claim.
+    metrics = rf_port_metrics(frame, f0, "load_current_A", require_settled=False)
 
     # P = I_rms^2 R must hold for the current the run actually carried.  An
     # ideal source switched on at t=0 rings this circuit at its own 1.3 GHz

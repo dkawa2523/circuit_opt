@@ -19,6 +19,7 @@ if str(REPOSITORY) not in sys.path:
 
 from pcd.analysis import input_impedance  # noqa: E402
 from pcd.case import Case, load_case  # noqa: E402
+from pcd.results import candidate_result_paths  # noqa: E402
 from pcd.solver import ngspice_cli  # noqa: E402
 from pcd.study import run_case_study  # noqa: E402
 
@@ -108,7 +109,7 @@ def _matching_case(path: Path, root: Path) -> dict[str, Any]:
     case = load_case(path)
     study = run_case_study(case, run_root=root, n_trials=1, solver_override="ngspice_cli", seed=0)
     candidate_id = str(study["best"]["candidate"]["candidate_id"])
-    candidate_path = Path(study["run_root"]) / "candidates" / f"{candidate_id}.json"
+    candidate_path = next(path for path in candidate_result_paths(study["run_root"]) if path.stem == candidate_id)
     candidate = json.loads(candidate_path.read_text(encoding="utf-8"))
     selected = candidate["scenarios"][0]["selected"]
     metrics = selected["metrics"]

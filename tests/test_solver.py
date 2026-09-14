@@ -87,7 +87,7 @@ def test_a_two_column_output_has_no_current_channel(tmp_path):
     np.savetxt(path, np.column_stack([np.array([0.0, 1e-9]), np.array([0.0, 1.0])]))
     result = parse_wrdata(path)
     assert result.current_A is None
-    assert result.as_frame()["current_A"].to_list() == [0.0, 0.0]
+    assert result.as_frame()["current_A"].isna().all()
 
 
 def test_a_single_row_output_is_still_parsed(tmp_path):
@@ -101,7 +101,7 @@ def test_a_single_row_output_is_still_parsed(tmp_path):
 
 @pytest.mark.parametrize(
     ("configured", "expected"),
-    [(None, 300.0), (12.5, 12.5), (0, 300.0), (-1, 300.0), ("soon", 300.0)],
+    [(None, 300.0), (12.5, 12.5), (0, 300.0), (-1, 300.0), (float("inf"), 300.0), ("soon", 300.0)],
 )
 def test_the_timeout_falls_back_to_the_default_when_unusable(configured, expected):
     data = {"solver": {}} if configured is None else {"solver": {"timeout_s": configured}}
@@ -110,6 +110,19 @@ def test_the_timeout_falls_back_to_the_default_when_unusable(configured, expecte
 
 def test_ngspice_is_the_default_solver_identity(rc_case):
     assert solver_identity(rc_case)["name"] == "ngspice_cli"
+
+
+def test_solver_identity_includes_the_resolved_binary_digest(tmp_path, monkeypatch):
+    executable = tmp_path / "solver.bin"
+    executable.write_bytes(b"solver-build-one")
+    monkeypatch.setattr(solver_module.shutil, "which", lambda _name: str(executable))
+    monkeypatch.setattr(solver_module, "solver_version", lambda _name: "test-1")
+    solver_module.clear_solver_version_cache()
+
+    identity = solver_identity(Case(path=tmp_path / "case.yaml", data={"solver": {"executable": "solver"}}))
+    assert len(identity["executable_sha256"]) == 64
+    assert identity["executable_size"] == executable.stat().st_size
+    assert identity["executable_mtime_ns"] == executable.stat().st_mtime_ns
 
 
 def test_an_unknown_solver_reports_that_it_cannot_be_diagnosed():
@@ -228,11 +241,13 @@ def test_windows_runs_the_console_binary_without_opening_a_window(tmp_path, wind
 
 
 def test_solver_diagnostics_report_the_environment(windows_ngspice):
-    solver_module.solver_version.cache_clear()
+    solver_module.clear_solver_version_cache()
     windows_ngspice.setattr(
         solver_module.subprocess,
         "run",
-        lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, stdout="ngspice-46\n", stderr=""),
+        lambda cmd, **kw: subprocess.CompletedProcess(
+            cmd, 0, stdout="******\n** ngspice-46 : Circuit level simulation program\n", stderr=""
+        ),
     )
     diag = diagnose_solver("ngspice_cli")
     assert diag["schema"] == "solver_diagnostic.v1"

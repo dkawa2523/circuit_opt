@@ -20,6 +20,7 @@ import yaml
 from pcd import __version__
 from pcd.artifacts import write_json
 from pcd.case import load_case
+from pcd.results import candidate_result_paths
 from pcd.study import run_case_study
 
 ROOT = Path(__file__).resolve().parent
@@ -172,10 +173,9 @@ def run_case(
         solver_override=solver,
         seed=0,
     )
-    candidate_dir = Path(study["run_root"]) / "candidates"
     candidates = [
         json.loads(candidate_path.read_text(encoding="utf-8"))
-        for candidate_path in sorted(candidate_dir.glob("trial_*.json"))
+        for candidate_path in candidate_result_paths(study["run_root"])
     ]
     best_id = str(study["best"]["candidate"]["candidate_id"])
     candidate = next(item for item in candidates if str(item["candidate"]["candidate_id"]) == best_id)

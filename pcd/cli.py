@@ -44,11 +44,22 @@ def _add_study_commands(sub: argparse._SubParsersAction) -> None:
     p.add_argument("--optimizer", help="advanced case only; public RF candidates are exact")
     p.add_argument("--trials", type=int, help="advanced case only; public RF candidate count is inferred")
     p.add_argument("--seed", type=int, help="advanced exploratory optimizer seed")
+    p.add_argument(
+        "--require-acceptance",
+        action="store_true",
+        help="exit nonzero unless the selected design meets every declared acceptance limit",
+    )
     p.add_argument("--json", action="store_true", help="print the complete machine-readable result")
 
     p = sub.add_parser("result-summary", help="summarize candidates from a completed study")
     p.add_argument("study_root")
     p.add_argument("--out")
+
+    p = sub.add_parser("result-prune", help="plan or remove inactive study generations")
+    p.add_argument("study_root")
+    p.add_argument("--keep", type=int, default=3, help="number of newest generations to retain; default: 3")
+    p.add_argument("--apply", action="store_true", help="remove the listed generations; default is dry-run")
+    p.add_argument("--json", action="store_true")
 
     p = sub.add_parser("validate-case", help="validate a case file without simulation or metric evaluation")
     p.add_argument("case")
@@ -61,7 +72,17 @@ def _add_simulation_commands(sub: argparse._SubParsersAction) -> None:
     p.add_argument("case")
     p.add_argument("--solver")
     p.add_argument("--run-root")
-    p.add_argument("--strict-exit", action="store_true")
+    exit_mode = p.add_mutually_exclusive_group()
+    exit_mode.add_argument(
+        "--allow-failure",
+        action="store_true",
+        help="write a failed run record but exit zero (default is a nonzero failure exit)",
+    )
+    exit_mode.add_argument(
+        "--strict-exit",
+        action="store_true",
+        help="deprecated compatibility flag; failures are strict by default",
+    )
 
     p = sub.add_parser("sim-netlist", help="generate one ngspice netlist without running a solver")
     p.add_argument("case")
@@ -152,7 +173,9 @@ def _cmd_run(args: argparse.Namespace) -> int:
         _dump(result)
     else:
         _print_run_summary(result)
-    return 1 if result.get("n_failed_evaluations", 0) else 0
+    failed = bool(result.get("n_failed_evaluations", 0))
+    rejected = args.require_acceptance and (result.get("best") or {}).get("status") != "meets_declared_acceptance"
+    return 1 if failed or rejected else 0
 
 
 def _print_condition_summaries(conditions: list[dict]) -> None:
@@ -188,6 +211,9 @@ def _print_run_summary(result: dict) -> None:
     print(f"Feasible across all conditions: {feasibility}")
     if decision_status:
         print(f"Decision: {decision_status}")
+    search_completeness = best.get("search_completeness")
+    if search_completeness:
+        print(f"Search completeness: {search_completeness}")
     candidate = best.get("candidate") or {}
     candidate_id = candidate.get("candidate_id", "")
     candidate_values = candidate.get("values") or {}
@@ -239,13 +265,29 @@ def _cmd_result_summary(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_result_prune(args: argparse.Namespace) -> int:
+    from .results import prune_generations
+
+    result = prune_generations(args.study_root, keep=args.keep, apply=args.apply)
+    if args.json:
+        _dump(result)
+    else:
+        action = "Removed" if args.apply else "Would remove"
+        print(f"{action}: {len(result['removed'])} generation(s)")
+        for path in result["removed"]:
+            print(f"  {path}")
+        if not args.apply and result["removed"]:
+            print("Re-run with --apply to remove them.")
+    return 0
+
+
 def _cmd_sim_run(args: argparse.Namespace) -> int:
     from .case import load_case
     from .sim_core import simulate_case
 
     rec = simulate_case(load_case(args.case), run_root=args.run_root, solver_override=args.solver)
     _dump(rec.manifest())
-    return 1 if args.strict_exit and rec.status != "ok" else 0
+    return 1 if rec.status != "ok" and not args.allow_failure else 0
 
 
 def _cmd_sim_netlist(args: argparse.Namespace) -> int:
@@ -276,7 +318,7 @@ def _cmd_visualize_netlist(args: argparse.Namespace) -> int:
 def _cmd_visualize_response(args: argparse.Namespace) -> int:
     from .analysis import DEFAULT_Z0, read_ac
     from .case import load_case
-    from .records import frequency_response_path, load_waveform, read_sim_record
+    from .records import artifact_path, frequency_response_path, load_waveform, read_sim_record
     from .response_plot import render_response
     from .spice import fundamental_hz
 
@@ -284,8 +326,8 @@ def _cmd_visualize_response(args: argparse.Namespace) -> int:
     ac_path = frequency_response_path(record)
     # A run archives the case it ran, so the plot describes that run and not
     # whatever the case file happens to say now.
-    case_path = Path(record["run_dir"]) / "case.yaml"
-    case = load_case(case_path) if case_path.exists() else None
+    case_path = artifact_path(record, "case", "case.yaml")
+    case = load_case(case_path) if case_path is not None and case_path.exists() else None
     marker = args.marker_hz
     if marker is None and case is not None:
         marker = fundamental_hz(case, record.get("params") or {})
@@ -308,6 +350,7 @@ HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
     "validate-case": _cmd_validate_case,
     "run": _cmd_run,
     "result-summary": _cmd_result_summary,
+    "result-prune": _cmd_result_prune,
     "sim-run": _cmd_sim_run,
     "sim-netlist": _cmd_sim_netlist,
     "visualize-netlist": _cmd_visualize_netlist,

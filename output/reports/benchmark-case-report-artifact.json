@@ -5,7 +5,7 @@
     "surface": "report",
     "title": "回路解析基盤 ベンチマークケース技術レポート",
     "description": "半導体製造、伝熱、データ分析の第三者が、回路benchmarkの問題設定、結果、証拠粒度、利用境界を独立に判断するための技術レポート",
-    "generatedAt": "2026-08-31T02:51:26.112260+00:00",
+    "generatedAt": "2026-09-14T21:49:04.963868+00:00",
     "sources": [
       {
         "id": "core-suite",
@@ -19,7 +19,7 @@
             "bench/cases/*.yaml",
             "bench/expectations.yaml",
             "runs/benchmark_suite/benchmark_result.json",
-            "runs/benchmark_suite/benchmark_match-e0791f5a3e300c68/candidates/trial_0000.json"
+            "runs/benchmark_suite/benchmark_match-e0791f5a3e300c68/generations/g_c2159ab230dd4f17/candidates/trial_0000.json"
           ],
           "filters": [
             "all 16 declared core cases",
@@ -266,7 +266,7 @@
           "tables_used": [
             "bench/cases/match_high_drive_stress.yaml",
             "runs/benchmark_suite/benchmark_result.json",
-            "runs/benchmark_suite/benchmark_match-e0791f5a3e300c68/candidates/trial_0000.json"
+            "runs/benchmark_suite/benchmark_match-e0791f5a3e300c68/generations/g_c2159ab230dd4f17/candidates/trial_0000.json"
           ],
           "filters": [
             "benchmark_id = B5_high_drive_stress"
@@ -1743,35 +1743,35 @@
         "id": "case-a1_topology_l_match",
         "type": "markdown",
         "layout": "full",
-        "body": "## A1 — L-match接続と複素インピーダンス\n\n**このケース単独の問い**\n公開L-matchネットリストは、独立閉形式で求めた入力インピーダンスを再現するか。\n\n**問題設定と入力**\n13.56 MHz、負荷 30-j20 Ω。直列L1=0.5 µH、出力側シャントC1=100 pF。\n\n- **ケース種別 / evidence:** 解析式に対する配線適合。\n- **Machine-readable ID:** `A1_topology_l_match`。\n- **解析:** 基本波AC、評価周波数は入力記載どおり。\n- **負荷reference plane:** electrode_terminal。\n- **振幅定義:** 正規化1 VpeakのAC小信号。絶対ストレスは評価しない。\n- **Candidate:** 固定L-match 1組。\n- **Scenario:** nominal 1点。\n- **Control:** なし。\n- **設計合格条件:** 50 Ω基準で |Γ|≤0.316228（反射電力10%以下）。追加条件がある場合は以下の評価方法に含む。\n- **結果の用途:** 実装・式・境界のconformance fixture。装置・工程・熱の資格判定ではない。\n- **根拠ファイル:** 定義 `bench/cases/topology_l_match_golden.yaml`、結果 `runs/benchmark_suite/benchmark_result.json`。\n\n**評価方法**\n独立した閉形式回路計算の入力Zとngspice結果を0.02 Ω以内で比較し、50 Ω基準の反射判定も確認する。\n\n**観測結果**\nBenchmark reproduction: **PASS**。Case-local declared criteria: **NOT MET**。Scenario coverage=0/1、worst |Γ|=0.484928、SPICE評価=1。\n\n**Scenario別の判定根拠**\n- `nominal`: Zin=20.9035+20.9468j Ω、|Γ|=0.484928、独立oracle=20.9035+20.9468j Ω、max(|ΔR|,|ΔX|)=2.86e-12 Ω、宣言条件=不合格、違反=max_reflection_magnitude\n\n**この結果から分かること**\n期待どおり不整合になることまで含め、L-match配線、負荷接続、AC抽出、反射計算が一貫している。\n\n**分からないこと**\n任意の合成負荷・部品値であり、L-matchが常に優位であることや実チャンバー適合は示さない。\n",
+        "body": "## A1 — L-match接続と複素インピーダンス\n\n**このケース単独の問い**\n公開L-matchネットリストは、独立閉形式で求めた入力インピーダンスを再現するか。\n\n**問題設定と入力**\n13.56 MHz、負荷 30-j20 Ω。直列L1=0.5 µH、出力側シャントC1=100 pF。\n\n- **ケース種別 / evidence:** 解析式に対する配線適合。\n- **Machine-readable ID:** `A1_topology_l_match`。\n- **解析:** 基本波AC、評価周波数は入力記載どおり。\n- **負荷reference plane:** electrode_terminal。\n- **振幅定義:** 正規化1 VpeakのAC小信号。絶対ストレスは評価しない。\n- **Candidate:** 固定L-match 1組。\n- **Scenario:** nominal 1点。\n- **Control:** なし。\n- **設計合格条件:** 50 Ω基準で |Γ|≤0.316228（反射電力10%以下）。追加条件がある場合は以下の評価方法に含む。\n- **結果の用途:** 実装・式・境界のconformance fixture。装置・工程・熱の資格判定ではない。\n- **根拠ファイル:** 定義 `bench/cases/topology_l_match_golden.yaml`、結果 `runs/benchmark_suite/benchmark_result.json`。\n\n**評価方法**\n独立した閉形式回路計算の入力Zとngspice結果を0.02 Ω以内で比較し、50 Ω基準の反射判定も確認する。\n\n**観測結果**\nBenchmark reproduction: **PASS**。Case-local declared criteria: **NOT MET**。Scenario coverage=0/1、worst |Γ|=0.484928、SPICE評価=1。\n\n**Scenario別の判定根拠**\n- `nominal`: Zin=20.9035+20.9468j Ω、|Γ|=0.484928、独立oracle=20.9035+20.9468j Ω、max(|ΔR|,|ΔX|)=2.93e-12 Ω、宣言条件=不合格、違反=max_reflection_magnitude\n\n**この結果から分かること**\n期待どおり不整合になることまで含め、L-match配線、負荷接続、AC抽出、反射計算が一貫している。\n\n**分からないこと**\n任意の合成負荷・部品値であり、L-matchが常に優位であることや実チャンバー適合は示さない。\n",
         "sourceId": "source-a1_topology_l_match"
       },
       {
         "id": "case-a2_topology_pi_match",
         "type": "markdown",
         "layout": "full",
-        "body": "## A2 — π-match接続と複素インピーダンス\n\n**このケース単独の問い**\n公開π-matchネットリストは、独立閉形式で求めた入力インピーダンスを再現するか。\n\n**問題設定と入力**\n13.56 MHz、負荷 30-j20 Ω。C1=100 pF、L1=0.5 µH、C2=50 pF。\n\n- **ケース種別 / evidence:** 解析式に対する配線適合。\n- **Machine-readable ID:** `A2_topology_pi_match`。\n- **解析:** 基本波AC、評価周波数は入力記載どおり。\n- **負荷reference plane:** electrode_terminal。\n- **振幅定義:** 正規化1 VpeakのAC小信号。絶対ストレスは評価しない。\n- **Candidate:** 固定π-match 1組。\n- **Scenario:** nominal 1点。\n- **Control:** なし。\n- **設計合格条件:** 50 Ω基準で |Γ|≤0.316228（反射電力10%以下）。追加条件がある場合は以下の評価方法に含む。\n- **結果の用途:** 実装・式・境界のconformance fixture。装置・工程・熱の資格判定ではない。\n- **根拠ファイル:** 定義 `bench/cases/topology_pi_match_golden.yaml`、結果 `runs/benchmark_suite/benchmark_result.json`。\n\n**評価方法**\n独立閉形式計算の入力Zとngspice結果を0.02 Ω以内で比較し、反射電力10%以下の分類を確認する。\n\n**観測結果**\nBenchmark reproduction: **PASS**。Case-local declared criteria: **MET**。Scenario coverage=1/1、worst |Γ|=0.258976、SPICE評価=1。\n\n**Scenario別の判定根拠**\n- `nominal`: Zin=35.0407+16.7342j Ω、|Γ|=0.258976、独立oracle=35.0407+16.7342j Ω、max(|ΔR|,|ΔX|)=3.87e-12 Ω、宣言条件=合格\n\n**この結果から分かること**\nπ-matchの接続と数値処理が解析解に一致する。A1/A3とのfeasible差は任意部品値の結果であり、トポロジ順位ではない。\n\n**分からないこと**\nこの合成点での合格は、π-matchの普遍的優位性、負荷窓、部品定格を示さない。\n",
+        "body": "## A2 — π-match接続と複素インピーダンス\n\n**このケース単独の問い**\n公開π-matchネットリストは、独立閉形式で求めた入力インピーダンスを再現するか。\n\n**問題設定と入力**\n13.56 MHz、負荷 30-j20 Ω。C1=100 pF、L1=0.5 µH、C2=50 pF。\n\n- **ケース種別 / evidence:** 解析式に対する配線適合。\n- **Machine-readable ID:** `A2_topology_pi_match`。\n- **解析:** 基本波AC、評価周波数は入力記載どおり。\n- **負荷reference plane:** electrode_terminal。\n- **振幅定義:** 正規化1 VpeakのAC小信号。絶対ストレスは評価しない。\n- **Candidate:** 固定π-match 1組。\n- **Scenario:** nominal 1点。\n- **Control:** なし。\n- **設計合格条件:** 50 Ω基準で |Γ|≤0.316228（反射電力10%以下）。追加条件がある場合は以下の評価方法に含む。\n- **結果の用途:** 実装・式・境界のconformance fixture。装置・工程・熱の資格判定ではない。\n- **根拠ファイル:** 定義 `bench/cases/topology_pi_match_golden.yaml`、結果 `runs/benchmark_suite/benchmark_result.json`。\n\n**評価方法**\n独立閉形式計算の入力Zとngspice結果を0.02 Ω以内で比較し、反射電力10%以下の分類を確認する。\n\n**観測結果**\nBenchmark reproduction: **PASS**。Case-local declared criteria: **MET**。Scenario coverage=1/1、worst |Γ|=0.258976、SPICE評価=1。\n\n**Scenario別の判定根拠**\n- `nominal`: Zin=35.0407+16.7342j Ω、|Γ|=0.258976、独立oracle=35.0407+16.7342j Ω、max(|ΔR|,|ΔX|)=3.96e-12 Ω、宣言条件=合格\n\n**この結果から分かること**\nπ-matchの接続と数値処理が解析解に一致する。A1/A3とのfeasible差は任意部品値の結果であり、トポロジ順位ではない。\n\n**分からないこと**\nこの合成点での合格は、π-matchの普遍的優位性、負荷窓、部品定格を示さない。\n",
         "sourceId": "source-a2_topology_pi_match"
       },
       {
         "id": "case-a3_topology_pi_match_harmonic",
         "type": "markdown",
         "layout": "full",
-        "body": "## A3 — 直列LC分岐付きπ-matchの基本波接続\n\n**このケース単独の問い**\n直列LCシャント分岐を持つ公開π-matchは、独立回路式の基本波入力インピーダンスを再現するか。\n\n**問題設定と入力**\n13.56 MHz、負荷30-j20 Ω。π-matchのC1=100 pF、L1=0.5 µH、C2=50 pFに、出力から接地へLh=1 µH、Ch=50 pFの直列分岐を追加。\n\n- **ケース種別 / evidence:** 解析式に対する配線適合。\n- **Machine-readable ID:** `A3_topology_pi_match_harmonic`。\n- **解析:** 基本波AC、評価周波数は入力記載どおり。\n- **負荷reference plane:** electrode_terminal。\n- **振幅定義:** 正規化1 VpeakのAC小信号。絶対ストレスは評価しない。\n- **Candidate:** 固定高調波分岐付きπ-match 1組。\n- **Scenario:** nominal 1点。\n- **Control:** なし。\n- **設計合格条件:** 50 Ω基準で |Γ|≤0.316228（反射電力10%以下）。追加条件がある場合は以下の評価方法に含む。\n- **結果の用途:** 実装・式・境界のconformance fixture。装置・工程・熱の資格判定ではない。\n- **根拠ファイル:** 定義 `bench/cases/topology_pi_match_harmonic_golden.yaml`、結果 `runs/benchmark_suite/benchmark_result.json`。\n\n**評価方法**\n分岐を含む独立複素回路式と基本波入力Zを0.02 Ω以内で比較する。\n\n**観測結果**\nBenchmark reproduction: **PASS**。Case-local declared criteria: **NOT MET**。Scenario coverage=0/1、worst |Γ|=0.387082、SPICE評価=1。\n\n**Scenario別の判定根拠**\n- `nominal`: Zin=26.961+20.4822j Ω、|Γ|=0.387082、独立oracle=26.961+20.4822j Ω、max(|ΔR|,|ΔX|)=3.2e-12 Ω、宣言条件=不合格、違反=max_reflection_magnitude\n\n**この結果から分かること**\n分岐が一度だけ正しく接続されたことを示す。非線形負荷に対する高調波抑制性能は評価しない。\n\n**分からないこと**\n一周波数の線形確認であり、非線形プラズマに対する高調波抑制を示さない。\n",
+        "body": "## A3 — 直列LC分岐付きπ-matchの基本波接続\n\n**このケース単独の問い**\n直列LCシャント分岐を持つ公開π-matchは、独立回路式の基本波入力インピーダンスを再現するか。\n\n**問題設定と入力**\n13.56 MHz、負荷30-j20 Ω。π-matchのC1=100 pF、L1=0.5 µH、C2=50 pFに、出力から接地へLh=1 µH、Ch=50 pFの直列分岐を追加。\n\n- **ケース種別 / evidence:** 解析式に対する配線適合。\n- **Machine-readable ID:** `A3_topology_pi_match_harmonic`。\n- **解析:** 基本波AC、評価周波数は入力記載どおり。\n- **負荷reference plane:** electrode_terminal。\n- **振幅定義:** 正規化1 VpeakのAC小信号。絶対ストレスは評価しない。\n- **Candidate:** 固定高調波分岐付きπ-match 1組。\n- **Scenario:** nominal 1点。\n- **Control:** なし。\n- **設計合格条件:** 50 Ω基準で |Γ|≤0.316228（反射電力10%以下）。追加条件がある場合は以下の評価方法に含む。\n- **結果の用途:** 実装・式・境界のconformance fixture。装置・工程・熱の資格判定ではない。\n- **根拠ファイル:** 定義 `bench/cases/topology_pi_match_harmonic_golden.yaml`、結果 `runs/benchmark_suite/benchmark_result.json`。\n\n**評価方法**\n分岐を含む独立複素回路式と基本波入力Zを0.02 Ω以内で比較する。\n\n**観測結果**\nBenchmark reproduction: **PASS**。Case-local declared criteria: **NOT MET**。Scenario coverage=0/1、worst |Γ|=0.387082、SPICE評価=1。\n\n**Scenario別の判定根拠**\n- `nominal`: Zin=26.961+20.4822j Ω、|Γ|=0.387082、独立oracle=26.961+20.4822j Ω、max(|ΔR|,|ΔX|)=3.29e-12 Ω、宣言条件=不合格、違反=max_reflection_magnitude\n\n**この結果から分かること**\n分岐が一度だけ正しく接続されたことを示す。非線形負荷に対する高調波抑制性能は評価しない。\n\n**分からないこと**\n一周波数の線形確認であり、非線形プラズマに対する高調波抑制を示さない。\n",
         "sourceId": "source-a3_topology_pi_match_harmonic"
       },
       {
         "id": "case-a4_ccp_lumped_frequency_conformance",
         "type": "markdown",
         "layout": "full",
-        "body": "## A4 — CCP有効R-L-C負荷の周波数継続\n\n**このケース単独の問い**\nCCP有効R-L-C一ポートの周波数依存式が、入力定義からScenario展開、SPICE、指標抽出まで保たれるか。\n\n**問題設定と入力**\nR_eff=25 Ω、L_eff=0.2 µH、C_sheath_eq=120 pFの直列有効一ポート。10、13.56、20 MHz。\n\n- **ケース種別 / evidence:** 合成端子式の実装適合。\n- **Machine-readable ID:** `A4_ccp_lumped_frequency_conformance`。\n- **解析:** 基本波AC、評価周波数は入力記載どおり。\n- **負荷reference plane:** electrode_terminal。\n- **振幅定義:** 正規化1 VpeakのAC小信号。絶対ストレスは評価しない。\n- **Candidate:** L1=0.2 µH、C1=20 pFの固定L-match。\n- **Scenario:** 周波数3点。各点で同じR-L-C式を再評価。\n- **Control:** なし。\n- **設計合格条件:** 50 Ω基準で |Γ|≤0.316228（反射電力10%以下）。追加条件がある場合は以下の評価方法に含む。\n- **結果の用途:** 実装・式・境界のconformance fixture。装置・工程・熱の資格判定ではない。\n- **根拠ファイル:** 定義 `bench/cases/ccp_lumped_frequency_conformance.yaml`、結果 `runs/benchmark_suite/benchmark_result.json`。\n\n**評価方法**\nZ=R+jωL+1/(jωC)と独立L-match式から得る入力Zを各周波数で0.02 Ω以内に再現するか確認する。\n\n**観測結果**\nBenchmark reproduction: **PASS**。Case-local declared criteria: **NOT MET**。Scenario coverage=0/3、worst |Γ|=0.845833、SPICE評価=3。\n\n**Scenario別の判定根拠**\n- `low_frequency`: Zin=18.8608-92.2715j Ω、|Γ|=0.845833、独立oracle=18.8608-92.2715j Ω、max(|ΔR|,|ΔX|)=4.62e-14 Ω、宣言条件=不合格、違反=max_reflection_magnitude\n- `nominal_frequency`: Zin=19.2899-54.68j Ω、|Γ|=0.710504、独立oracle=19.2899-54.68j Ω、max(|ΔR|,|ΔX|)=2.49e-14 Ω、宣言条件=不合格、違反=max_reflection_magnitude\n- `high_frequency`: Zin=20.4639-13.3517j Ω、|Γ|=0.451962、独立oracle=20.4639-13.3517j Ω、max(|ΔR|,|ΔX|)=5.33e-15 Ω、宣言条件=不合格、違反=max_reflection_magnitude\n\n**この結果から分かること**\n公開入力からSPICE・指標抽出までモデル式の意味が保存される。CCP物理やパラメータ同定の妥当性は示さない。\n\n**分からないこと**\n合成R-L-C値の物理妥当性、CCPパラメータ同定、実装置の周波数応答を示さない。\n",
+        "body": "## A4 — CCP有効R-L-C負荷の周波数継続\n\n**このケース単独の問い**\nCCP有効R-L-C一ポートの周波数依存式が、入力定義からScenario展開、SPICE、指標抽出まで保たれるか。\n\n**問題設定と入力**\nR_eff=25 Ω、L_eff=0.2 µH、C_sheath_eq=120 pFの直列有効一ポート。10、13.56、20 MHz。\n\n- **ケース種別 / evidence:** 合成端子式の実装適合。\n- **Machine-readable ID:** `A4_ccp_lumped_frequency_conformance`。\n- **解析:** 基本波AC、評価周波数は入力記載どおり。\n- **負荷reference plane:** electrode_terminal。\n- **振幅定義:** 正規化1 VpeakのAC小信号。絶対ストレスは評価しない。\n- **Candidate:** L1=0.2 µH、C1=20 pFの固定L-match。\n- **Scenario:** 周波数3点。各点で同じR-L-C式を再評価。\n- **Control:** なし。\n- **設計合格条件:** 50 Ω基準で |Γ|≤0.316228（反射電力10%以下）。追加条件がある場合は以下の評価方法に含む。\n- **結果の用途:** 実装・式・境界のconformance fixture。装置・工程・熱の資格判定ではない。\n- **根拠ファイル:** 定義 `bench/cases/ccp_lumped_frequency_conformance.yaml`、結果 `runs/benchmark_suite/benchmark_result.json`。\n\n**評価方法**\nZ=R+jωL+1/(jωC)と独立L-match式から得る入力Zを各周波数で0.02 Ω以内に再現するか確認する。\n\n**観測結果**\nBenchmark reproduction: **PASS**。Case-local declared criteria: **NOT MET**。Scenario coverage=0/3、worst |Γ|=0.845833、SPICE評価=3。\n\n**Scenario別の判定根拠**\n- `low_frequency`: Zin=18.8608-92.2715j Ω、|Γ|=0.845833、独立oracle=18.8608-92.2715j Ω、max(|ΔR|,|ΔX|)=4.58e-13 Ω、宣言条件=不合格、違反=max_reflection_magnitude\n- `nominal_frequency`: Zin=19.2899-54.68j Ω、|Γ|=0.710504、独立oracle=19.2899-54.68j Ω、max(|ΔR|,|ΔX|)=4.97e-14 Ω、宣言条件=不合格、違反=max_reflection_magnitude\n- `high_frequency`: Zin=20.4639-13.3517j Ω、|Γ|=0.451962、独立oracle=20.4639-13.3517j Ω、max(|ΔR|,|ΔX|)=3.55e-14 Ω、宣言条件=不合格、違反=max_reflection_magnitude\n\n**この結果から分かること**\n公開入力からSPICE・指標抽出までモデル式の意味が保存される。CCP物理やパラメータ同定の妥当性は示さない。\n\n**分からないこと**\n合成R-L-C値の物理妥当性、CCPパラメータ同定、実装置の周波数応答を示さない。\n",
         "sourceId": "source-a4_ccp_lumped_frequency_conformance"
       },
       {
         "id": "case-a5_icp_transformer_frequency_conformance",
         "type": "markdown",
         "layout": "full",
-        "body": "## A5 — ICP有効変圧器負荷の周波数継続\n\n**このケース単独の問い**\nICP有効変圧器一ポートの周波数依存式が、入力定義からScenario展開、SPICE、指標抽出まで保たれるか。\n\n**問題設定と入力**\nRcoil=0.4 Ω、Lcoil=2 µH、反射インダクタンス0.245 µH、二次減衰率6.6667 Mrad/s、Cparallel=20 pF。10、13.56、20 MHz。\n\n- **ケース種別 / evidence:** 合成端子式の実装適合。\n- **Machine-readable ID:** `A5_icp_transformer_frequency_conformance`。\n- **解析:** 基本波AC、評価周波数は入力記載どおり。\n- **負荷reference plane:** coil_feedthrough。\n- **振幅定義:** 正規化1 VpeakのAC小信号。絶対ストレスは評価しない。\n- **Candidate:** 13.56 MHzで解析的に整合した固定L-match（L1=8.71259 µH、C1=74.1545 pF）。\n- **Scenario:** 周波数3点。\n- **Control:** なし。\n- **設計合格条件:** 50 Ω基準で |Γ|≤0.316228（反射電力10%以下）。追加条件がある場合は以下の評価方法に含む。\n- **結果の用途:** 実装・式・境界のconformance fixture。装置・工程・熱の資格判定ではない。\n- **根拠ファイル:** 定義 `bench/cases/icp_transformer_frequency_conformance.yaml`、結果 `runs/benchmark_suite/benchmark_result.json`。\n\n**評価方法**\n反射負荷項、コイル項、並列容量を含む独立端子式と、各周波数の入力Z・分類を比較する。\n\n**観測結果**\nBenchmark reproduction: **PASS**。Case-local declared criteria: **NOT MET**。Scenario coverage=1/3、worst |Γ|=0.999915、SPICE評価=3。\n\n**Scenario別の判定根拠**\n- `low_frequency`: Zin=16.7508+865.457j Ω、|Γ|=0.997774、独立oracle=16.7508+865.457j Ω、max(|ΔR|,|ΔX|)=6.67e-11 Ω、宣言条件=不合格、違反=max_reflection_magnitude\n- `nominal_frequency`: Zin=50-4.75811e-10j Ω、|Γ|=4.78797e-12、独立oracle=50+0j Ω、max(|ΔR|,|ΔX|)=4.76e-10 Ω、宣言条件=合格\n- `high_frequency`: Zin=0.782099+957.868j Ω、|Γ|=0.999915、独立oracle=0.782099+957.868j Ω、max(|ΔR|,|ΔX|)=3.06e-11 Ω、宣言条件=不合格、違反=max_reflection_magnitude\n\n**この結果から分かること**\n13.56 MHzだけ整合する結果を含め、端子モデルの実装を確認する。密度・衝突・電力分配や実ICP装置は検証しない。\n\n**分からないこと**\n合成端子パラメータから、密度、衝突周波数、電力分配、実ICPチャンバーは検証できない。\n",
+        "body": "## A5 — ICP有効変圧器負荷の周波数継続\n\n**このケース単独の問い**\nICP有効変圧器一ポートの周波数依存式が、入力定義からScenario展開、SPICE、指標抽出まで保たれるか。\n\n**問題設定と入力**\nRcoil=0.4 Ω、Lcoil=2 µH、反射インダクタンス0.245 µH、二次減衰率6.6667 Mrad/s、Cparallel=20 pF。10、13.56、20 MHz。\n\n- **ケース種別 / evidence:** 合成端子式の実装適合。\n- **Machine-readable ID:** `A5_icp_transformer_frequency_conformance`。\n- **解析:** 基本波AC、評価周波数は入力記載どおり。\n- **負荷reference plane:** coil_feedthrough。\n- **振幅定義:** 正規化1 VpeakのAC小信号。絶対ストレスは評価しない。\n- **Candidate:** 13.56 MHzで解析的に整合した固定L-match（L1=8.71259 µH、C1=74.1545 pF）。\n- **Scenario:** 周波数3点。\n- **Control:** なし。\n- **設計合格条件:** 50 Ω基準で |Γ|≤0.316228（反射電力10%以下）。追加条件がある場合は以下の評価方法に含む。\n- **結果の用途:** 実装・式・境界のconformance fixture。装置・工程・熱の資格判定ではない。\n- **根拠ファイル:** 定義 `bench/cases/icp_transformer_frequency_conformance.yaml`、結果 `runs/benchmark_suite/benchmark_result.json`。\n\n**評価方法**\n反射負荷項、コイル項、並列容量を含む独立端子式と、各周波数の入力Z・分類を比較する。\n\n**観測結果**\nBenchmark reproduction: **PASS**。Case-local declared criteria: **NOT MET**。Scenario coverage=1/3、worst |Γ|=0.999915、SPICE評価=3。\n\n**Scenario別の判定根拠**\n- `low_frequency`: Zin=16.7508+865.457j Ω、|Γ|=0.997774、独立oracle=16.7508+865.457j Ω、max(|ΔR|,|ΔX|)=6.26e-11 Ω、宣言条件=不合格、違反=max_reflection_magnitude\n- `nominal_frequency`: Zin=50-4.75811e-10j Ω、|Γ|=4.78781e-12、独立oracle=50+0j Ω、max(|ΔR|,|ΔX|)=4.76e-10 Ω、宣言条件=合格\n- `high_frequency`: Zin=0.782099+957.868j Ω、|Γ|=0.999915、独立oracle=0.782099+957.868j Ω、max(|ΔR|,|ΔX|)=3.82e-11 Ω、宣言条件=不合格、違反=max_reflection_magnitude\n\n**この結果から分かること**\n13.56 MHzだけ整合する結果を含め、端子モデルの実装を確認する。密度・衝突・電力分配や実ICP装置は検証しない。\n\n**分からないこと**\n合成端子パラメータから、密度、衝突周波数、電力分配、実ICPチャンバーは検証できない。\n",
         "sourceId": "source-a5_icp_transformer_frequency_conformance"
       },
       {
@@ -1820,14 +1820,14 @@
         "id": "case-b7_role_factorial_search",
         "type": "markdown",
         "layout": "full",
-        "body": "## B7 — Candidate×Scenario×Controlの直交性\n\n**このケース単独の問い**\nCandidate、Scenario、Controlを直交して列挙し、全Scenarioを覆う唯一のCandidateを選べるか。\n\n**問題設定と入力**\n13.56 MHz、electrode-terminalの解析的2負荷: 67.753-j92.917 Ωと171.269-j63.994 Ω。L-match。\n\n- **ケース種別 / evidence:** 合成・決定論的役割分離。\n- **Machine-readable ID:** `B7_role_factorial_search`。\n- **解析:** 基本波AC、評価周波数は入力記載どおり。\n- **負荷reference plane:** electrode_terminal。\n- **振幅定義:** 正規化1 VpeakのAC小信号。絶対ストレスは評価しない。\n- **Candidate:** L1={1、2} µH。\n- **Scenario:** 2負荷点。\n- **Control:** C1={20、80} pF。\n- **設計合格条件:** 50 Ω基準で |Γ|≤0.316228（反射電力10%以下）。追加条件がある場合は以下の評価方法に含む。\n- **結果の用途:** 設計workflow fixture。装置・工程・熱の資格判定ではない。\n- **根拠ファイル:** 定義 `bench/cases/role_factorial_search.yaml`、結果 `runs/benchmark_suite/benchmark_result.json`。\n\n**評価方法**\n2×2×2=8組を完全列挙し、各ScenarioでControlを選び、両Scenarioを覆うCandidateを選ぶ。\n\n**観測結果**\nBenchmark reproduction: **PASS**。Case-local declared criteria: **MET**。Scenario coverage=2/2、worst |Γ|=1.58299e-12、SPICE評価=8。 2 Candidate中、全Scenarioを覆った唯一のL1=1 µHを選択。\n\n**Scenario別の判定根拠**\n- `control_20pF_required`: Zin=50-1.58289e-10j Ω、|Γ|=1.58299e-12、独立oracle=50+0j Ω、max(|ΔR|,|ΔX|)=1.58e-10 Ω、選択Control=C1=20 pF、宣言条件=合格\n- `control_80pF_required`: Zin=50-1.04357e-10j Ω、|Γ|=1.06389e-12、独立oracle=50+0j Ω、max(|ΔR|,|ΔX|)=1.04e-10 Ω、選択Control=C1=80 pF、宣言条件=合格\n\n**この結果から分かること**\n固定候補、外部条件、条件別操作量がデータ処理中に混線しないことを直接確認する。\n\n**分からないこと**\n解析的に構成した2点の役割分離テストであり、実チャンバー窓や制御器モデルではない。\n",
+        "body": "## B7 — Candidate×Scenario×Controlの直交性\n\n**このケース単独の問い**\nCandidate、Scenario、Controlを直交して列挙し、全Scenarioを覆う唯一のCandidateを選べるか。\n\n**問題設定と入力**\n13.56 MHz、electrode-terminalの解析的2負荷: 67.753-j92.917 Ωと171.269-j63.994 Ω。L-match。\n\n- **ケース種別 / evidence:** 合成・決定論的役割分離。\n- **Machine-readable ID:** `B7_role_factorial_search`。\n- **解析:** 基本波AC、評価周波数は入力記載どおり。\n- **負荷reference plane:** electrode_terminal。\n- **振幅定義:** 正規化1 VpeakのAC小信号。絶対ストレスは評価しない。\n- **Candidate:** L1={1、2} µH。\n- **Scenario:** 2負荷点。\n- **Control:** C1={20、80} pF。\n- **設計合格条件:** 50 Ω基準で |Γ|≤0.316228（反射電力10%以下）。追加条件がある場合は以下の評価方法に含む。\n- **結果の用途:** 設計workflow fixture。装置・工程・熱の資格判定ではない。\n- **根拠ファイル:** 定義 `bench/cases/role_factorial_search.yaml`、結果 `runs/benchmark_suite/benchmark_result.json`。\n\n**評価方法**\n2×2×2=8組を完全列挙し、各ScenarioでControlを選び、両Scenarioを覆うCandidateを選ぶ。\n\n**観測結果**\nBenchmark reproduction: **PASS**。Case-local declared criteria: **MET**。Scenario coverage=2/2、worst |Γ|=1.58302e-12、SPICE評価=8。 2 Candidate中、全Scenarioを覆った唯一のL1=1 µHを選択。\n\n**Scenario別の判定根拠**\n- `control_20pF_required`: Zin=50-1.58289e-10j Ω、|Γ|=1.58302e-12、独立oracle=50+0j Ω、max(|ΔR|,|ΔX|)=1.58e-10 Ω、選択Control=C1=20 pF、宣言条件=合格\n- `control_80pF_required`: Zin=50-1.04357e-10j Ω、|Γ|=1.0635e-12、独立oracle=50+0j Ω、max(|ΔR|,|ΔX|)=1.04e-10 Ω、選択Control=C1=80 pF、宣言条件=合格\n\n**この結果から分かること**\n固定候補、外部条件、条件別操作量がデータ処理中に混線しないことを直接確認する。\n\n**分からないこと**\n解析的に構成した2点の役割分離テストであり、実チャンバー窓や制御器モデルではない。\n",
         "sourceId": "source-b7_role_factorial_search"
       },
       {
         "id": "case-b8_component_value_corner_stress",
         "type": "markdown",
         "layout": "full",
-        "body": "## B8 — 選定BOMの実現部品値8隅\n\n**このケース単独の問い**\n選定済み公称回路は、宣言した実現部品値の全8頂点でも反射基準を満たすか。\n\n**問題設定と入力**\n13.56 MHz、25-j80.769 Ω。公称C1=258.222 pF、L1=1.19731 µH、C2=7.45488 pFを各々0.85または1.15倍。\n\n- **ケース種別 / evidence:** 合成・決定論的全因子角点。\n- **Machine-readable ID:** `B8_component_value_corner_stress`。\n- **解析:** 基本波AC、評価周波数は入力記載どおり。\n- **負荷reference plane:** electrode_terminal。\n- **振幅定義:** 正規化1 VpeakのAC小信号。絶対ストレスは評価しない。\n- **Candidate:** 選定済み公称BOM 1組。\n- **Scenario:** 3部品の±15%全因子2³=8頂点。\n- **Control:** なし。\n- **設計合格条件:** 50 Ω基準で |Γ|≤0.316228（反射電力10%以下）。追加条件がある場合は以下の評価方法に含む。\n- **結果の用途:** 設計workflow fixture。装置・工程・熱の資格判定ではない。\n- **根拠ファイル:** 定義 `bench/cases/component_value_corner_stress.yaml`、結果 `runs/benchmark_suite/benchmark_result.json`。\n\n**評価方法**\n実現値係数をScenarioとして8頂点すべてで反射基準を評価する。\n\n**観測結果**\nBenchmark reproduction: **PASS**。Case-local declared criteria: **NOT MET**。Scenario coverage=3/8、worst |Γ|=0.372494、SPICE評価=8。\n\n**Scenario別の判定根拠**\n- `c1_low_l1_low_c2_low`: Zin=26.2187-2.6878j Ω、|Γ|=0.313806、独立oracle=26.2187-2.6878j Ω、max(|ΔR|,|ΔX|)=1.92e-10 Ω、宣言条件=合格\n- `c1_low_l1_low_c2_high`: Zin=26.7547-1.34798j Ω、|Γ|=0.303313、独立oracle=26.7547-1.34798j Ω、max(|ΔR|,|ΔX|)=1.96e-10 Ω、宣言条件=合格\n- `c1_low_l1_high_c2_low`: Zin=91.3224+1.64871j Ω、|Γ|=0.292611、独立oracle=91.3224+1.64871j Ω、max(|ΔR|,|ΔX|)=7.01e-10 Ω、宣言条件=合格\n- `c1_low_l1_high_c2_high`: Zin=96.4247+1.97746j Ω、|Γ|=0.317314、独立oracle=96.4247+1.97746j Ω、max(|ΔR|,|ΔX|)=7.18e-10 Ω、宣言条件=不合格、違反=max_reflection_magnitude\n- `c1_high_l1_low_c2_low`: Zin=24.6014-6.82394j Ω、|Γ|=0.351066、独立oracle=24.6014-6.82394j Ω、max(|ΔR|,|ΔX|)=2.09e-10 Ω、宣言条件=不合格、違反=max_reflection_magnitude\n- `c1_high_l1_low_c2_high`: Zin=25.5036-5.79994j Ω、|Γ|=0.33243、独立oracle=25.5036-5.79994j Ω、max(|ΔR|,|ΔX|)=2.18e-10 Ω、宣言条件=不合格、違反=max_reflection_magnitude\n- `c1_high_l1_high_c2_low`: Zin=68.0671-39.8114j Ω、|Γ|=0.35088、独立oracle=68.0671-39.8114j Ω、max(|ΔR|,|ΔX|)=5.99e-10 Ω、宣言条件=不合格、違反=max_reflection_magnitude\n- `c1_high_l1_high_c2_high`: Zin=69.9189-43.0824j Ω、|Γ|=0.372494、独立oracle=69.9189-43.0824j Ω、max(|ΔR|,|ΔX|)=6.1e-10 Ω、宣言条件=不合格、違反=max_reflection_magnitude\n\n**この結果から分かること**\n3/8という結果は等重み頂点被覆であり、歩留まり、確率分布、連続箱内部の保証ではない。\n\n**分からないこと**\n合成±15%の8頂点であり、ベンダ公差、確率分布、歩留まり、温度・経時変化ではない。\n",
+        "body": "## B8 — 選定BOMの実現部品値8隅\n\n**このケース単独の問い**\n選定済み公称回路は、宣言した実現部品値の全8頂点でも反射基準を満たすか。\n\n**問題設定と入力**\n13.56 MHz、25-j80.769 Ω。公称C1=258.222 pF、L1=1.19731 µH、C2=7.45488 pFを各々0.85または1.15倍。\n\n- **ケース種別 / evidence:** 合成・決定論的全因子角点。\n- **Machine-readable ID:** `B8_component_value_corner_stress`。\n- **解析:** 基本波AC、評価周波数は入力記載どおり。\n- **負荷reference plane:** electrode_terminal。\n- **振幅定義:** 正規化1 VpeakのAC小信号。絶対ストレスは評価しない。\n- **Candidate:** 選定済み公称BOM 1組。\n- **Scenario:** 3部品の±15%全因子2³=8頂点。\n- **Control:** なし。\n- **設計合格条件:** 50 Ω基準で |Γ|≤0.316228（反射電力10%以下）。追加条件がある場合は以下の評価方法に含む。\n- **結果の用途:** 設計workflow fixture。装置・工程・熱の資格判定ではない。\n- **根拠ファイル:** 定義 `bench/cases/component_value_corner_stress.yaml`、結果 `runs/benchmark_suite/benchmark_result.json`。\n\n**評価方法**\n実現値係数をScenarioとして8頂点すべてで反射基準を評価する。\n\n**観測結果**\nBenchmark reproduction: **PASS**。Case-local declared criteria: **NOT MET**。Scenario coverage=3/8、worst |Γ|=0.372494、SPICE評価=8。\n\n**Scenario別の判定根拠**\n- `c1_low_l1_low_c2_low`: Zin=26.2187-2.6878j Ω、|Γ|=0.313806、独立oracle=26.2187-2.6878j Ω、max(|ΔR|,|ΔX|)=1.92e-10 Ω、宣言条件=合格\n- `c1_low_l1_low_c2_high`: Zin=26.7547-1.34798j Ω、|Γ|=0.303313、独立oracle=26.7547-1.34798j Ω、max(|ΔR|,|ΔX|)=1.96e-10 Ω、宣言条件=合格\n- `c1_low_l1_high_c2_low`: Zin=91.3224+1.64871j Ω、|Γ|=0.292611、独立oracle=91.3224+1.64871j Ω、max(|ΔR|,|ΔX|)=7.02e-10 Ω、宣言条件=合格\n- `c1_low_l1_high_c2_high`: Zin=96.4247+1.97746j Ω、|Γ|=0.317314、独立oracle=96.4247+1.97746j Ω、max(|ΔR|,|ΔX|)=7.19e-10 Ω、宣言条件=不合格、違反=max_reflection_magnitude\n- `c1_high_l1_low_c2_low`: Zin=24.6014-6.82394j Ω、|Γ|=0.351066、独立oracle=24.6014-6.82394j Ω、max(|ΔR|,|ΔX|)=2.1e-10 Ω、宣言条件=不合格、違反=max_reflection_magnitude\n- `c1_high_l1_low_c2_high`: Zin=25.5036-5.79994j Ω、|Γ|=0.33243、独立oracle=25.5036-5.79994j Ω、max(|ΔR|,|ΔX|)=2.18e-10 Ω、宣言条件=不合格、違反=max_reflection_magnitude\n- `c1_high_l1_high_c2_low`: Zin=68.0671-39.8114j Ω、|Γ|=0.35088、独立oracle=68.0671-39.8114j Ω、max(|ΔR|,|ΔX|)=5.99e-10 Ω、宣言条件=不合格、違反=max_reflection_magnitude\n- `c1_high_l1_high_c2_high`: Zin=69.9189-43.0824j Ω、|Γ|=0.372494、独立oracle=69.9189-43.0824j Ω、max(|ΔR|,|ΔX|)=6.1e-10 Ω、宣言条件=不合格、違反=max_reflection_magnitude\n\n**この結果から分かること**\n3/8という結果は等重み頂点被覆であり、歩留まり、確率分布、連続箱内部の保証ではない。\n\n**分からないこと**\n合成±15%の8頂点であり、ベンダ公差、確率分布、歩留まり、温度・経時変化ではない。\n",
         "sourceId": "source-b8_component_value_corner_stress"
       },
       {
@@ -1848,7 +1848,7 @@
         "id": "case-d3_reference_plane_double_counted",
         "type": "markdown",
         "layout": "full",
-        "body": "## D3 — fixture二重計上の負例\n\n**このケース単独の問い**\n同じfixtureを回路と供給負荷Zの両方に含めると、入力Zと設計分類が期待どおり変化するか。\n\n**問題設定と入力**\n13.56 MHz。C1=258.222 pF、L1=1.19731 µH、C2=7.45488 pFのπ-match後段で、fixture込み27-j80.769 Ω負荷にR=2 Ω・L=225.715 nHを再度追加。\n\n- **ケース種別 / evidence:** 合成・決定論的誤用負例。\n- **Machine-readable ID:** `D3_reference_plane_double_counted`。\n- **解析:** 基本波AC、評価周波数は入力記載どおり。\n- **負荷reference plane:** electrode_terminal（fixture埋込み済み入力へ再追加）。\n- **振幅定義:** 正規化1 VpeakのAC小信号。絶対ストレスは評価しない。\n- **Candidate:** fixtureを二重に含む固定回路1組。\n- **Scenario:** nominal 1点。\n- **Control:** なし。\n- **設計合格条件:** 50 Ω基準で |Γ|≤0.316228（反射電力10%以下）。追加条件がある場合は以下の評価方法に含む。\n- **結果の用途:** 実装・式・境界のconformance fixture。装置・工程・熱の資格判定ではない。\n- **根拠ファイル:** 定義 `bench/cases/reference_plane_fixture_double_counted.yaml`、結果 `runs/benchmark_suite/benchmark_result.json`。\n\n**評価方法**\nfixture一回表現のbaseline Zin=49.2913-j3.73865 Ωから10 Ω以上移動し、反射基準の分類が反転することを確認する。\n\n**観測結果**\nBenchmark reproduction: **PASS**。Case-local declared criteria: **NOT MET**。Scenario coverage=0/1、worst |Γ|=0.341828、SPICE評価=1。\n\n**Scenario別の判定根拠**\n- `nominal`: Zin=75.905-36.5714j Ω、|Γ|=0.341828、独立oracle=75.905-36.5714j Ω、max(|ΔR|,|ΔX|)=4.31e-10 Ω、宣言条件=不合格、違反=max_reflection_magnitude\n\n**この結果から分かること**\n参照面要素の二重計上が電気的に観測可能であることを示す。未申告fixtureの自動検出はしない。\n\n**分からないこと**\n未申告fixtureが任意の供給Zへ既に含まれるかを自動判定する機能は示さない。\n",
+        "body": "## D3 — fixture二重計上の負例\n\n**このケース単独の問い**\n同じfixtureを回路と供給負荷Zの両方に含めると、入力Zと設計分類が期待どおり変化するか。\n\n**問題設定と入力**\n13.56 MHz。C1=258.222 pF、L1=1.19731 µH、C2=7.45488 pFのπ-match後段で、fixture込み27-j80.769 Ω負荷にR=2 Ω・L=225.715 nHを再度追加。\n\n- **ケース種別 / evidence:** 合成・決定論的誤用負例。\n- **Machine-readable ID:** `D3_reference_plane_double_counted`。\n- **解析:** 基本波AC、評価周波数は入力記載どおり。\n- **負荷reference plane:** electrode_terminal（fixture埋込み済み入力へ再追加）。\n- **振幅定義:** 正規化1 VpeakのAC小信号。絶対ストレスは評価しない。\n- **Candidate:** fixtureを二重に含む固定回路1組。\n- **Scenario:** nominal 1点。\n- **Control:** なし。\n- **設計合格条件:** 50 Ω基準で |Γ|≤0.316228（反射電力10%以下）。追加条件がある場合は以下の評価方法に含む。\n- **結果の用途:** 実装・式・境界のconformance fixture。装置・工程・熱の資格判定ではない。\n- **根拠ファイル:** 定義 `bench/cases/reference_plane_fixture_double_counted.yaml`、結果 `runs/benchmark_suite/benchmark_result.json`。\n\n**評価方法**\nfixture一回表現のbaseline Zin=49.2913-j3.73865 Ωから10 Ω以上移動し、反射基準の分類が反転することを確認する。\n\n**観測結果**\nBenchmark reproduction: **PASS**。Case-local declared criteria: **NOT MET**。Scenario coverage=0/1、worst |Γ|=0.341828、SPICE評価=1。\n\n**Scenario別の判定根拠**\n- `nominal`: Zin=75.905-36.5714j Ω、|Γ|=0.341828、独立oracle=75.905-36.5714j Ω、max(|ΔR|,|ΔX|)=4.32e-10 Ω、宣言条件=不合格、違反=max_reflection_magnitude\n\n**この結果から分かること**\n参照面要素の二重計上が電気的に観測可能であることを示す。未申告fixtureの自動検出はしない。\n\n**分からないこと**\n未申告fixtureが任意の供給Zへ既に含まれるかを自動判定する機能は示さない。\n",
         "sourceId": "source-d3_reference_plane_double_counted"
       },
       {
@@ -1888,7 +1888,7 @@
         "id": "case-lee21-p1",
         "type": "markdown",
         "layout": "full",
-        "body": "## LEE21-P1 — Lee 2021 matcher-output planeでの整合再現\n\n**このケース単独の問い**\nLee 2021のmatcher-output基準面Zを固定platform fixtureへ接続した基準ケースは、反射電力10%以下になるか。\n\n**問題設定と入力**\n13.56 MHz。Lee 2021 Table-IのVI-probe/matcher-output Z=2.41-j7.45 Ωを、ideal π fixtureへ接続。\n\n- **ケース種別 / evidence:** 公開数値＋platform基準面感度fixture。\n- **解析:** 13.56 MHzの基本波ACによる静的一ポート設計challenge。\n- **振幅定義:** 論文のsource/bias powerは条件ラベル。platform fixtureは正規化ACで絶対ストレスを評価しない。\n- **Candidate:** C1=1043.829 pF、L1=0.213013 µH、C2=1 pFの固定π fixture 1組。\n- **Scenario:** Ar 200 sccm、5 mTorr、source 400 W、bias 100 Wのmatcher-output plane 1点。\n- **Control:** なし。\n- **合格条件:** 50 Ω基準で反射電力10%以下。これはplatform criterionであり論文の普遍基準ではない。\n- **Benchmark回帰条件:** 期待する設計分類、coverage、worst |Γ|、評価数を凍結expectationと照合する。\n- **装置・工程・熱資格:** NOT EVALUATED。\n- **出典と根拠ファイル:** Lee 2021 DOI 10.1063/6.0000883, Table I; `bench/literature/p0_lee2021_bias/matcher_output_probe.yaml`。統合結果 `runs/literature/final_evaluation/evaluation.json`。\n\n**評価方法**\n独立π回路演算とngspiceの|Γ|を比較し、platformの10%反射基準を適用する。\n\n**観測結果**\nBenchmark reproduction: **PASS**。Case-local declared criteria: **MET**。coverage=1/1、worst |Γ|=5.03525e-10、評価数=1。Control reserve: N/A（Controlなし）。\n\n結果scope: frozen matcher fixture; substituted plane=bias_matcher_output_vi_probe。\n\n**この結果から分かること**\n正しいfixture入力面での基準正例。論文matcherそのものの再現ではない。\n\n**分からないこと**\nLeeのmatcher-output測定点をplatformのideal π fixtureへ接続した一条件の静的判定である。論文matcher、実ケーブル、部品定格、装置運転範囲は再現しない。\n",
+        "body": "## LEE21-P1 — Lee 2021 matcher-output planeでの整合再現\n\n**このケース単独の問い**\nLee 2021のmatcher-output基準面Zを固定platform fixtureへ接続した基準ケースは、反射電力10%以下になるか。\n\n**問題設定と入力**\n13.56 MHz。Lee 2021 Table-IのVI-probe/matcher-output Z=2.41-j7.45 Ωを、ideal π fixtureへ接続。\n\n- **ケース種別 / evidence:** 公開数値＋platform基準面感度fixture。\n- **解析:** 13.56 MHzの基本波ACによる静的一ポート設計challenge。\n- **振幅定義:** 論文のsource/bias powerは条件ラベル。platform fixtureは正規化ACで絶対ストレスを評価しない。\n- **Candidate:** C1=1043.829 pF、L1=0.213013 µH、C2=1 pFの固定π fixture 1組。\n- **Scenario:** Ar 200 sccm、5 mTorr、source 400 W、bias 100 Wのmatcher-output plane 1点。\n- **Control:** なし。\n- **合格条件:** 50 Ω基準で反射電力10%以下。これはplatform criterionであり論文の普遍基準ではない。\n- **Benchmark回帰条件:** 期待する設計分類、coverage、worst |Γ|、評価数を凍結expectationと照合する。\n- **装置・工程・熱資格:** NOT EVALUATED。\n- **出典と根拠ファイル:** Lee 2021 DOI 10.1063/6.0000883, Table I; `bench/literature/p0_lee2021_bias/matcher_output_probe.yaml`。統合結果 `runs/literature/final_evaluation/evaluation.json`。\n\n**評価方法**\n独立π回路演算とngspiceの|Γ|を比較し、platformの10%反射基準を適用する。\n\n**観測結果**\nBenchmark reproduction: **PASS**。Case-local declared criteria: **MET**。coverage=1/1、worst |Γ|=5.03527e-10、評価数=1。Control reserve: N/A（Controlなし）。\n\n結果scope: frozen matcher fixture; substituted plane=bias_matcher_output_vi_probe。\n\n**この結果から分かること**\n正しいfixture入力面での基準正例。論文matcherそのものの再現ではない。\n\n**分からないこと**\nLeeのmatcher-output測定点をplatformのideal π fixtureへ接続した一条件の静的判定である。論文matcher、実ケーブル、部品定格、装置運転範囲は再現しない。\n",
         "sourceId": "source-lee21-p1"
       },
       {
@@ -2057,7 +2057,7 @@
   },
   "snapshot": {
     "version": 1,
-    "generatedAt": "2026-08-31T02:51:26.112260+00:00",
+    "generatedAt": "2026-09-14T21:49:04.963868+00:00",
     "status": "ready",
     "datasets": {
       "summary": [
@@ -2152,9 +2152,9 @@
           "suite": "core",
           "path": "runs/benchmark_suite/benchmark_result.json",
           "schema": "design_benchmark_suite.v1",
-          "platform_version": "0.15.0",
-          "as_of": "2026-08-31T02:44:47.854295+00:00",
-          "sha256": "70ce56e2b4e46b19cf21390fe21908d185bb53cba6563c4980f9771db22dcd50",
+          "platform_version": "0.16.0",
+          "as_of": "2026-09-14T21:45:14.394883+00:00",
+          "sha256": "305aa5efa6c501fab4176fe5624977c955141ecb4c0b7d1fa758321245e04778",
           "status": "PASS",
           "solver": "ngspice_cli"
         },
@@ -2162,19 +2162,19 @@
           "suite": "literature",
           "path": "runs/literature/final_evaluation/evaluation.json",
           "schema": "pcd.literature_benchmark_suite.v4",
-          "platform_version": "0.15.0",
-          "as_of": "2026-08-31T02:51:17.963750+00:00",
-          "sha256": "8b9238ea0eee57e4c2ecad60812466ac1df34ef8272f4b855d8cb8810b40b711",
+          "platform_version": "0.16.0",
+          "as_of": "2026-09-14T21:46:08.381206+00:00",
+          "sha256": "4a7cb1dc2f0115293c4421853aa6a804491bd8798508f7a94531fd86582119b4",
           "status": "PASS",
           "solver": "runner別。solver binary versionは統合snapshotに未記録"
         },
         {
           "suite": "B5 candidate detail",
-          "path": "runs/benchmark_suite/benchmark_match-e0791f5a3e300c68/candidates/trial_0000.json",
+          "path": "runs/benchmark_suite/benchmark_match-e0791f5a3e300c68/generations/g_c2159ab230dd4f17/candidates/trial_0000.json",
           "schema": "candidate_result.v1",
-          "platform_version": "0.15.0",
+          "platform_version": "0.16.0",
           "as_of": "artifact内に時刻記録なし",
-          "sha256": "257a68c1f0cb406e69c1c1d955db95f76700bc4a92d9ae9ce12741f51cc04ffd",
+          "sha256": "4d31a8310b64ae3c99d263f4e16aac1d28a9386fcd3dfc62e7f9a1c8f4eb5329",
           "status": "READ (2 scenarios)",
           "solver": "core suiteの選択candidate詳細。solver binary version未記録"
         }
@@ -2301,7 +2301,7 @@
           "evaluation_count": 1,
           "coverage": "0/1",
           "coverage_pct": 0.0,
-          "worst_gamma": 0.4849279470880932,
+          "worst_gamma": 0.48492794708809217,
           "limiting_constraint": "反射係数|Γ|上限",
           "benchmark": "PASS",
           "declared_criteria": "NOT MET",
@@ -2319,7 +2319,7 @@
           "evaluation_count": 1,
           "coverage": "1/1",
           "coverage_pct": 100.0,
-          "worst_gamma": 0.25897609618608086,
+          "worst_gamma": 0.2589760961860808,
           "limiting_constraint": "なし",
           "benchmark": "PASS",
           "declared_criteria": "MET",
@@ -2337,7 +2337,7 @@
           "evaluation_count": 1,
           "coverage": "0/1",
           "coverage_pct": 0.0,
-          "worst_gamma": 0.3870820467535153,
+          "worst_gamma": 0.38708204675351426,
           "limiting_constraint": "反射係数|Γ|上限",
           "benchmark": "PASS",
           "declared_criteria": "NOT MET",
@@ -2355,7 +2355,7 @@
           "evaluation_count": 3,
           "coverage": "0/3",
           "coverage_pct": 0.0,
-          "worst_gamma": 0.8458333359015859,
+          "worst_gamma": 0.8458333359015897,
           "limiting_constraint": "反射係数|Γ|上限",
           "benchmark": "PASS",
           "declared_criteria": "NOT MET",
@@ -2373,7 +2373,7 @@
           "evaluation_count": 3,
           "coverage": "1/3",
           "coverage_pct": 33.333,
-          "worst_gamma": 0.9999149939148381,
+          "worst_gamma": 0.999914993914838,
           "limiting_constraint": "反射係数|Γ|上限",
           "benchmark": "PASS",
           "declared_criteria": "NOT MET",
@@ -2391,7 +2391,7 @@
           "evaluation_count": 5,
           "coverage": "1/5",
           "coverage_pct": 20.0,
-          "worst_gamma": 0.7672066486794396,
+          "worst_gamma": 0.7672066486794401,
           "limiting_constraint": "反射係数|Γ|上限",
           "benchmark": "PASS",
           "declared_criteria": "NOT MET",
@@ -2409,7 +2409,7 @@
           "evaluation_count": 125,
           "coverage": "2/5",
           "coverage_pct": 40.0,
-          "worst_gamma": 0.3020050442525467,
+          "worst_gamma": 0.30200504425254665,
           "limiting_constraint": "正規化Control余裕下限",
           "benchmark": "PASS",
           "declared_criteria": "NOT MET",
@@ -2427,7 +2427,7 @@
           "evaluation_count": 245,
           "coverage": "5/5",
           "coverage_pct": 100.0,
-          "worst_gamma": 0.038844448497049926,
+          "worst_gamma": 0.038844448497050175,
           "limiting_constraint": "なし",
           "benchmark": "PASS",
           "declared_criteria": "MET",
@@ -2445,7 +2445,7 @@
           "evaluation_count": 3,
           "coverage": "1/3",
           "coverage_pct": 33.333,
-          "worst_gamma": 0.820308204705501,
+          "worst_gamma": 0.8203082047055033,
           "limiting_constraint": "反射係数|Γ|上限",
           "benchmark": "PASS",
           "declared_criteria": "NOT MET",
@@ -2463,7 +2463,7 @@
           "evaluation_count": 2,
           "coverage": "1/2",
           "coverage_pct": 50.0,
-          "worst_gamma": 0.011035382019418173,
+          "worst_gamma": 0.011035382019418161,
           "limiting_constraint": "L1実効電流上限、L1固定Rseries平均実電力上限、理想源端子見掛け電力上限、理想源端子実効電流上限",
           "benchmark": "PASS",
           "declared_criteria": "NOT MET",
@@ -2481,7 +2481,7 @@
           "evaluation_count": 3,
           "coverage": "1/1",
           "coverage_pct": 100.0,
-          "worst_gamma": 0.001022055288187313,
+          "worst_gamma": 0.0010220552881858307,
           "limiting_constraint": "なし",
           "benchmark": "PASS",
           "declared_criteria": "MET",
@@ -2499,7 +2499,7 @@
           "evaluation_count": 8,
           "coverage": "2/2",
           "coverage_pct": 100.0,
-          "worst_gamma": 1.5829946129137944e-12,
+          "worst_gamma": 1.583018649586781e-12,
           "limiting_constraint": "なし",
           "benchmark": "PASS",
           "declared_criteria": "MET",
@@ -2517,7 +2517,7 @@
           "evaluation_count": 8,
           "coverage": "3/8",
           "coverage_pct": 37.5,
-          "worst_gamma": 0.37249361450061763,
+          "worst_gamma": 0.3724936145006189,
           "limiting_constraint": "反射係数|Γ|上限",
           "benchmark": "PASS",
           "declared_criteria": "NOT MET",
@@ -2535,7 +2535,7 @@
           "evaluation_count": 1,
           "coverage": "1/1",
           "coverage_pct": 100.0,
-          "worst_gamma": 0.03829679687789925,
+          "worst_gamma": 0.03829679687789924,
           "limiting_constraint": "なし",
           "benchmark": "PASS",
           "declared_criteria": "MET",
@@ -2553,7 +2553,7 @@
           "evaluation_count": 1,
           "coverage": "1/1",
           "coverage_pct": 100.0,
-          "worst_gamma": 0.03829679687772152,
+          "worst_gamma": 0.038296796877719114,
           "limiting_constraint": "なし",
           "benchmark": "PASS",
           "declared_criteria": "MET",
@@ -2571,7 +2571,7 @@
           "evaluation_count": 1,
           "coverage": "0/1",
           "coverage_pct": 0.0,
-          "worst_gamma": 0.3418282828657534,
+          "worst_gamma": 0.3418282828657569,
           "limiting_constraint": "反射係数|Γ|上限",
           "benchmark": "PASS",
           "declared_criteria": "NOT MET",
@@ -2788,7 +2788,7 @@
           "evaluation_count": 1,
           "coverage": "1/1",
           "coverage_pct": 100.0,
-          "worst_gamma": 5.035254510019849e-10,
+          "worst_gamma": 5.035265257605511e-10,
           "evidence_group": "公開数値＋platform基準面感度fixture",
           "reserve_status": "N/A（Controlなし）",
           "null_reason": "—",
@@ -2804,7 +2804,7 @@
           "evaluation_count": 1,
           "coverage": "0/1",
           "coverage_pct": 0.0,
-          "worst_gamma": 0.8144871167945655,
+          "worst_gamma": 0.8144871167945654,
           "evidence_group": "公開数値＋platform基準面感度fixture",
           "reserve_status": "N/A（Controlなし）",
           "null_reason": "—",
@@ -2820,7 +2820,7 @@
           "evaluation_count": 1,
           "coverage": "0/1",
           "coverage_pct": 0.0,
-          "worst_gamma": 0.7248067353970917,
+          "worst_gamma": 0.7248067353970915,
           "evidence_group": "公開数値＋platform基準面感度fixture",
           "reserve_status": "N/A（Controlなし）",
           "null_reason": "—",
@@ -2836,7 +2836,7 @@
           "evaluation_count": 8,
           "coverage": "7/8",
           "coverage_pct": 87.5,
-          "worst_gamma": 0.5249988223835913,
+          "worst_gamma": 0.5249988223835906,
           "evidence_group": "公開V/I/phase由来負荷＋platform設計fixture",
           "reserve_status": "N/A（Controlなし）",
           "null_reason": "—",
@@ -2852,7 +2852,7 @@
           "evaluation_count": 16,
           "coverage": "7/8",
           "coverage_pct": 87.5,
-          "worst_gamma": 0.4874883639745122,
+          "worst_gamma": 0.48748836397451184,
           "evidence_group": "公開V/I/phase由来負荷＋platform設計fixture",
           "reserve_status": "未資格（離散grid到達性のみ）",
           "null_reason": "—",
@@ -2868,7 +2868,7 @@
           "evaluation_count": 128,
           "coverage": "8/8",
           "coverage_pct": 100.0,
-          "worst_gamma": 0.08035296871067353,
+          "worst_gamma": 0.08035296871067124,
           "evidence_group": "公開V/I/phase由来負荷＋platform設計fixture",
           "reserve_status": "未資格（離散grid到達性のみ）",
           "null_reason": "—",
@@ -2900,7 +2900,7 @@
           "evaluation_count": 128,
           "coverage": "7/8",
           "coverage_pct": 87.5,
-          "worst_gamma": 0.36583346232441716,
+          "worst_gamma": 0.365833462324418,
           "evidence_group": "公開V/I/phase由来負荷＋platform設計fixture",
           "reserve_status": "未資格（離散grid到達性のみ）",
           "null_reason": "—",
@@ -2916,7 +2916,7 @@
           "evaluation_count": 128,
           "coverage": "8/8",
           "coverage_pct": 100.0,
-          "worst_gamma": 0.1644329288841297,
+          "worst_gamma": 0.16443292888412886,
           "evidence_group": "公開V/I/phase由来負荷＋platform設計fixture",
           "reserve_status": "未資格（離散grid到達性のみ）",
           "null_reason": "—",
@@ -2932,7 +2932,7 @@
           "evaluation_count": 60,
           "coverage": "35/60",
           "coverage_pct": 58.333,
-          "worst_gamma": 0.7538198137641152,
+          "worst_gamma": 0.7538198137641159,
           "evidence_group": "二読者図読取＋決定論的読取角＋platform設計fixture",
           "reserve_status": "N/A（Controlなし）",
           "null_reason": "—",
@@ -2948,7 +2948,7 @@
           "evaluation_count": 960,
           "coverage": "60/60",
           "coverage_pct": 100.0,
-          "worst_gamma": 0.19572863839775642,
+          "worst_gamma": 0.1957286383977577,
           "evidence_group": "二読者図読取＋決定論的読取角＋platform設計fixture",
           "reserve_status": "未資格（離散grid到達性のみ）",
           "null_reason": "—",
@@ -3015,7 +3015,7 @@
           "bench/cases/*.yaml",
           "bench/expectations.yaml",
           "runs/benchmark_suite/benchmark_result.json",
-          "runs/benchmark_suite/benchmark_match-e0791f5a3e300c68/candidates/trial_0000.json"
+          "runs/benchmark_suite/benchmark_match-e0791f5a3e300c68/generations/g_c2159ab230dd4f17/candidates/trial_0000.json"
         ],
         "filters": [
           "all 16 declared core cases",
@@ -3262,7 +3262,7 @@
         "tables_used": [
           "bench/cases/match_high_drive_stress.yaml",
           "runs/benchmark_suite/benchmark_result.json",
-          "runs/benchmark_suite/benchmark_match-e0791f5a3e300c68/candidates/trial_0000.json"
+          "runs/benchmark_suite/benchmark_match-e0791f5a3e300c68/generations/g_c2159ab230dd4f17/candidates/trial_0000.json"
         ],
         "filters": [
           "benchmark_id = B5_high_drive_stress"

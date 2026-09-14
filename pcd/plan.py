@@ -18,6 +18,8 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
+from .rf_loads import ccp_lumped_impedance, icp_effective_impedance, impedance_point
+
 PUBLIC_SCHEMA = "pcd.rf.v1"
 RESOLVED_SCHEMA = "resolved_rf_plan.v1"
 EXECUTABLE_SCHEMA = "case_yaml.v1"
@@ -585,12 +587,12 @@ def _load_frequency_and_scenarios(
     with path.open("r", encoding="utf-8-sig", newline="") as handle:
         reader = csv.DictReader(handle)
         columns = set(reader.fieldnames or [])
-        first_row = next(reader, None)
+        rows = list(reader)
     required = {"scenario_id", "resistance_ohm", "reactance_ohm"}
     missing = sorted(required - columns)
     if missing:
         raise ValueError(f"impedance table is missing canonical columns {missing}: {path.resolve()}")
-    if first_row is None:
+    if not rows:
         raise ValueError(f"impedance table is empty: {path.resolve()}")
     has_frequency = "frequency_Hz" in columns
     frequency = authored.get("frequency_Hz")
@@ -598,9 +600,10 @@ def _load_frequency_and_scenarios(
         raise ValueError("frequency_Hz is already supplied by every impedance-table row; remove the top-level value")
     if not has_frequency and frequency is None:
         raise ValueError("frequency_Hz is required when the impedance table has no frequency_Hz column")
+    _validate_impedance_table_rows(rows, columns, path.resolve())
     values = _table_value_columns(columns, inferences)
     defaults = {
-        parameter: _table_cell(first_row[column], f"{path.resolve()}:{column}") for parameter, column in values.items()
+        parameter: _table_cell(rows[0][column], f"{path.resolve()}:2:{column}") for parameter, column in values.items()
     }
     return frequency, {
         "table_file": raw_file,
@@ -624,14 +627,39 @@ def _table_value_columns(columns: set[str], inferences: list[str]) -> dict[str, 
     return values
 
 
-def _table_cell(raw: Any, path: str) -> Any:
+def _validate_impedance_table_rows(rows: list[dict[str, Any]], columns: set[str], path: Path) -> None:
+    seen_ids: set[str] = set()
+    for index, row in enumerate(rows, start=2):
+        scenario_id = str(row.get("scenario_id", "")).strip()
+        if not scenario_id:
+            raise ValueError(f"impedance-table scenario_id is empty at {path}:{index}:scenario_id")
+        if scenario_id in seen_ids:
+            raise ValueError(f"impedance-table scenario_id must be unique; duplicate {scenario_id!r} at {path}:{index}")
+        seen_ids.add(scenario_id)
+
+        resistance = _table_cell(row.get("resistance_ohm"), f"{path}:{index}:resistance_ohm")
+        if resistance < 0:
+            raise ValueError(f"impedance-table resistance_ohm must be non-negative at {path}:{index}")
+        _table_cell(row.get("reactance_ohm"), f"{path}:{index}:reactance_ohm")
+        for column in ("frequency_Hz", "drive_peak_V"):
+            if column in columns and _table_cell(row.get(column), f"{path}:{index}:{column}") <= 0:
+                raise ValueError(f"impedance-table {column} must be positive at {path}:{index}")
+        if (
+            "weight" in columns
+            and str(row.get("weight", "")).strip()
+            and _table_cell(row.get("weight"), f"{path}:{index}:weight") <= 0
+        ):
+            raise ValueError(f"impedance-table weight must be positive at {path}:{index}")
+
+
+def _table_cell(raw: Any, path: str) -> float:
     text = str(raw).strip()
     if not text:
         raise ValueError(f"impedance-table value is empty at {path}")
     try:
         value = float(text)
-    except ValueError:
-        return text
+    except ValueError as exc:
+        raise ValueError(f"impedance-table value must be numeric at {path}") from exc
     if not math.isfinite(value):
         raise ValueError(f"impedance-table value must be finite at {path}")
     return value
@@ -649,11 +677,11 @@ def _conditions(value: Any) -> list[dict[str, Any]]:
         condition_id = str(cfg.pop("id", "")).strip()
         if not condition_id:
             raise ValueError(f"conditions[{index}].id is required")
-        weight = float(cfg.pop("weight", 1.0))
+        weight = _positive_number(cfg.pop("weight", 1.0), f"conditions[{index}].weight")
         values: dict[str, Any] = {}
         for name, item in cfg.items():
             internal_name = {"drive_peak_V": "drive_amplitude_V", "frequency_Hz": "rf_frequency_Hz"}.get(name, name)
-            values[internal_name] = item
+            values[internal_name] = _positive_number(item, f"conditions[{index}].{name}")
         out.append({"id": condition_id, "values": values, "weight": weight})
     return out
 
@@ -712,7 +740,10 @@ def _point_parameters(load: Mapping[str, Any]) -> dict[str, Any]:
     for field in ("resistance_ohm", "reactance_ohm"):
         if field not in load:
             raise ValueError(f"load.{field} is required for load.type: impedance_point")
-    return {"resistance_ohm": load["resistance_ohm"], "reactance_ohm": load["reactance_ohm"]}
+    resistance = _finite_number(load["resistance_ohm"], "load.resistance_ohm")
+    reactance = _finite_number(load["reactance_ohm"], "load.reactance_ohm")
+    impedance_point(resistance, reactance)
+    return {"resistance_ohm": resistance, "reactance_ohm": reactance}
 
 
 def _effective_load_parameters(load_type: str, load: Mapping[str, Any]) -> dict[str, Any]:
@@ -722,7 +753,14 @@ def _effective_load_parameters(load_type: str, load: Mapping[str, Any]) -> dict[
         _reject_unknown(parameters, required, "load.parameters")
         if missing := sorted(required - set(parameters)):
             raise ValueError(f"load.parameters is missing {missing} for {load_type}")
-        return parameters
+        normalized = {name: _finite_number(parameters[name], f"load.parameters.{name}") for name in required}
+        ccp_lumped_impedance(
+            1.0,
+            normalized["R_eff_ohm"],
+            normalized["L_eff_H"],
+            normalized["C_sheath_eq_F"],
+        )
+        return normalized
 
     required = {
         "R_coil_ohm",
@@ -733,7 +771,18 @@ def _effective_load_parameters(load_type: str, load: Mapping[str, Any]) -> dict[
     _reject_unknown(parameters, required | {"C_parallel_F"}, "load.parameters")
     if missing := sorted(required - set(parameters)):
         raise ValueError(f"load.parameters is missing {missing} for {load_type}")
-    return parameters
+    normalized = {name: _finite_number(parameters[name], f"load.parameters.{name}") for name in required}
+    if "C_parallel_F" in parameters:
+        normalized["C_parallel_F"] = _finite_number(parameters["C_parallel_F"], "load.parameters.C_parallel_F")
+    icp_effective_impedance(
+        1.0,
+        normalized["R_coil_ohm"],
+        normalized["L_coil_H"],
+        normalized["reflected_inductance_H"],
+        normalized["secondary_damping_rate_rad_s"],
+        normalized.get("C_parallel_F", 0.0),
+    )
+    return normalized
 
 
 def _resolved_circuit(topology: str, loss_ohm: Mapping[str, Any], observed_refs: set[str]) -> dict[str, Any]:
@@ -768,10 +817,9 @@ def _positive_number(value: Any, path: str) -> float:
 
 
 def _positive_int(value: Any, path: str) -> int:
-    try:
-        number = int(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"{path} must be an integer") from exc
+    number = _finite_number(value, path)
+    if not number.is_integer():
+        raise ValueError(f"{path} must be an integer")
     if number < 1:
         raise ValueError(f"{path} must be positive")
-    return number
+    return int(number)

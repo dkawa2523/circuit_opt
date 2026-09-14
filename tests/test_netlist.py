@@ -136,6 +136,52 @@ def test_multiple_sources_are_all_rendered(make_case):
     assert len(render_source(case, {})) == 2
 
 
+def test_only_the_measured_source_excites_an_ac_analysis(make_case):
+    case = make_case(
+        {
+            "case_id": "multi_ac",
+            "sources": [
+                {"type": "dc_voltage", "name": "Vbias", "p": "bias", "n": "0", "voltage_V": 20},
+                {
+                    "type": "sine_voltage",
+                    "name": "Vrf",
+                    "p": "src",
+                    "n": "return",
+                    "amplitude_V": 4,
+                    "frequency_Hz": 1e6,
+                },
+            ],
+            "measurement": {"current_source": "Vrf"},
+        }
+    )
+
+    lines = render_source(case, {}, ac_enabled=True)
+    assert lines[0].endswith("AC 0")
+    assert lines[1].endswith("AC 4 0")
+
+
+def test_floating_measured_source_uses_its_differential_voltage(make_case):
+    case = make_case(
+        {
+            "case_id": "floating_source",
+            "source": {
+                "type": "sine_voltage",
+                "name": "Vrf",
+                "p": "src",
+                "n": "return",
+                "amplitude_V": 1,
+                "frequency_Hz": 1e6,
+            },
+            "measurement": {"current_source": "Vrf"},
+            "solver": {"ac": {"frequency_Hz": 1e6}},
+        }
+    )
+    text = _render(case)
+
+    assert ".save v(src,return) i(Vrf) v(out)" in text
+    assert "wrdata ac.csv v(src,return) i(Vrf)" in text
+
+
 def test_every_registered_source_type_is_callable():
     assert {"sine_voltage", "dc_voltage", "pulse", "current_dc"} <= set(SOURCE_RENDERERS)
     assert all(callable(fn) for fn in SOURCE_RENDERERS.values())

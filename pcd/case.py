@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -18,6 +19,23 @@ class Case:
     data: dict[str, Any]
     source_data: dict[str, Any] | None = None
     resolved_plan: dict[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        # A loaded case owns its snapshot. Mutating the source mapping after
+        # construction must not silently change fingerprints or execution.
+        object.__setattr__(self, "data", deepcopy(self.data))
+        object.__setattr__(self, "source_data", deepcopy(self.source_data))
+        object.__setattr__(self, "resolved_plan", deepcopy(self.resolved_plan))
+
+    def detached(self) -> Case:
+        """Return an isolated view suitable for third-party extension code."""
+
+        return Case(
+            path=self.path,
+            data=self.data,
+            source_data=self.source_data,
+            resolved_plan=self.resolved_plan,
+        )
 
     @property
     def base_dir(self) -> Path:
@@ -57,8 +75,7 @@ def load_case(path: str | Path) -> Case:
     if not isinstance(data, dict):
         raise ValueError(f"case file root must be a mapping: {path}")
 
-    # Local import avoids a case -> plan -> case cycle while keeping schema
-    # routing at the only file-loading boundary.
+    # Keep schema routing at the only file-loading boundary.
     from .plan import EXECUTABLE_SCHEMA, PUBLIC_SCHEMA, compile_rf_case
 
     schema = str(data.get("schema", "")).strip()
@@ -98,9 +115,11 @@ def _variable_sections(case: Case) -> list[tuple[str, dict[str, Any]]]:
         if isinstance(variables, dict):
             found.append((label, variables))
 
-    for index, source in enumerate(case.data.get("sources") or []):
-        if isinstance(source, dict) and isinstance(source.get("variables"), dict):
-            found.append((f"sources[{index}].variables", source["variables"]))
+    sources = case.data.get("sources") or []
+    if isinstance(sources, list):
+        for index, source in enumerate(sources):
+            if isinstance(source, dict) and isinstance(source.get("variables"), dict):
+                found.append((f"sources[{index}].variables", source["variables"]))
     return found
 
 

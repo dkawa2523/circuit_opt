@@ -8,6 +8,7 @@ adds constraint penalties to an objective.
 from __future__ import annotations
 
 import math
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +26,7 @@ from .analysis import (
     input_impedance,
     load_current,
     read_ac,
+    rf_measurement_options,
     rf_port_metrics,
     transient_component_metrics,
 )
@@ -57,7 +59,11 @@ def interpolate_to_target(target: pd.DataFrame, waveform: pd.DataFrame) -> tuple
     time_s, voltage = _clean_time_value(waveform, "time_s", "voltage_V")
     if len(time_s) == 0:
         return target_time, target_voltage, np.full_like(target_time, np.nan, dtype=float)
-    aligned = np.interp(target_time, time_s, voltage, left=voltage[0], right=voltage[-1])
+    aligned = np.full_like(target_time, np.nan, dtype=float)
+    scale = max(abs(float(time_s[0])), abs(float(time_s[-1])), np.finfo(float).tiny)
+    tolerance = 64.0 * np.finfo(float).eps * scale
+    covered = (target_time >= time_s[0] - tolerance) & (target_time <= time_s[-1] + tolerance)
+    aligned[covered] = np.interp(np.clip(target_time[covered], time_s[0], time_s[-1]), time_s, voltage)
     return target_time, target_voltage, np.asarray(aligned, dtype=float)
 
 
@@ -98,6 +104,8 @@ def waveform_l2(case: Case, record: dict[str, Any], waveform: pd.DataFrame) -> d
     _time, target_voltage, voltage = interpolate_to_target(target, waveform)
     if len(voltage) == 0 or np.isnan(voltage).all():
         raise ValueError("waveform is empty or has no finite voltage samples")
+    if np.isnan(voltage).any():
+        raise ValueError("waveform time range does not cover the target waveform")
     reference = float(np.sqrt(np.mean(target_voltage**2)) + 1e-12)
     rmse = float(np.sqrt(np.mean((voltage - target_voltage) ** 2)))
     normalized = rmse / reference
@@ -150,8 +158,26 @@ def rf_load(case: Case, record: dict[str, Any], waveform: pd.DataFrame) -> dict[
 
     params = record.get("params") or {}
     frequency = fundamental_hz(case, params)
-    values: dict[str, Any] = rf_port_metrics(waveform, frequency, load_current(case))
-    values.update(transient_component_metrics(waveform, frequency, observed_components(case, params)))
+    options = rf_measurement_options(case.data.get("measurement"))
+    values: dict[str, Any] = rf_port_metrics(
+        waveform,
+        frequency,
+        load_current(case),
+        periodic_cycles=int(options["periodic_cycles"]),
+        settling_comparisons=int(options["settling_comparisons"]),
+        settling_tolerance=float(options["settling_tolerance"]),
+        harmonic_count=int(options["harmonic_count"]),
+    )
+    values.update(
+        transient_component_metrics(
+            waveform,
+            frequency,
+            observed_components(case, params),
+            periodic_cycles=int(options["periodic_cycles"]),
+            settling_comparisons=int(options["settling_comparisons"]),
+            settling_tolerance=float(options["settling_tolerance"]),
+        )
+    )
     values.update(component_loss_balance(values))
     return {"objective": "rf_load", **values}
 
@@ -165,7 +191,7 @@ def measure_record(case: Case, record_or_path: dict[str, Any] | str | Path) -> d
         raise ValueError(f"cannot measure simulation record with status {record.get('status')!r}")
     metric_name = str((case.data.get("target", {}) or {}).get("objective", "waveform_l2"))
     waveform = load_waveform(record)
-    values = dict(get_metric(metric_name)(case, record, waveform))
+    values = dict(get_metric(metric_name)(case.detached(), deepcopy(record), waveform.copy(deep=True)))
     if not values:
         raise ValueError(f"metric '{metric_name}' returned no values")
     if "loss" in values:

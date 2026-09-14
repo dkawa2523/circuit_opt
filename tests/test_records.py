@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from pcd.records import frequency_response_path, load_waveform, read_sim_record, waveform_path
+from pcd.records import artifact_path, frequency_response_path, load_waveform, read_sim_record, waveform_path
 
 
 def _write_record(tmp_path: Path) -> dict:
@@ -50,6 +50,21 @@ def test_record_paths_are_resolved_from_the_manifest(tmp_path):
     assert frequency_response_path({"run_dir": str(tmp_path), "artifacts": {}}) is None
 
 
+def test_any_declared_artifact_uses_the_same_path_boundary(tmp_path):
+    run_dir = tmp_path / "artifacts" / "evaluation"
+    run_dir.mkdir(parents=True)
+    shared = tmp_path / "generation"
+    shared.mkdir()
+    case_path = shared / "case.yaml"
+    case_path.write_text("schema: case_yaml.v1\n", encoding="utf-8")
+    record = {"run_dir": str(run_dir), "artifacts": {"case": "../../generation/case.yaml"}}
+
+    resolved = artifact_path(record, "case")
+    assert resolved == run_dir / "../../generation/case.yaml"
+    assert resolved is not None
+    assert resolved.resolve() == case_path.resolve()
+
+
 def test_waveform_path_uses_a_safe_default_for_null_legacy_entries(tmp_path):
     record = {"run_dir": str(tmp_path), "artifacts": {"waveform": None}, "waveform_file": None}
     assert waveform_path(record) == tmp_path / "waveform.csv"
@@ -61,3 +76,15 @@ def test_load_waveform_reads_a_record_or_a_direct_csv_path(tmp_path):
     from_record = load_waveform(manifest)
     from_csv = load_waveform(tmp_path / "waveform.csv")
     pd.testing.assert_frame_equal(from_record, from_csv)
+
+
+def test_a_moved_run_resolves_artifacts_from_its_manifest_directory(tmp_path):
+    original = tmp_path / "original"
+    original.mkdir()
+    _write_record(original)
+    moved = tmp_path / "moved"
+    original.rename(moved)
+
+    record = read_sim_record(moved)
+    assert record["run_dir"] == str(moved.resolve())
+    assert waveform_path(record) == moved / "waveform.csv"

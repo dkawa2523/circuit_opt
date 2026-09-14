@@ -17,6 +17,8 @@ class PeriodicWindow:
     settled: bool
     residual: float | None
     compared_cycles: int
+    available_cycles: int
+    required_cycles: int
 
 
 def _cycle_residual(
@@ -45,9 +47,10 @@ def periodic_window(
 ) -> PeriodicWindow | None:
     """Select final whole cycles and report whether adjacent cycles agree.
 
-    ``settled`` is true only when each of the final ``consecutive`` adjacent
-    cycle pairs has a normalized RMS difference no greater than ``tolerance``.
-    The returned window is still useful for diagnostics when it is not settled.
+    ``settled`` is true only when the requested measurement history exists and
+    each of the final ``consecutive`` adjacent cycle pairs has a normalized RMS
+    difference no greater than ``tolerance``. The returned window is still
+    useful for diagnostics when it is not settled.
     """
 
     if fundamental_hz <= 0 or measure_cycles < 1 or consecutive < 1:
@@ -63,12 +66,15 @@ def periodic_window(
 
     end = float(time[-1])
     cycles = min(measure_cycles, full_cycles)
+    required_cycles = max(measure_cycles, consecutive + 1)
     compared = min(consecutive, max(0, full_cycles - 1))
     residuals = [
         _cycle_residual(time, signal, end - offset * period, period, samples_per_cycle) for offset in range(compared)
     ]
     residual = max(residuals) if residuals else None
-    settled = compared == consecutive and residual is not None and residual <= tolerance
+    settled = (
+        full_cycles >= required_cycles and compared == consecutive and residual is not None and residual <= tolerance
+    )
     return PeriodicWindow(
         start_s=end - cycles * period,
         end_s=end,
@@ -76,4 +82,6 @@ def periodic_window(
         settled=settled,
         residual=residual,
         compared_cycles=compared,
+        available_cycles=full_cycles,
+        required_cycles=required_cycles,
     )

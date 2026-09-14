@@ -20,6 +20,7 @@ if str(ROOT) not in sys.path:
 
 from pcd.artifacts import write_json  # noqa: E402
 from pcd.case import load_case  # noqa: E402
+from pcd.results import candidate_result_paths  # noqa: E402
 from pcd.study import run_case_study  # noqa: E402
 
 SPEC_PATH = HERE / "hardware_family_spec.yaml"
@@ -298,9 +299,8 @@ def run(run_root: Path, solver: str) -> dict[str, Any]:
         family_id = str(family["id"])
         case_path, integrity, metadata = _materialize_family_case(spec, family, run_root / "input" / family_id)
         study = run_case_study(load_case(case_path), run_root=run_root / "studies" / family_id, solver_override=solver)
-        candidate_dir = Path(study["run_root"]) / "candidates"
         raw_candidates = [
-            json.loads(path.read_text(encoding="utf-8")) for path in sorted(candidate_dir.glob("trial_*.json"))
+            json.loads(path.read_text(encoding="utf-8")) for path in candidate_result_paths(study["run_root"])
         ]
         candidates = [_candidate_summary(item, metadata, controls, limit) for item in raw_candidates]
         candidates.sort(key=lambda item: float(item["L1_H"]))

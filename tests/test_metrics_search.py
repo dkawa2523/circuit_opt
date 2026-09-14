@@ -14,9 +14,65 @@ import pandas as pd
 import pytest
 
 from pcd.metrics import interpolate_to_target, measure_record
-from pcd.search import create_optimizer
+from pcd.search import create_optimizer, validate_proposal
 
 RTOL_LOSS = 1e-12
+
+
+def test_optimizer_proposals_are_normalized_at_the_design_space_boundary(make_case):
+    case = make_case(
+        {
+            "case_id": "proposal",
+            "variables": {
+                "turns": {"type": "int", "bounds": [1, 5], "default": 3},
+                "topology": {"choices": ["l", "pi"], "default": "pi"},
+            },
+        }
+    )
+    assert validate_proposal(case, {"turns": np.int64(4)}) == {"turns": 4, "topology": "pi"}
+    with pytest.raises(ValueError, match="undeclared"):
+        validate_proposal(case, {"turns": 4, "unknown": 1})
+    with pytest.raises(ValueError, match="outside"):
+        validate_proposal(case, {"turns": 9})
+    with pytest.raises(ValueError, match="must be int"):
+        validate_proposal(case, {"turns": 2.5})
+
+
+def test_optimizer_proposals_reject_missing_and_invalid_typed_values(make_case):
+    case = make_case(
+        {
+            "case_id": "typed_proposal",
+            "variables": {
+                "enabled": {"type": "bool"},
+                "gain": {"type": "float", "bounds": [0.1, 10.0]},
+                "label": {"type": "string"},
+                "mode": {"choices": ["a", "b"]},
+            },
+        }
+    )
+    with pytest.raises(TypeError, match="mapping"):
+        validate_proposal(case, [])
+    with pytest.raises(ValueError, match="missing design variables"):
+        validate_proposal(case, {})
+
+    baseline = {"enabled": True, "gain": 1.0, "label": "ok", "mode": "a"}
+    for name, value, message in (
+        ("enabled", 1, "must be bool"),
+        ("gain", "high", "must be numeric"),
+        ("gain", float("nan"), "must be finite"),
+        ("label", 3, "must be a string"),
+        ("mode", "c", "must be one of"),
+    ):
+        with pytest.raises(ValueError, match=message):
+            validate_proposal(case, {**baseline, name: value})
+
+    numeric_case = make_case(
+        {"case_id": "numeric_proposal", "variables": {"x": {"bounds": [1, 2]}, "positive": {"scale": "log"}}}
+    )
+    with pytest.raises(ValueError, match="within its bounds"):
+        validate_proposal(numeric_case, {"x": [], "positive": 1})
+    with pytest.raises(ValueError, match="positive on a log scale"):
+        validate_proposal(numeric_case, {"x": 1.5, "positive": 0})
 
 
 def _saved_waveform_record(tmp_path: Path, frame: pd.DataFrame, name: str = "run") -> dict:
@@ -82,6 +138,24 @@ def test_an_empty_waveform_interpolates_to_nan_rather_than_crashing():
     _t, _vt, v = interpolate_to_target(target, pd.DataFrame(columns=["time_s", "voltage_V"]))
     assert v.shape == (2,)
     assert np.isnan(v).all()
+
+
+def test_interpolation_marks_times_outside_the_observed_range_as_unavailable():
+    target = pd.DataFrame({"time_s": [-1.0, 0.0, 1.0, 2.0], "voltage_V": [0.0, 0.0, 1.0, 1.0]})
+    waveform = pd.DataFrame({"time_s": [0.0, 1.0], "voltage_V": [0.0, 1.0]})
+
+    _time, _target, aligned = interpolate_to_target(target, waveform)
+
+    assert np.isnan(aligned[[0, -1]]).all()
+    assert aligned[1:3].tolist() == [0.0, 1.0]
+
+
+def test_waveform_objective_rejects_partial_time_coverage(tmp_path, rc_case):
+    target = pd.read_csv(rc_case.base_dir / "target_rc.csv")
+    partial = target.iloc[1:-1][["time_s", "voltage_V"]]
+
+    with pytest.raises(ValueError, match="does not cover"):
+        measure_record(rc_case, _saved_waveform_record(tmp_path, partial))
 
 
 def test_non_finite_samples_are_dropped_before_interpolation():

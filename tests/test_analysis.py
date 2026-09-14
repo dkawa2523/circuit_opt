@@ -30,6 +30,7 @@ from pcd.analysis import (
     transient_requested,
 )
 from pcd.component_models import ComponentObservation
+from pcd.core import UnsettledMeasurementError
 
 # --- requesting an analysis -------------------------------------------------
 
@@ -130,6 +131,25 @@ def test_an_ac_file_parses_into_real_and_imaginary_columns(tmp_path):
     assert ac["frequency_Hz"].to_list() == [1e6, 2e6]
     # Real columns stay real: a complex dtype would upcast a whole row on .iloc.
     assert all(ac[c].dtype == np.float64 for c in ac.columns)
+
+
+def test_a_canonical_ac_csv_round_trips_through_the_same_reader(tmp_path):
+    path = tmp_path / "canonical.csv"
+    expected = read_ac(_write_ac(tmp_path, [1e6], [1 + 2j], [-0.1 + 0.2j]))
+    expected.to_csv(path, index=False)
+
+    actual = read_ac(path)
+    assert list(actual.columns) == list(expected.columns)
+    assert actual.iloc[0].to_dict() == expected.iloc[0].to_dict()
+
+
+def test_a_canonical_ac_csv_must_contain_the_standard_phasors(tmp_path):
+    import pandas as pd
+
+    path = tmp_path / "incomplete.csv"
+    pd.DataFrame({"frequency_Hz": [1e6]}).to_csv(path, index=False)
+    with pytest.raises(ValueError, match="missing columns"):
+        read_ac(path)
 
 
 def test_a_short_ac_file_is_rejected(tmp_path):
@@ -343,6 +363,8 @@ def test_rf_port_metrics_reject_missing_measurement_inputs():
         rf_port_metrics(frame, 1e6, None)
     with pytest.raises(ValueError, match="positive source fundamental"):
         rf_port_metrics(frame.assign(load_current_A=1.0), 0.0, "load_current_A")
+    with pytest.raises(ValueError, match="finite load voltage/current"):
+        rf_port_metrics(frame.assign(load_current_A=np.nan), 1e6, "load_current_A")
 
 
 def test_rf_port_metrics_preserve_source_terminal_rms_and_apparent_power():
@@ -350,6 +372,35 @@ def test_rf_port_metrics_preserve_source_terminal_rms_and_apparent_power():
     assert metrics["source_current_rms_A"] == pytest.approx(np.sqrt(2.0), rel=1e-3)
     assert metrics["source_apparent_power_VA"] == pytest.approx(100.0, rel=1e-3)
     assert metrics["source_real_power_W"] == pytest.approx(100.0, rel=1e-3)
+
+
+def test_rf_port_periodic_window_and_harmonic_count_are_configurable():
+    metrics = rf_port_metrics(
+        _sine_waveform(100.0, 2.0, load_current=1.5),
+        1e6,
+        "i(Vload)",
+        periodic_cycles=2,
+        settling_comparisons=1,
+        harmonic_count=5,
+    )
+    assert metrics["measurement_cycles"] == 2
+    assert set(metrics["voltage_harmonic_amplitude_V"]) == {"h1", "h2", "h3", "h4", "h5"}
+
+
+def test_rf_port_metrics_require_every_used_signal_to_be_periodic():
+    frame = _sine_waveform(100.0, 2.0, load_current=1.5)
+    frame["i(Vload)"] *= 1.0 + 0.2 * frame["time_s"] * 1e6
+
+    with pytest.raises(UnsettledMeasurementError, match=r"i\(Vload\)"):
+        rf_port_metrics(frame, 1e6, "i(Vload)")
+
+
+def test_rf_port_metrics_reject_a_stable_but_too_short_measurement():
+    frame = _sine_waveform(100.0, 2.0, load_current=1.5)
+    frame = frame.loc[frame["time_s"] <= 2.0e-6]
+
+    with pytest.raises(UnsettledMeasurementError, match="available=2, required=3"):
+        rf_port_metrics(frame, 1e6, "i(Vload)")
 
 
 def test_total_reflection_gives_infinite_vswr_without_a_numpy_warning(tmp_path):

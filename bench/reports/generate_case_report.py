@@ -661,16 +661,19 @@ def _load(path: Path) -> dict[str, Any]:
 
 
 def _find_candidate_result(run_root: Path, case_id: str) -> Path:
+    from pcd.results import candidate_result_paths
+
     matches = []
-    for path in sorted(run_root.glob("*/candidates/trial_*.json")):
-        payload = _load(path)
-        scenarios = payload.get("scenarios") or []
-        if not scenarios:
-            continue
-        selected = scenarios[0].get("selected") or {}
-        observations = (selected.get("raw") or {}).get("observations") or {}
-        if observations.get("case_id") == case_id:
-            matches.append(path)
+    for study_root in sorted(path for path in run_root.iterdir() if (path / "study_result.json").is_file()):
+        for path in candidate_result_paths(study_root):
+            payload = _load(path)
+            scenarios = payload.get("scenarios") or []
+            if not scenarios:
+                continue
+            selected = scenarios[0].get("selected") or {}
+            observations = (selected.get("raw") or {}).get("observations") or {}
+            if observations.get("case_id") == case_id:
+                matches.append(path)
     if len(matches) != 1:
         raise FileNotFoundError(f"expected one candidate result for {case_id} under {run_root}, found {len(matches)}")
     return matches[0]

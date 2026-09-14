@@ -17,6 +17,7 @@ from .models import (
     RawResult,
     ScenarioResult,
     StudySpec,
+    UnsettledMeasurementError,
 )
 from .protocols import Constraint, ControlPolicy, Evaluator, FixedControlPolicy, MetricCalculator, ResultStore
 
@@ -83,8 +84,9 @@ class StudyRunner:
                 None,
             )
             margin_violation = 1.0 if margin_constraint is None else margin_constraint.violation
-            objective_rank = evaluation_rank_key(self.study, result)[2:]
+            objective_rank = evaluation_rank_key(self.study, result)[3:]
             return (
+                0.0 if result.raw.ok else 1.0,
                 0.0 if result.feasible else 1.0,
                 0.0 if electrical_feasible else 1.0,
                 electrical_violation,
@@ -159,8 +161,9 @@ class StudyRunner:
                 self._require_objectives(metrics)
                 constraints.extend(item.evaluate(request, raw, metrics) for item in self.constraints)
             except Exception as exc:
+                status = "not_settled" if isinstance(exc, UnsettledMeasurementError) else "failed"
                 raw = RawResult(
-                    status="failed",
+                    status=status,
                     observations=raw.observations,
                     artifacts=raw.artifacts,
                     diagnostics={**dict(raw.diagnostics), "stage": "measure", "exception_type": type(exc).__name__},

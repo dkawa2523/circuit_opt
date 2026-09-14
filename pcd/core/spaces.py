@@ -21,7 +21,10 @@ def grid_values(spec: Mapping[str, Any], default_levels: int = 3) -> list[Any]:
         low, high = spec["bounds"]
         levels = max(1, int(spec.get("grid", default_levels)))
         if spec.get("type") == "int":
-            values = sorted({round(item) for item in np.linspace(int(low), int(high), levels)})
+            low_int, high_int = math.ceil(float(low)), math.floor(float(high))
+            if low_int > high_int:
+                raise ValueError(f"integer bounds contain no integer: {dict(spec)}")
+            values = sorted({round(item) for item in np.linspace(low_int, high_int, levels)})
         elif spec.get("scale") == "log":
             low_f, high_f = float(low), float(high)
             if low_f <= 0 or high_f <= 0:

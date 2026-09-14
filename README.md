@@ -47,15 +47,28 @@ Run it with one command:
 
 ```powershell
 uv sync --group dev
+uv run pcd solver-diagnose
 uv run pcd run case.yaml
 ```
+
+When using Codex inside this repository, the project-local `$pcd-runner` skill
+can select the appropriate validation, one-simulation, study, benchmark, or
+result-inspection workflow. Its instructions live under
+`.agents/skills/pcd-runner`; it is not installed as a user-wide skill.
+
+ngspice must be installed and available on `PATH`; on Windows the console
+binary `ngspice_con.exe` is preferred for unattended runs. If local application
+policy blocks generated console-script launchers, the equivalent entry point
+is `uv run python -m pcd`. `solver-diagnose` checks discovery and reports the
+exact executable/version before a long study starts.
 
 Results default to `runs/`. The terminal shows the selected fixed candidate,
 condition coverage, selected tuner state per condition, declared objectives,
 failed limits, and the result directory. `study_result.json` retains the same
 compact decision together with every detailed result reference. Use `--json`
 for the machine-readable result or `--output path` to choose the root
-directory.
+directory. For CI or unattended qualification, add `--require-acceptance` so
+an electrically solved but rejected design also produces a nonzero exit code.
 
 ## What users specify
 
@@ -178,17 +191,23 @@ generation sequence and interpretation boundary.
 ## Code structure
 
 ```text
+.agents/skills/pcd-runner/ repository-local Codex execution workflow
 pcd/plan.py       public RF input -> explicit resolved execution plan
 pcd/case.py       schema routing, case paths, and design-variable discovery
+pcd/api.py        supported imports for Python callers and plugins
 pcd/study_config.py advanced Candidate/Scenario/Control translation
 pcd/core/         role types, scenario/control selection, aggregation
 pcd/study.py      evaluation execution, caching, and study result assembly
 pcd/search.py     exact public candidate grids and advanced exploratory search
 pcd/sim_core.py   one simulation and its immutable run artifacts
 pcd/netlist.py    circuit IR and ngspice rendering
+pcd/netlist_import.py execution-preserving external-netlist import
+pcd/netlist_parse.py drawing-oriented topology parsing
+pcd/netlist_viz.py parsed-topology rendering
 pcd/sim_methods.py named circuit, load, and solver implementations
 pcd/spice.py      SPICE parameter resolution and value formatting
 pcd/artifacts.py  run serialization and implementation identity
+pcd/records.py    stable reads and artifact-path resolution for saved runs
 pcd/analysis.py   AC/transient electrical measurements
 pcd/metrics.py    metrics and engineering-limit evaluation
 pcd/rf_loads.py   electrical RF-load equations and parameter validation
@@ -196,10 +215,53 @@ pcd/results/      content-addressed result storage and summaries
 pcd/signals/      reusable time-series and phasor primitives
 ```
 
+The dependency flow and directory ownership are summarized in
+[the architecture guide](docs/architecture.md). Third-party extensions should
+import documented types and decorators from `pcd.api`; internal module helpers
+may change within a minor release. Each extension receives an isolated case and
+parameter snapshot, so accidental mutation cannot alter the study fingerprint
+or another evaluation.
+
 The explicit `case_yaml.v1` form remains an advanced extension path for custom
-netlists, plugins, transient studies, and generic waveform objectives. Both
+netlists, plugins, transient studies, and generic waveform objectives. In a
+multi-source advanced case, `measurement.current_source` selects the single AC
+excitation and measured input port; other structured sources are AC-grounded,
+and a floating source is measured across its declared `p`/`n` terminals. Both
 public and advanced studies use `pcd run`; `sim-run` is reserved for one
-simulation without scoring. New RF matching studies should use `pcd.rf.v1`.
+simulation without scoring. A failed `sim-run` exits nonzero while retaining
+its complete run record; `--allow-failure` is available for deliberate data
+collection workflows. New RF matching studies should use `pcd.rf.v1`.
+
+For `circuit.builder: from_netlist`, authored `.param`, `.model`, `.options`,
+conditionals, and subcircuits are retained. Relative `.include` dependencies
+and selected `.lib` sections are resolved recursively and inlined into the
+portable execution snapshot; every contributing source file is hashed in the
+input manifest. The case owns the source, analysis/control block, output
+files, and final design-parameter overrides, so imported `.control`, `.ac`,
+`.tran`, and `.end` statements are not copied into the generated run deck.
+Set `circuit.netlist_mode` to `deck` for a complete SPICE file with its
+mandatory first-line title, or leave the default `fragment` for circuit
+statements with no title. The default `source_policy: replace_named` removes
+only imported independent sources whose names exactly match generated case
+sources; `preserve` keeps every imported source. PCD never guesses a source
+conflict from a shared node.
+
+Advanced transient RF cases may tune the measurement policy without replacing
+the metric implementation:
+
+```yaml
+measurement:
+  load_current: auto
+  periodic_cycles: 5
+  settling_comparisons: 3
+  settling_tolerance: 1.0e-4
+  harmonic_count: 7
+```
+
+Defaults remain 3 measured cycles, 2 adjacent-cycle comparisons, `1e-3`
+normalized residual, and 3 harmonics. A measurement is accepted only when the
+trace contains both the requested measured cycles and enough history for every
+settling comparison; PCD reports required and available cycle counts.
 
 ## Verification
 

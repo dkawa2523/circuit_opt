@@ -11,11 +11,16 @@ import json
 import subprocess
 from pathlib import Path
 
+import numpy as np
+import pandas as pd
+
+import pcd.sim_core as sim_core_module
 import pcd.solver as solver_module
 from pcd.case import load_case
 from pcd.metrics import measure_record
 from pcd.sim_core import prepare_case, simulate_case
 from pcd.sim_registry import available as sim_available
+from pcd.solver import SimulationResult
 
 EX = Path(__file__).resolve().parents[1] / "examples" / "advanced"
 
@@ -36,6 +41,23 @@ def test_simulation_writes_artifacts_but_never_metrics(tmp_path, rc_case):
     metrics = measure_record(rc_case, manifest)
     assert metrics["loss"] >= 0.0
     assert not (rec.run_dir / "metrics.json").exists(), "measurement must not create a second result store"
+
+
+def test_common_simulation_layer_persists_a_custom_solver_ac_result(tmp_path, rc_case, monkeypatch):
+    response = pd.DataFrame({"frequency_Hz": [1e6], "voltage_V_re": [1.0], "voltage_V_im": [0.0]})
+
+    def custom_solver(*_args):
+        return SimulationResult(
+            time_s=np.asarray([], dtype=float),
+            voltage_V=np.asarray([], dtype=float),
+            frequency_response=response,
+        )
+
+    monkeypatch.setattr(sim_core_module, "get_sim_method", lambda _kind, _name: custom_solver)
+    record = simulate_case(rc_case, run_root=tmp_path, solver_override="custom_ac")
+
+    assert record.frequency_response_file == "ac.csv"
+    pd.testing.assert_frame_equal(pd.read_csv(record.run_dir / "ac.csv"), response)
 
 
 def test_preparing_a_case_writes_everything_except_the_waveform(tmp_path, rc_case):
@@ -90,7 +112,7 @@ def test_plugin_files_are_recorded_with_their_digests(tmp_path):
 
 
 def test_provenance_records_the_resolved_solver(tmp_path, rc_case, monkeypatch):
-    solver_module.solver_version.cache_clear()
+    solver_module.clear_solver_version_cache()
     monkeypatch.setattr(solver_module.sys, "platform", "win32")
     monkeypatch.setattr(
         solver_module.shutil,
@@ -140,6 +162,7 @@ def test_a_failure_during_preparation_is_also_recorded(tmp_path, make_case):
     assert rec.circuit == "unknown"
     assert (rec.run_dir / "sim_manifest.json").exists()
     assert (rec.run_dir / "waveform.csv").exists()
+    assert list((tmp_path / "runs").iterdir()) == [rec.run_dir]
 
 
 def test_run_directory_collisions_are_resolved(tmp_path):
@@ -183,7 +206,7 @@ def test_the_manifest_records_load_ports_and_reference_plane(tmp_path, make_case
     case = make_case(
         {
             "case_id": "port_metadata",
-            "source": {"type": "sine_voltage", "frequency_Hz": 1e6},
+            "source": {"type": "sine_voltage", "name": "Vrf", "frequency_Hz": 1e6},
             "circuit": {"builder": "from_yaml", "output_node": "electrode", "components": []},
             "load": {
                 "name": "resistor",
@@ -196,6 +219,7 @@ def test_the_manifest_records_load_ports_and_reference_plane(tmp_path, make_case
         }
     )
     rec = prepare_case(case, run_root=tmp_path, solver_name="test_fake")
+    assert rec.measurement["current_source"] == "Vrf"
     assert rec.measurement["load_ports"] == {"p": "electrode", "n": "return"}
     assert rec.measurement["load_current"] == "load_current_A"
     assert rec.measurement["reference_plane"] == "chamber_feedthrough"

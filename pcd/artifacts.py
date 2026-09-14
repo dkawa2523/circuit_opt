@@ -7,7 +7,7 @@ import json
 import os
 import re
 import tempfile
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from copy import deepcopy
 from datetime import datetime, timezone
 from functools import lru_cache
@@ -107,7 +107,11 @@ def atomic_write_text(path: str | Path, text: str, *, encoding: str = "utf-8") -
 
 
 def archive_data_files(
-    data: Mapping[str, Any], base_dir: str | Path, bundle_root: str | Path
+    data: Mapping[str, Any],
+    base_dir: str | Path,
+    bundle_root: str | Path,
+    *,
+    extra_references: Iterable[tuple[str, str | Path]] = (),
 ) -> tuple[dict[str, Any], dict[str, str]]:
     """Snapshot runtime data dependencies into one content-addressed bundle.
 
@@ -120,7 +124,8 @@ def archive_data_files(
     inputs = root / "inputs"
     entries: list[dict[str, Any]] = []
     replacements: dict[str, str] = {}
-    for field, declared in _data_file_references(data):
+    references = [*_data_file_references(data), *((field, str(path)) for field, path in extra_references)]
+    for field, declared in references:
         source = Path(declared)
         source = (source if source.is_absolute() else base / source).resolve()
         entry: dict[str, Any] = {

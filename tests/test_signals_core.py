@@ -39,6 +39,20 @@ def test_periodic_window_rejects_a_continuously_changing_waveform():
     assert window.residual > 0.02
 
 
+def test_periodic_window_does_not_shorten_a_requested_measurement():
+    f0 = 1e6
+    time = np.linspace(0.0, 2 / f0, 1001)
+    signal = np.sin(2 * np.pi * f0 * time)
+
+    window = periodic_window(time, signal, f0, measure_cycles=3, consecutive=1)
+
+    assert window is not None
+    assert not window.settled
+    assert window.cycles == 2
+    assert window.available_cycles == 2
+    assert window.required_cycles == 3
+
+
 def test_real_power_is_not_biased_by_dense_sampling():
     f0 = 1e6
     dense = np.linspace(0.0, 0.5 / f0, 2000, endpoint=False)

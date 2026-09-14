@@ -93,8 +93,8 @@ def test_sim_run_produces_a_waveform_and_no_metrics(tmp_path, capsys):
     assert not (run_dir / "metrics.json").exists()
 
 
-def test_sim_run_strict_exit_fails_when_the_simulation_fails(tmp_path, capsys):
-    """A build failure must still write a record, and --strict-exit must exit 1."""
+def test_sim_run_fails_by_default_but_can_record_and_continue(tmp_path, capsys):
+    """A build failure is nonzero by default while always leaving a record."""
 
     case_path = tmp_path / "broken.yaml"
     case_path.write_text(
@@ -109,13 +109,26 @@ def test_sim_run_strict_exit_fails_when_the_simulation_fails(tmp_path, capsys):
     )
     run_root = tmp_path / "runs"
     with pytest.raises(SystemExit) as excinfo:
-        main(["sim-run", str(case_path), "--solver", "test_fake", "--run-root", str(run_root), "--strict-exit"])
+        main(["sim-run", str(case_path), "--solver", "test_fake", "--run-root", str(run_root)])
     assert excinfo.value.code == 1
     payload = json.loads(capsys.readouterr().out)
     assert payload["status"] == "failed"
     assert payload["error"]
     # A failed preparation still leaves a complete record behind.
     assert (Path(payload["run_dir"]) / "waveform.csv").exists()
+
+    main(
+        [
+            "sim-run",
+            str(case_path),
+            "--solver",
+            "test_fake",
+            "--run-root",
+            str(run_root),
+            "--allow-failure",
+        ]
+    )
+    assert json.loads(capsys.readouterr().out)["status"] == "failed"
 
 
 def test_visualize_netlist_writes_image_and_summary(tmp_path, capsys):
@@ -156,6 +169,22 @@ def test_run_is_the_simple_human_readable_study_entry_point(tmp_path, capsys):
     assert "Candidates: 1" in output
     assert "Results:" in output
     assert len(list(tmp_path.rglob("study_result.json"))) == 1
+
+
+def test_run_can_gate_automation_on_declared_acceptance(monkeypatch, capsys):
+    monkeypatch.setattr(
+        "pcd.study.run_case_study",
+        lambda *args, **kwargs: {
+            "best": {"status": "does_not_meet_declared_acceptance"},
+            "n_failed_evaluations": 0,
+        },
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        main(["run", RC_CASE, "--require-acceptance", "--json"])
+
+    assert excinfo.value.code == 1
+    assert _stdout_json(capsys)["best"]["status"] == "does_not_meet_declared_acceptance"
 
 
 def test_run_reports_a_public_input_typo_without_a_traceback(tmp_path, capsys):
@@ -215,7 +244,7 @@ def test_run_uses_the_unified_pipeline_for_an_advanced_case(tmp_path, capsys):
     assert payload["n_candidates"] == 3
     study_root = Path(payload["run_root"])
     assert (study_root / "study_result.json").exists()
-    assert (study_root / "study_history.json").exists()
+    assert (study_root / payload["artifacts"]["history"]).exists()
 
 
 def test_unknown_command_is_rejected():

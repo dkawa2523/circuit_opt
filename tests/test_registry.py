@@ -113,6 +113,15 @@ def test_a_plugin_file_runs_only_once(tmp_path):
     assert counter.read_text() == "1"
 
 
+def test_a_changed_plugin_requires_a_fresh_process(tmp_path):
+    plugin = _write_plugin(tmp_path, "VALUE = 1\n", name="changed.py")
+    load_plugin_files([plugin.name], tmp_path)
+    plugin.write_text("VALUE = 2\n", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="plugin changed after it was loaded"):
+        load_plugin_files([plugin.name], tmp_path)
+
+
 def test_a_missing_plugin_names_the_resolved_path(tmp_path):
     with pytest.raises(FileNotFoundError, match="plugin not found"):
         load_plugin_files(["absent.py"], tmp_path)

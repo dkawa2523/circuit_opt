@@ -24,10 +24,11 @@ from typing import Any
 import pandas as pd
 
 from . import __version__
-from .analysis import AC_FILE, load_current
+from .analysis import AC_FILE, load_current, source_name
 from .artifacts import (
     archive_data_files,
     artifact_path_segment,
+    atomic_write_text,
     file_sha256,
     package_source_sha256,
     rewrite_data_file_paths,
@@ -35,8 +36,9 @@ from .artifacts import (
     write_json,
     yaml_dump,
 )
-from .case import Case, case_warnings, fill_default_params
+from .case import Case, case_warnings, fill_default_params, resolve_path
 from .netlist import Circuit, build_circuit, build_load_subckt, render_ngspice_netlist
+from .netlist_import import flatten_netlist_file
 from .sim_registry import get as get_sim_method
 from .solver import SimulationResult, solver_identity
 
@@ -182,8 +184,29 @@ def archive_case_bundle(case: Case, directory: str | Path) -> tuple[Case, dict[s
 
     root = Path(directory)
     root.mkdir(parents=True, exist_ok=True)
-    input_manifest, replacements = archive_data_files(case.data, case.base_dir, root)
+    flattened_netlist: str | None = None
+    netlist_dependencies: tuple[Path, ...] = ()
+    circuit_cfg = case.data.get("circuit")
+    if isinstance(circuit_cfg, dict) and isinstance(circuit_cfg.get("netlist_file"), str):
+        source_netlist = resolve_path(case, circuit_cfg["netlist_file"]).resolve()
+        if source_netlist.is_file():
+            flattened_netlist, netlist_dependencies = flatten_netlist_file(source_netlist)
+    dependency_references = [
+        (f"$.circuit.netlist_file.dependencies[{index}]", path) for index, path in enumerate(netlist_dependencies)
+    ]
+    input_manifest, replacements = archive_data_files(
+        case.data,
+        case.base_dir,
+        root,
+        extra_references=dependency_references,
+    )
     archived_data = rewrite_data_file_paths(case.data, case.base_dir, replacements)
+    if flattened_netlist is not None:
+        bundled_name = "imported_netlist.cir"
+        atomic_write_text(root / bundled_name, flattened_netlist)
+        archived_circuit = dict(archived_data.get("circuit") or {})
+        archived_circuit["netlist_file"] = bundled_name
+        archived_data["circuit"] = archived_circuit
     # Plugins are executable code rather than input data.  Preserve their
     # existing provenance while keeping relative plugin paths runnable from
     # the relocated snapshot.
@@ -196,6 +219,8 @@ def archive_case_bundle(case: Case, directory: str | Path) -> tuple[Case, dict[s
     (root / "case.yaml").write_text(yaml_dump(archived_data), encoding="utf-8")
     write_json(root / "input_manifest.json", input_manifest)
     files = {"case": "case.yaml", "input_manifest": "input_manifest.json"}
+    if flattened_netlist is not None:
+        files["imported_netlist"] = "imported_netlist.cir"
     archived_plan = deepcopy(case.resolved_plan)
     if case.is_resolved_rf:
         # input_case is the exact authored record.  The executable case and
@@ -227,6 +252,7 @@ def _shared_case_files(run_dir: Path, bundle_root: str | Path) -> dict[str, str]
         "input_manifest": "input_manifest.json",
         "input_case": "input_case.yaml",
         "resolved_plan": "resolved_plan.yaml",
+        "imported_netlist": "imported_netlist.cir",
     }
     return {
         key: Path(os.path.relpath(root / name, run_dir)).as_posix()
@@ -247,6 +273,18 @@ def prepare_case(
 
     full_params = fill_default_params(case, params)
     run_dir = _make_run_dir(_run_root(case, run_root), run_id, full_params)
+    return _prepare_case_in_dir(case, full_params, run_dir, solver_name, case_archive_root)
+
+
+def _prepare_case_in_dir(
+    case: Case,
+    full_params: dict[str, Any],
+    run_dir: Path,
+    solver_name: str | None,
+    case_archive_root: str | Path | None,
+) -> SimRecord:
+    """Prepare one already allocated run directory."""
+
     run_dir.mkdir(parents=True, exist_ok=True)
 
     circuit_name, circuit = build_circuit(case, full_params)
@@ -276,7 +314,7 @@ def prepare_case(
         solver=solver,
         measurement={
             "voltage_node": meas.get("voltage_node", circuit.output_node),
-            "current_source": meas.get("current_source", "Vsrc"),
+            "current_source": meas.get("current_source", source_name(case)),
             "load_ports": {
                 "p": str(load_ports.get("p", circuit.output_node)),
                 "n": str(load_ports.get("n", "0")),
@@ -304,20 +342,22 @@ def simulate_case(
 
     A failure is recorded rather than raised: the run directory always ends up
     with a manifest and a waveform file so an optimizer can score it and keep
-    going.  ``--strict-exit`` is what turns that into a nonzero exit code.
+    going.  The standalone CLI still exits nonzero unless ``--allow-failure``
+    explicitly requests collection semantics.
     """
 
     start = time.perf_counter()
     solver_name = str(solver_override or case.data.get("solver", {}).get("name", "ngspice_cli"))
+    full_params = fill_default_params(case, params)
+    attempted_run_dir = _make_run_dir(_run_root(case, run_root), run_id, full_params)
     prepared: SimRecord | None = None
     try:
-        prepared = prepare_case(
+        prepared = _prepare_case_in_dir(
             case,
-            params=params,
-            run_root=run_root,
-            run_id=run_id,
-            solver_name=solver_name,
-            case_archive_root=case_archive_root,
+            full_params,
+            attempted_run_dir,
+            solver_name,
+            case_archive_root,
         )
         result = _run_solver(case, prepared, solver_name)
         warnings = list(prepared.warnings)
@@ -343,6 +383,7 @@ def simulate_case(
             exc,
             start,
             case_archive_root,
+            attempted_run_dir,
         )
     _write_record(case, final)
     return final
@@ -350,10 +391,17 @@ def simulate_case(
 
 def _run_solver(case: Case, record: SimRecord, solver_name: str) -> SimulationResult:
     solver = get_sim_method("solver", solver_name)
-    result = solver(record.run_dir / "netlist.cir", record.run_dir, case, record.params)
+    result = solver(
+        record.run_dir / "netlist.cir",
+        record.run_dir,
+        case.detached(),
+        deepcopy(record.params),
+    )
     if not isinstance(result, SimulationResult):
         raise TypeError(f"solver '{solver_name}' must return SimulationResult")
     result.as_frame().to_csv(record.run_dir / "waveform.csv", index=False)
+    if result.frequency_response is not None:
+        result.frequency_response.to_csv(record.run_dir / AC_FILE, index=False)
     (record.run_dir / "solver.log").write_text(result.log or "", encoding="utf-8")
     return result
 
@@ -368,12 +416,13 @@ def _record_failure(
     exc: Exception,
     start: float,
     case_archive_root: str | Path | None,
+    attempted_run_dir: Path | None = None,
 ) -> SimRecord:
     """Build a complete failed record, even if preparation itself failed."""
 
     full_params = fill_default_params(case, params)
     if prepared is None:
-        run_dir = _make_run_dir(_run_root(case, run_root), run_id, full_params)
+        run_dir = attempted_run_dir or _make_run_dir(_run_root(case, run_root), run_id, full_params)
         run_dir.mkdir(parents=True, exist_ok=True)
         prepared = SimRecord(
             run_dir=run_dir,
@@ -386,11 +435,17 @@ def _record_failure(
             warnings=case_warnings(case),
             provenance=_build_provenance(case, full_params, solver_name),
         )
-        prepared.case_files = (
-            archive_case_definition(case, run_dir)
-            if case_archive_root is None
-            else _shared_case_files(run_dir, case_archive_root)
-        )
+        try:
+            prepared.case_files = (
+                archive_case_definition(case, run_dir)
+                if case_archive_root is None
+                else _shared_case_files(run_dir, case_archive_root)
+            )
+        except Exception:
+            # The original preparation exception remains authoritative. Keep a
+            # minimal replayable case even when dependency archival caused it.
+            atomic_write_text(run_dir / "case.yaml", yaml_dump(case.data))
+            prepared.case_files = {"case": "case.yaml"}
         write_json(run_dir / "params.json", full_params)
 
     (prepared.run_dir / "solver.log").write_text(traceback.format_exc(), encoding="utf-8")

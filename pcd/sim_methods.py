@@ -7,7 +7,7 @@ from typing import Any
 from .case import Case, resolve_path
 from .component_models import core_node, loss_reference, meter_node, meter_reference, series_resistance_ohm
 from .netlist import Circuit
-from .netlist_parse import split_netlist
+from .netlist_import import SOURCE_POLICIES, executable_netlist_lines, flatten_netlist_file
 from .rf_loads import (
     ccp_lumped_impedance,
     icp_effective_impedance,
@@ -244,50 +244,48 @@ def solver_ngspice_cli(netlist_path: Path, run_dir: Path, case: Case, params: di
 def circuit_from_netlist(case: Case, params: dict[str, Any]) -> Circuit:
     """Use an existing SPICE netlist file as the circuit.
 
-    The component lines are taken verbatim, so nothing is lost in translation.
-    The case file still supplies the source, the analysis, and the design
-    parameters -- which is what lets a hand-written or exported netlist be
-    simulated, scored and optimized by the rest of the platform unchanged.
+    Circuit statements are retained in authored order, including model,
+    parameter, include, conditional, and subcircuit statements.  The case file
+    supplies the source, the analysis, and final design-parameter overrides --
+    which is what lets a hand-written or exported netlist be simulated, scored
+    and optimized by the rest of the platform unchanged.
 
-    A source in the file is dropped only when it would actually fight the
-    case's source -- same name, or driving the same node.  Other sources are
-    kept: a 0 V source is the standard way to write an ammeter, and deleting it
-    would silently remove a measurement point.
+    ``netlist_mode`` distinguishes a complete SPICE deck (whose first line is
+    a title) from a circuit fragment. ``source_policy: replace_named`` replaces
+    only independent sources whose names match generated case sources. Other
+    sources are retained: node-sharing alone does not prove a conflict, and a
+    zero-volt source is the standard way to write an ammeter.
     """
 
     cfg = _circuit_cfg(case)
     path = resolve_path(case, cfg["netlist_file"])
-    top_lines, subckts = split_netlist(path.read_text(encoding="utf-8"))
+    flattened, _dependencies = flatten_netlist_file(path)
+    imported = executable_netlist_lines(flattened, mode=str(cfg.get("netlist_mode", "fragment")))
+    source_policy = str(cfg.get("source_policy", "replace_named")).strip().lower()
+    if source_policy not in SOURCE_POLICIES:
+        raise ValueError(f"circuit.source_policy must be one of {sorted(SOURCE_POLICIES)}")
 
     circuit = Circuit(output_node=str(cfg.get("output_node", "out")))
     circuit.params.update(params)
-    for name, (ports, body) in subckts.items():
-        circuit.raw(f".subckt {name} {' '.join(ports)}")
-        for line in body:
-            circuit.raw(line)
-        circuit.raw(f".ends {name}")
-
-    for line in top_lines:
-        if _conflicts_with_case_source(case, line):
-            circuit.notes.append(f"ignored conflicting source line from netlist: {line}")
+    for item in imported:
+        if item.top_level and source_policy == "replace_named" and _matches_case_source_name(case, item.text):
+            circuit.notes.append(f"replaced same-named source line from netlist: {item.text}")
             continue
-        circuit.raw(line)
+        circuit.preamble_raw(item.text)
     return circuit
 
 
-def _conflicts_with_case_source(case: Case, line: str) -> bool:
-    """True when this netlist line would drive the same net as the case source."""
+def _matches_case_source_name(case: Case, line: str) -> bool:
+    """Whether an independent source has the exact name of a case source."""
 
     parts = line.split()
     if len(parts) < 3 or parts[0][:1].upper() not in {"V", "I"}:
         return False
     data = case.data
     sources = data.get("sources") or ([data["source"]] if data.get("source") else [])
-    for src in sources:
-        if not isinstance(src, dict):
-            continue
-        if parts[0].lower() == str(src.get("name", "Vsrc")).lower():
-            return True
-        if parts[1] == str(src.get("p", "src")):
-            return True
-    return False
+    names = {
+        str(src.get("name", "Vsrc" if index == 0 else f"Vsrc{index}")).lower()
+        for index, src in enumerate(sources)
+        if isinstance(src, dict) and "raw" not in src
+    }
+    return parts[0].lower() in names

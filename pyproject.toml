@@ -4,8 +4,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "circuit-design-platform"
-version = "0.15.0"
+dynamic = ["version"]
 description = "Scenario-aware RF circuit design-study engine"
+readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
   "numpy>=1.23",
@@ -25,6 +26,12 @@ pcd = "pcd.cli:main"
 [tool.setuptools.packages.find]
 include = ["pcd*"]
 exclude = ["runs*", "tests*"]
+
+[tool.setuptools.package-data]
+pcd = ["py.typed"]
+
+[tool.setuptools.dynamic]
+version = {attr = "pcd.__version__"}
 
 [dependency-groups]
 dev = [

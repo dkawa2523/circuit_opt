@@ -11,6 +11,8 @@ optimizer keeps collecting observations instead of aborting the run.
 
 from __future__ import annotations
 
+import hashlib
+import math
 import shutil
 import subprocess
 import sys
@@ -46,12 +48,17 @@ class SimulationResult:
     def as_frame(self) -> pd.DataFrame:
         """The boundary artifact.
 
-        The first three columns are the contract every consumer relies on;
+        The first three columns are the contract every consumer relies on.
+        Missing current is represented by NaN rather than physical zero;
         probes are appended under their own names, so recording one more cannot
         break a reader that selects by name.
         """
 
-        current = self.current_A if self.current_A is not None else np.zeros_like(self.time_s)
+        current = (
+            self.current_A
+            if self.current_A is not None
+            else np.full(np.asarray(self.time_s).shape, np.nan, dtype=float)
+        )
         frame = pd.DataFrame({"time_s": self.time_s, "voltage_V": self.voltage_V, "current_A": current})
         for name, values in self.probes.items():
             frame[name] = values
@@ -84,19 +91,81 @@ def solver_timeout_s(case: Case) -> float:
         timeout = float(raw)
     except (TypeError, ValueError):
         return DEFAULT_TIMEOUT_S
-    return timeout if timeout > 0 else DEFAULT_TIMEOUT_S
+    return timeout if math.isfinite(timeout) and timeout > 0 else DEFAULT_TIMEOUT_S
 
 
 @lru_cache(maxsize=16)
-def solver_version(executable: str) -> str | None:
-    if shutil.which(executable) is None:
-        return None
+def _solver_version_cached(resolved_executable: str, size: int, mtime_ns: int) -> str | None:
+    """Read a version once for a particular installed solver binary."""
+
+    del size, mtime_ns  # They are cache-key material, not command arguments.
     try:
-        completed = subprocess.run([executable, "--version"], text=True, capture_output=True, check=False, timeout=5)
+        completed = subprocess.run(
+            [resolved_executable, "--version"], text=True, capture_output=True, check=False, timeout=5
+        )
     except Exception:
         return None
     text = (completed.stdout or completed.stderr or "").strip()
-    return text.splitlines()[0] if text else None
+    if not text:
+        return None
+    lines = [line.strip().strip("*").strip() for line in text.splitlines()]
+    meaningful = [line for line in lines if line]
+    for line in meaningful:
+        if line.lower().startswith("ngspice"):
+            return line.split(":", 1)[0].strip()
+    return meaningful[0] if meaningful else None
+
+
+def solver_version(executable: str) -> str | None:
+    """Return the executable version, refreshing when the binary changes."""
+
+    resolved = shutil.which(executable)
+    if resolved is None:
+        return None
+    try:
+        stat = Path(resolved).stat()
+        signature = (stat.st_size, stat.st_mtime_ns)
+    except OSError:
+        # Test doubles and PATH shims need not name a local, stat-able file.
+        signature = (0, 0)
+    return _solver_version_cached(resolved, *signature)
+
+
+def clear_solver_version_cache() -> None:
+    """Clear cached solver metadata (primarily useful to environment tests)."""
+
+    _solver_version_cached.cache_clear()
+    _solver_binary_sha256_cached.cache_clear()
+
+
+@lru_cache(maxsize=16)
+def _solver_binary_sha256_cached(resolved_executable: str, size: int, mtime_ns: int) -> str | None:
+    """Hash a solver binary once for a particular filesystem identity."""
+
+    del size, mtime_ns
+    path = Path(resolved_executable)
+    try:
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+    except OSError:
+        return None
+
+
+def _solver_binary_identity(resolved: str | None) -> dict[str, Any]:
+    if not resolved:
+        return {"executable_size": None, "executable_mtime_ns": None, "executable_sha256": None}
+    try:
+        stat = Path(resolved).stat()
+    except OSError:
+        return {"executable_size": None, "executable_mtime_ns": None, "executable_sha256": None}
+    return {
+        "executable_size": stat.st_size,
+        "executable_mtime_ns": stat.st_mtime_ns,
+        "executable_sha256": _solver_binary_sha256_cached(resolved, stat.st_size, stat.st_mtime_ns),
+    }
 
 
 def solver_identity(case: Case, solver_name: str | None = None) -> dict[str, Any]:
@@ -117,6 +186,7 @@ def solver_identity(case: Case, solver_name: str | None = None) -> dict[str, Any
         "resolved_executable": resolved,
         "version": solver_version(executable) if executable and resolved else None,
         "timeout_s": solver_timeout_s(case),
+        **_solver_binary_identity(resolved),
     }
 
 
