@@ -1,0 +1,24 @@
+# Platform-only positive control: a finite 4 x 4 capacitor tuner grid.
+schema: pcd.rf.v1
+case_id: literature_colpo1999_bounded_digitization_corners
+
+network:
+  type: pi_match
+  fixed:
+    L1: 1.0e-6
+  tuning:
+    C1: [4.50e-10, 5.25e-10, 6.00e-10, 6.75e-10]
+    C2: [2.00e-10, 2.15e-10, 2.30e-10, 2.45e-10]
+
+load:
+  type: impedance_table
+  file: uncertainty_corners.csv
+  reference_plane: rfz60_global_icp_source_terminal
+  evidence:
+    origin: explicit_rectangular_digitization_only_corners
+    parent_table: qualified_impedance.csv
+    doi: 10.1063/1.369268
+    figures: [2, 3]
+
+acceptance:
+  reflected_power_fraction_max: 0.10

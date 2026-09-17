@@ -1,0 +1,23 @@
+# Reuse the central-window tuner against the published group-spread envelope.
+schema: pcd.rf.v1
+case_id: literature_gec66_full_reported_spread
+
+network:
+  type: pi_match
+  fixed:
+    L1: 1.5e-6
+  tuning:
+    C1: [4.0e-10, 4.5e-10, 5.0e-10, 5.5e-10]
+    C2: [6.5e-11, 7.0e-11, 7.5e-11, 8.0e-11]
+
+load:
+  type: impedance_table
+  file: reported_spread_envelope.csv
+  reference_plane: powered_electrode_surface
+  evidence:
+    origin: published_group_spread_envelope
+    doi: 10.1063/1.1144770
+    tables: [III, IV]
+
+acceptance:
+  reflected_power_fraction_max: 0.10

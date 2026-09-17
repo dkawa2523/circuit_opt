@@ -1,0 +1,23 @@
+# A small tuner range around the central design; C2 is effectively fixed.
+schema: pcd.rf.v1
+case_id: literature_gec66_limited_central
+
+network:
+  type: pi_match
+  fixed:
+    L1: 1.5e-6
+  tuning:
+    C1: [4.5e-10, 5.0e-10]
+    C2: [7.0e-11]
+
+load:
+  type: impedance_table
+  file: derived_impedance_66pa.csv
+  reference_plane: powered_electrode_surface
+  evidence:
+    origin: published_group_average
+    doi: 10.1063/1.1144770
+    tables: [III, IV]
+
+acceptance:
+  reflected_power_fraction_max: 0.10

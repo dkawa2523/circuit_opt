@@ -1,0 +1,21 @@
+# B7: one compact orthogonal exercise of all three roles.
+# Candidate=L1 hardware, Scenario=qualified one-port, Control=C1 setting.
+schema: pcd.rf.v1
+case_id: benchmark_role_factorial_search
+frequency_Hz: 13560000
+
+network:
+  type: l_match
+  search:
+    L1: {values: [1.0e-6, 2.0e-6]}
+  tuning:
+    C1: [2.0e-11, 8.0e-11]
+
+load:
+  type: impedance_table
+  file: ../role_factorial_scenarios.csv
+  reference_plane: electrode_terminal
+  evidence: {origin: analytic_benchmark}
+
+acceptance:
+  reflected_power_fraction_max: 0.10

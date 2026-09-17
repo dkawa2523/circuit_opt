@@ -1,0 +1,74 @@
+; Architecture boundaries for the design-study engine.
+;
+; Keep only boundaries that protect the dependency direction. Numerical and
+; orchestration details are tested as behaviour, not encoded as import rules.
+
+[importlinter]
+root_package = pcd
+
+[importlinter:contract:core-is-domain-independent]
+name = Generic core must not depend on circuit, solver, search implementations, or applications
+type = forbidden
+source_modules =
+    pcd.core
+forbidden_modules =
+    pcd.case
+    pcd.artifacts
+    pcd.spice
+    pcd.study
+    pcd.netlist
+    pcd.solver
+    pcd.sim_core
+    pcd.sim_methods
+    pcd.rf_loads
+    pcd.metrics
+    pcd.metric_registry
+    pcd.search
+    pcd.search_registry
+    pcd.cli
+
+[importlinter:contract:signals-are-foundational]
+name = Signal primitives must not depend on application or orchestration code
+type = forbidden
+source_modules =
+    pcd.signals
+forbidden_modules =
+    pcd.core
+    pcd.case
+    pcd.artifacts
+    pcd.spice
+    pcd.study
+    pcd.analysis
+    pcd.netlist
+    pcd.solver
+    pcd.sim_core
+    pcd.metrics
+    pcd.search
+    pcd.rf_loads
+    pcd.cli
+
+[importlinter:contract:cli-is-a-leaf]
+name = The CLI is an entry point, never a library dependency
+type = forbidden
+source_modules =
+    pcd.core
+    pcd.signals
+    pcd.results
+    pcd.plan
+    pcd.case
+    pcd.artifacts
+    pcd.spice
+    pcd.study
+    pcd.analysis
+    pcd.rf_loads
+    pcd.netlist
+    pcd.solver
+    pcd.sim_core
+    pcd.metrics
+    pcd.metric_registry
+    pcd.search
+    pcd.search_registry
+    pcd.records
+    pcd.validation
+forbidden_modules =
+    pcd.cli

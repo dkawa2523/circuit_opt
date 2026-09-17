@@ -1,0 +1,16 @@
+scenario_id,frequency_Hz,resistance_ohm,reactance_ohm,weight,argon_pressure_mTorr,reported_rf_power_W,reference_plane,source_doi,source_resistance_figure,source_reactance_figure,resistance_pixel_x,resistance_pixel_y,reactance_pixel_x,reactance_pixel_y,digitization_uncertainty_R_ohm,digitization_uncertainty_X_ohm,reader_difference_R_ohm,reader_difference_X_ohm,reader_count,qualified
+colpo_p0010_w1000,13560000,171.5,333.3,1,10,1000,rfz60_global_icp_source_terminal,10.1063/1.369268,2,3,112.9,110.4,118.3,46.35,6.0,7.0,3.4,2.2,2,true
+colpo_p0010_w2000,13560000,99.0,257.9,1,10,2000,rfz60_global_icp_source_terminal,10.1063/1.369268,2,3,175.9,169.85,179.95,92.0,6.0,7.0,2.8,3.3,2,true
+colpo_p0010_w3000,13560000,76.0,230.8,1,10,3000,rfz60_global_icp_source_terminal,10.1063/1.369268,2,3,238.05,188.7,241.85,108.4,6.0,7.0,0.7,1.3,2,true
+colpo_p0010_w4000,13560000,63.3,218.2,1,10,4000,rfz60_global_icp_source_terminal,10.1063/1.369268,2,3,301.0,199.1,303.85,116.0,6.0,7.0,2.6,0.0,2,true
+colpo_p0010_w5000,13560000,57.9,209.4,1,10,5000,rfz60_global_icp_source_terminal,10.1063/1.369268,2,3,363.55,203.5,365.6,121.35,6.0,7.0,1.2,1.1,2,true
+colpo_p0100_w1000,13560000,79.1,200.0,1,100,1000,rfz60_global_icp_source_terminal,10.1063/1.369268,2,3,113.15,186.2,118.35,127.0,6.0,7.0,2.9,0.0,2,true
+colpo_p0100_w2000,13560000,57.8,179.4,1,100,2000,rfz60_global_icp_source_terminal,10.1063/1.369268,2,3,176.15,203.6,180.05,139.5,6.0,7.0,1.4,1.7,2,true
+colpo_p0100_w3000,13560000,48.4,171.0,1,100,3000,rfz60_global_icp_source_terminal,10.1063/1.369268,2,3,238.25,211.3,242.0,144.55,6.0,7.0,0.8,1.8,2,true
+colpo_p0100_w4000,13560000,44.8,164.5,1,100,4000,rfz60_global_icp_source_terminal,10.1063/1.369268,2,3,301.15,214.3,303.95,148.5,6.0,7.0,0.7,1.7,2,true
+colpo_p0100_w5000,13560000,39.9,161.3,1,100,5000,rfz60_global_icp_source_terminal,10.1063/1.369268,2,3,363.85,218.3,365.8,150.45,6.0,7.0,0.7,1.5,2,true
+colpo_p1000_w1000,13560000,107.2,191.4,1,1000,1000,rfz60_global_icp_source_terminal,10.1063/1.369268,2,3,112.9,163.1,118.35,132.25,6.0,7.0,0.2,2.5,2,true
+colpo_p1000_w2000,13560000,74.8,164.4,1,1000,2000,rfz60_global_icp_source_terminal,10.1063/1.369268,2,3,175.95,189.7,179.95,148.55,6.0,7.0,0.7,1.5,2,true
+colpo_p1000_w3000,13560000,62.8,157.1,1,1000,3000,rfz60_global_icp_source_terminal,10.1063/1.369268,2,3,238.05,199.5,241.85,152.95,6.0,7.0,1.2,0.2,2,true
+colpo_p1000_w4000,13560000,56.1,151.3,1,1000,4000,rfz60_global_icp_source_terminal,10.1063/1.369268,2,3,301.05,205.05,303.9,156.45,6.0,7.0,0.1,1.8,2,true
+colpo_p1000_w5000,13560000,51.2,146.6,1,1000,5000,rfz60_global_icp_source_terminal,10.1063/1.369268,2,3,363.55,209.0,365.65,159.35,6.0,7.0,0.0,1.1,2,true

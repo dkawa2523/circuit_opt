@@ -1,0 +1,23 @@
+# B3: the same fixed network has enough range beyond every selected setting
+# to satisfy both matching and the declared tuning reserve.
+schema: pcd.rf.v1
+case_id: benchmark_match_full_tuner
+frequency_Hz: 13560000
+
+network:
+  type: pi_match
+  fixed:
+    L1: 6.43146488676e-7
+  tuning:
+    C1: [4.0e-10, 4.8e-10, 5.5e-10, 6.7e-10, 8.6e-10, 8.9e-10, 9.7e-10]
+    C2: [2.0e-11, 4.5e-11, 1.35e-10, 1.6e-10, 2.0e-10, 2.1e-10, 2.35e-10]
+
+load:
+  type: impedance_table
+  file: ../load_scenarios.csv
+  reference_plane: electrode_terminal
+  evidence: {origin: synthetic_benchmark}
+
+acceptance:
+  reflected_power_fraction_max: 0.10
+  control_margin_min: 0.20

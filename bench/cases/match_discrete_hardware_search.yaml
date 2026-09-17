@@ -1,0 +1,23 @@
+# B6: a finite hardware shortlist contains one analytically known nominal match.
+schema: pcd.rf.v1
+case_id: benchmark_match_discrete_hardware_search
+frequency_Hz: 13560000
+
+network:
+  type: pi_match
+  fixed:
+    L1: 1.19731080934e-6
+    C2: 7.45488022912e-12
+  search:
+    C1:
+      values: [1.0e-10, 2.58221757073e-10, 8.0e-10]
+
+load:
+  type: impedance_point
+  resistance_ohm: 25
+  reactance_ohm: -80.76908643457358
+  reference_plane: electrode_terminal
+  evidence: {origin: synthetic_benchmark, point: nominal_13p56MHz}
+
+acceptance:
+  reflected_power_fraction_max: 0.10

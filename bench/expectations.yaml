@@ -1,0 +1,290 @@
+_suite:
+  reference_plane:
+    equivalent_cases: [D1_reference_plane_explicit, D2_reference_plane_embedded]
+    double_counted_case: D3_reference_plane_double_counted
+    equivalent_impedance_tolerance_ohm: 0.02
+    double_counted_impedance_separation_min_ohm: 10.0
+
+topology_l_match_golden.yaml:
+  id: A1_topology_l_match
+  role: engine_conformance
+  question: Does the public L-match netlist reproduce an independent closed-form input impedance?
+  expected:
+    feasible: false
+    feasible_fraction: [0.0, 0.0]
+    worst_reflection_magnitude: [0.48, 0.49]
+    infeasible_scenarios: [nominal]
+    input_impedance_ohm:
+      nominal: [20.903483754927937, 20.946774999066456]
+    input_impedance_tolerance_ohm: 0.02
+  demonstrates: The L-match builder, load connection, AC extraction, and reflection calculation agree with a frozen analytic oracle.
+  does_not_establish: This arbitrary synthetic circuit is not a preferred topology or chamber design.
+
+topology_pi_match_golden.yaml:
+  id: A2_topology_pi_match
+  role: engine_conformance
+  question: Does the public pi-match netlist reproduce an independent closed-form input impedance?
+  expected:
+    feasible: true
+    feasible_fraction: [1.0, 1.0]
+    worst_reflection_magnitude: [0.25, 0.27]
+    infeasible_scenarios: []
+    input_impedance_ohm:
+      nominal: [35.040666625416236, 16.73422875986605]
+    input_impedance_tolerance_ohm: 0.02
+  demonstrates: The pi-match builder, load connection, AC extraction, and reflection calculation agree with a frozen analytic oracle.
+  does_not_establish: Passing the synthetic match limit does not select a universally superior topology.
+
+topology_pi_match_harmonic_golden.yaml:
+  id: A3_topology_pi_match_harmonic
+  role: engine_conformance
+  question: Does the public pi-match with a series-LC shunt branch reproduce an independent closed-form input impedance?
+  expected:
+    feasible: false
+    feasible_fraction: [0.0, 0.0]
+    worst_reflection_magnitude: [0.38, 0.40]
+    infeasible_scenarios: [nominal]
+    input_impedance_ohm:
+      nominal: [26.960990239747375, 20.48215379457799]
+    input_impedance_tolerance_ohm: 0.02
+  demonstrates: The harmonic-branch topology is electrically connected once and its fundamental-frequency impedance agrees with circuit algebra.
+  does_not_establish: A one-tone linear check does not validate harmonic suppression against a nonlinear plasma.
+
+ccp_lumped_frequency_conformance.yaml:
+  id: A4_ccp_lumped_frequency_conformance
+  role: model_conformance
+  question: Does the public effective CCP R-L-C load pass through planning, scenario frequency substitution, SPICE, and metric extraction at three frequencies?
+  expected:
+    feasible: false
+    feasible_fraction: [0.0, 0.0]
+    worst_reflection_magnitude: [0.84, 0.86]
+    infeasible_scenarios: [low_frequency, nominal_frequency, high_frequency]
+    n_evaluations: 3
+    input_impedance_ohm:
+      low_frequency: [18.86079421249643, -92.27146715450908]
+      nominal_frequency: [19.28985642608597, -54.67997855439334]
+      high_frequency: [20.463913030896755, -13.351679112169727]
+    input_impedance_tolerance_ohm: 0.02
+  demonstrates: The declared effective CCP port follows R+jwL+1/(jwC) across frequency without inventing new plasma-state inputs.
+  does_not_establish: The synthetic R-L-C values are not a physical CCP validation or parameter-identification result.
+
+icp_transformer_frequency_conformance.yaml:
+  id: A5_icp_transformer_frequency_conformance
+  role: model_conformance
+  question: Does the public effective ICP transformer load pass through planning, frequency substitution, SPICE, and metric extraction at three frequencies?
+  expected:
+    feasible: false
+    feasible_fraction: [0.32, 0.34]
+    worst_reflection_magnitude: [0.9998, 1.0]
+    infeasible_scenarios: [low_frequency, high_frequency]
+    n_evaluations: 3
+    input_impedance_ohm:
+      low_frequency: [16.750790468909464, 865.4568787265937]
+      nominal_frequency: [49.99999999999998, 0.0]
+      high_frequency: [0.7820990400912651, 957.8679116788057]
+    input_impedance_tolerance_ohm: 0.02
+  demonstrates: The identifiable reflected loading, coil terms, optional shunt capacitance, and public frequency scenarios preserve their declared terminal equation end to end.
+  does_not_establish: Synthetic terminal parameters do not validate density, collision frequency, plasma power split, or a physical ICP chamber.
+
+match_fixed_nominal.yaml:
+  id: B1_fixed_nominal
+  role: negative_control
+  question: Can a network optimized only at the nominal load cover the operating window without retuning?
+  expected:
+    feasible: false
+    feasible_fraction: [0.19, 0.21]
+    worst_reflection_magnitude: [0.70, 0.82]
+    infeasible_scenarios: [high_R_nominal_X, low_R_weak_capacitive, low_R_nominal_X, high_R_strong_capacitive]
+  demonstrates: A good nominal match is not evidence of a robust design.
+  does_not_establish: The synthetic electrical envelope is not a qualified plasma process window.
+
+match_limited_tuner.yaml:
+  id: B2_limited_tuner
+  role: negative_control
+  question: Does electrical reachability remain acceptable when the selected setting must retain 20% normalized tuning headroom?
+  expected:
+    feasible: false
+    feasible_fraction: [0.39, 0.41]
+    worst_reflection_magnitude: [0.30, 0.31]
+    control_margin: [0.0, 0.0]
+    edge_limited: true
+    n_evaluations: 125
+    infeasible_scenarios: [high_R_strong_capacitive, low_R_weak_capacitive, low_R_nominal_X]
+    violated_constraints:
+      high_R_strong_capacitive: [min_control_margin]
+      nominal: []
+      low_R_weak_capacitive: [min_control_margin]
+      low_R_nominal_X: [min_control_margin]
+      high_R_nominal_X: []
+  demonstrates: The platform distinguishes an electrically reachable match from one that consumes too much actuator range.
+  does_not_establish: Discrete capacitor settings model control authority, not controller dynamics.
+
+match_full_tuner.yaml:
+  id: B3_full_tuner
+  role: positive_control
+  question: Can one fixed network cover the operating window when its declared capacitors may retune per scenario?
+  expected:
+    feasible: true
+    feasible_fraction: [0.99, 1.0]
+    worst_reflection_magnitude: [0.0, 0.06]
+    control_margin: [0.23, 0.24]
+    edge_limited: false
+    n_evaluations: 245
+    infeasible_scenarios: []
+  demonstrates: Fixed hardware plus bounded control authority can satisfy the electrical window while retaining the declared tuning reserve.
+  does_not_establish: This AC equivalent-circuit result does not qualify RF voltage stress, losses, controller dynamics, or plasma physics.
+
+match_independent_frequency_points.yaml:
+  id: B4_independent_frequency_points
+  role: negative_control
+  question: Does a network accepted at one frequency remain acceptable at independently supplied synthetic frequency points?
+  expected:
+    feasible: false
+    feasible_fraction: [0.32, 0.34]
+    worst_reflection_magnitude: [0.81, 0.83]
+    infeasible_scenarios: [low_frequency, high_frequency]
+  demonstrates: Independent frequency points can reject a design that a nominal-frequency check accepts.
+  does_not_establish: Three synthetic points are not a continuous broadband or large-signal chamber model.
+
+match_high_drive_stress.yaml:
+  id: B5_high_drive_stress
+  role: negative_control
+  question: Does a nominally matched network remain feasible at high drive after component and source-terminal limits are included?
+  expected:
+    feasible: false
+    feasible_fraction: [0.49, 0.51]
+    worst_reflection_magnitude: [0.01, 0.012]
+    infeasible_scenarios: [high_drive]
+    violated_constraints:
+      low_drive: []
+      high_drive: [max_component_L1_current_rms_A, max_component_L1_loss_W, max_source_apparent_power_VA, max_source_current_rms_A]
+    metric_ranges:
+      low_drive:
+        source_current_rms_A: [0.355, 0.357]
+        source_apparent_power_VA: [6.28, 6.31]
+      high_drive:
+        source_current_rms_A: [1.422, 1.424]
+        source_apparent_power_VA: [100.5, 100.8]
+        component_C1_voltage_peak_V: [99.9, 100.1]
+        component_L1_voltage_peak_V: [300.5, 300.8]
+        component_C2_voltage_peak_V: [236.8, 237.2]
+  demonstrates: Match quality alone is not hardware feasibility; every named matching component and the source terminal can be checked at operating amplitude.
+  does_not_establish: Source-terminal VA is not forward generator power, and effective ESR/DCR does not predict temperature without a qualified thermal model.
+
+match_discrete_hardware_search.yaml:
+  id: B6_discrete_hardware_search
+  role: positive_control
+  question: Does a complete finite search recover the known feasible capacitor from a hardware shortlist without duplicate or missed candidates?
+  expected:
+    feasible: true
+    feasible_fraction: [0.99, 1.0]
+    worst_reflection_magnitude: [0.0010, 0.0011]
+    infeasible_scenarios: []
+    n_candidates: 3
+    feasible_candidates: 1
+    best_parameters:
+      C1: 2.58221757073e-10
+  demonstrates: A discrete hardware shortlist is enumerated completely and feasibility-first ranking selects its sole acceptable nominal match.
+  does_not_establish: One nominal load and a three-value shortlist do not establish robustness, continuous-space optimality, or a qualified component library.
+
+role_factorial_search.yaml:
+  id: B7_role_factorial_search
+  role: positive_control
+  question: Can the engine keep two hardware candidates, two load scenarios, and two tuner states independent while selecting the only robust candidate?
+  expected:
+    feasible: true
+    feasible_fraction: [1.0, 1.0]
+    worst_reflection_magnitude: [0.0, 1.0e-5]
+    infeasible_scenarios: []
+    n_candidates: 2
+    feasible_candidates: 1
+    n_evaluations: 8
+    best_parameters: {L1: 1.0e-6}
+    selected_controls:
+      control_20pF_required: {C1: 2.0e-11}
+      control_80pF_required: {C1: 8.0e-11}
+    input_impedance_ohm:
+      control_20pF_required: [50.0, 0.0]
+      control_80pF_required: [50.0, 0.0]
+    input_impedance_tolerance_ohm: 0.02
+  demonstrates: Candidate hardware, external scenarios, and per-scenario controls remain orthogonal through complete enumeration and feasibility-first selection.
+  does_not_establish: The analytically constructed two-point example is not a chamber operating window or a controller model.
+
+component_value_corner_stress.yaml:
+  id: B8_component_value_corner_stress
+  role: negative_control
+  question: Does an already selected nominal network remain acceptable at every deterministic realized-component-value corner?
+  expected:
+    feasible: false
+    feasible_fraction: [0.374, 0.376]
+    worst_reflection_magnitude: [0.3724, 0.3726]
+    infeasible_scenarios:
+      - c1_low_l1_high_c2_high
+      - c1_high_l1_low_c2_low
+      - c1_high_l1_low_c2_high
+      - c1_high_l1_high_c2_low
+      - c1_high_l1_high_c2_high
+    n_candidates: 1
+    feasible_candidates: 0
+    n_evaluations: 8
+    best_parameters:
+      C1_nominal: 2.58221757073e-10
+      L1_nominal: 1.19731080934e-6
+      C2_nominal: 7.45488022912e-12
+    input_impedance_ohm:
+      c1_low_l1_low_c2_low: [26.2186627574222, -2.6877958672484]
+      c1_low_l1_low_c2_high: [26.7547265021998, -1.34797541572836]
+      c1_low_l1_high_c2_low: [91.3224044776828, 1.64871333692616]
+      c1_low_l1_high_c2_high: [96.424734414306, 1.97746005409728]
+      c1_high_l1_low_c2_low: [24.6013761637228, -6.82393567001348]
+      c1_high_l1_low_c2_high: [25.5036417946856, -5.79993853280673]
+      c1_high_l1_high_c2_low: [68.06713059358, -39.8113779668373]
+      c1_high_l1_high_c2_high: [69.9188744811308, -43.0824249539287]
+    input_impedance_tolerance_ohm: 0.02
+  demonstrates: Existing Scenario enumeration can combine one nominal Candidate BOM with every declared realized-value factor corner without adding tolerance-specific public input or confusing the corners with new Candidates.
+  does_not_establish: The synthetic +/-15% envelope is neither a vendor tolerance, a probability distribution, a Monte Carlo yield estimate, nor a temperature/aging model.
+
+reference_plane_fixture_explicit.yaml:
+  id: D1_reference_plane_explicit
+  role: boundary_conformance
+  question: What source impedance results when a known lossy series R-L two-port is represented explicitly ahead of a plasma-terminal load?
+  expected:
+    feasible: true
+    feasible_fraction: [1.0, 1.0]
+    worst_reflection_magnitude: [0.0382, 0.0384]
+    infeasible_scenarios: []
+    input_impedance_ohm:
+      nominal: [49.29125674335881, -3.7386456518344304]
+    input_impedance_tolerance_ohm: 0.02
+  demonstrates: A passive lossy series two-port and plasma-terminal load provide one well-defined physical representation.
+  does_not_establish: A reference-plane label alone cannot validate an externally supplied de-embedding transform.
+
+reference_plane_fixture_embedded.yaml:
+  id: D2_reference_plane_embedded
+  role: boundary_conformance
+  question: Does folding the same fixture exactly once into the upstream one-port preserve the matcher input impedance?
+  expected:
+    feasible: true
+    feasible_fraction: [1.0, 1.0]
+    worst_reflection_magnitude: [0.0382, 0.0384]
+    infeasible_scenarios: []
+    input_impedance_ohm:
+      nominal: [49.29125674335881, -3.7386456518344304]
+    input_impedance_tolerance_ohm: 0.02
+  demonstrates: Equivalent explicit and embedded representations of the same lossy series two-port give the same source impedance when the reference plane is handled once.
+  does_not_establish: This synthetic R-L transform does not qualify a real chamber fixture model or a general measured S-parameter de-embedding workflow.
+
+reference_plane_fixture_double_counted.yaml:
+  id: D3_reference_plane_double_counted
+  role: negative_control
+  question: Does deliberately including the same fixture in both the circuit and supplied upstream impedance change the design decision?
+  expected:
+    feasible: false
+    feasible_fraction: [0.0, 0.0]
+    worst_reflection_magnitude: [0.341, 0.343]
+    infeasible_scenarios: [nominal]
+    input_impedance_ohm:
+      nominal: [75.90503487455376, -36.571420757913565]
+    input_impedance_tolerance_ohm: 0.02
+  demonstrates: Fixture double counting is observable as a changed source impedance and rejected match classification.
+  does_not_establish: The platform cannot infer from arbitrary impedance data whether an undocumented fixture was already included.

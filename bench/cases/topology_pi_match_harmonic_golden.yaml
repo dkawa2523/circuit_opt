@@ -1,0 +1,23 @@
+# A3: independent closed-form golden for the public pi-plus-harmonic topology.
+schema: pcd.rf.v1
+case_id: benchmark_topology_pi_match_harmonic_golden
+frequency_Hz: 13560000
+
+network:
+  type: pi_match_harmonic
+  fixed:
+    C1: 1.0e-10
+    L1: 5.0e-7
+    C2: 5.0e-11
+    Lh: 1.0e-6
+    Ch: 5.0e-11
+
+load:
+  type: impedance_point
+  resistance_ohm: 30
+  reactance_ohm: -20
+  reference_plane: electrode_terminal
+  evidence: {origin: analytic_benchmark}
+
+acceptance:
+  reflected_power_fraction_max: 0.10

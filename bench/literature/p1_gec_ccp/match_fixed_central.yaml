@@ -1,0 +1,22 @@
+# One network tuned near the 34 MHz-group, 66 Pa, 150 Vpp table point.
+schema: pcd.rf.v1
+case_id: literature_gec66_fixed_central
+
+network:
+  type: pi_match
+  fixed:
+    C1: 4.856e-10
+    L1: 1.5e-6
+    C2: 6.897e-11
+
+load:
+  type: impedance_table
+  file: derived_impedance_66pa.csv
+  reference_plane: powered_electrode_surface
+  evidence:
+    origin: published_group_average
+    doi: 10.1063/1.1144770
+    tables: [III, IV]
+
+acceptance:
+  reflected_power_fraction_max: 0.10

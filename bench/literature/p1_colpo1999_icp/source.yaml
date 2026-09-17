@@ -1,0 +1,24 @@
+id: colpo1999_icp
+title: Determination of the equivalent circuit of inductively coupled plasma sources
+authors: [Pascal Colpo, Roland Ernst, Francois Rossi]
+year: 1999
+doi: 10.1063/1.369268
+primary_source: https://doi.org/10.1063/1.369268
+public_metadata: https://publications.jrc.ec.europa.eu/repository/handle/JRC17678
+author_full_text: https://www.researchgate.net/publication/241446170_Determination_of_the_equivalent_circuit_of_inductively_coupled_plasma_sources
+evidence:
+  dummy_bode:
+    location: Figures 7 and 8, equations 4-9
+    extraction: published_component_values_and_resonance_labels
+    reference_plane: dummy_coil_terminal
+    qualified_use: fixture resonance and generic circuit-engine validation
+  graphite_dummy:
+    location: Section IV.A
+    extraction: published_text_values
+    reference_plane: graphite_dummy_coil_terminal
+    qualified_use: known-load impedance replay and published measurement/calculation discrepancy
+limitations:
+  - The plasma-on R and X curves in Figures 2 and 3 are not tabulated.
+  - The paper does not publish the matcher capacitor ranges or settings.
+  - The helical source and global RFZ60 plane do not qualify a planar production ICP.
+  - The dummy fixture validates parasitic topology, not plasma physics.

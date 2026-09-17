@@ -5,6 +5,12 @@ __pycache__/
 .coverage
 htmlcov/
 
+# Tool caches.  quality/coverage-floor.txt is committed on purpose.
+.ruff_cache/
+.import_linter_cache/
+.hypothesis/
+.nox/
+
 .venv/
 venv/
 env/
@@ -18,3 +24,9 @@ report.html
 
 .env
 .env.*
+
+# Runtime artifacts are content-addressed and reproducible; never version them.
+/runs/
+/tmp/
+/review_tmp/
+*.tmp

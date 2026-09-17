@@ -1,0 +1,20 @@
+# A1: independent closed-form golden for the public L-match topology.
+schema: pcd.rf.v1
+case_id: benchmark_topology_l_match_golden
+frequency_Hz: 13560000
+
+network:
+  type: l_match
+  fixed:
+    L1: 5.0e-7
+    C1: 1.0e-10
+
+load:
+  type: impedance_point
+  resistance_ohm: 30
+  reactance_ohm: -20
+  reference_plane: electrode_terminal
+  evidence: {origin: analytic_benchmark}
+
+acceptance:
+  reflected_power_fraction_max: 0.10

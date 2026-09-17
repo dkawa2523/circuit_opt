@@ -1,0 +1,20 @@
+# Evaluate one fixed matching network at each independently supplied R+jX and
+# frequency point. No broadband load fit or interpolation is introduced.
+schema: pcd.rf.v1
+case_id: rf_impedance_frequency_table
+
+network:
+  type: pi_match
+  fixed:
+    C1: 2.6e-10
+    L1: 1.2e-6
+    C2: 8.0e-12
+
+load:
+  type: impedance_table
+  file: rf_impedance_frequency_points.csv
+  reference_plane: electrode_terminal
+  evidence: {origin: synthetic_example_measurement}
+
+acceptance:
+  reflected_power_fraction_max: 0.10
