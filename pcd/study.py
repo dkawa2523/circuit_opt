@@ -13,9 +13,9 @@ from typing import Any
 import pandas as pd
 
 from . import __version__
-from .artifacts import file_sha256, package_source_sha256, write_json
+from .artifacts import data_file_references, file_sha256, package_source_sha256, write_json
 from .case import Case, default_params
-from .core.aggregation import candidate_rank_key
+from .core.aggregation import candidate_is_pareto_eligible, candidate_rank_key, pareto_front
 from .core.models import (
     Candidate,
     CandidateResult,
@@ -27,9 +27,10 @@ from .core.models import (
 from .core.pipeline import StudyRunner
 from .metrics import constraints_from_case, measure_record
 from .netlist_import import flatten_netlist_file
-from .results import FileResultStore, best_decision_summary
+from .results import FileResultStore, best_decision_summary, pareto_front_table, quasi_static_snapshot_table
 from .search import create_optimizer, validate_proposal
-from .sim_core import archive_case_bundle, simulate_case
+from .sim_core import DEBUG_MANIFEST_FILE, archive_case_bundle, simulate_case
+from .simulation_input import resolve_solver_settings
 from .solver import solver_identity
 from .study_config import CaseControlPolicy, candidate_case, mapping, study_spec_from_case
 
@@ -65,41 +66,27 @@ class CaseEvaluator:
             solver_override=solver_name,
             case_archive_root=self.case_archive_root,
         )
-        return self._raw_from_manifest(record.manifest(), request)
+        return self._raw_from_manifest(record.manifest())
 
     def _raw_from_manifest(
         self,
         manifest: Mapping[str, Any],
-        request: EvaluationRequest,
-        *,
-        status: str | None = None,
-        extra_artifacts: Mapping[str, str] | None = None,
     ) -> RawResult:
         run_dir = Path(str(manifest["run_dir"])).resolve()
         relative_run = run_dir.relative_to(self.study_root)
         names = mapping(manifest.get("artifacts"), "simulation_record.artifacts")
         artifacts = {
-            "run_dir": str(relative_run),
-            "manifest": str(relative_run / "sim_manifest.json"),
-            "waveform": str(relative_run / str(names.get("waveform", "waveform.csv"))),
-            "netlist": str(relative_run / str(names.get("netlist", "netlist.cir"))),
-            "solver_log": str(relative_run / str(names.get("solver_log", "solver.log"))),
+            "manifest": str(relative_run / DEBUG_MANIFEST_FILE),
+            "waveform": str(relative_run / str(names["waveform"])),
+            "netlist": str(relative_run / str(names["netlist"])),
+            "solver_log": str(relative_run / str(names["solver_log"])),
         }
         if names.get("frequency_response"):
             artifacts["frequency_response"] = str(relative_run / str(names["frequency_response"]))
-        artifacts.update(extra_artifacts or {})
-        effective_status = status or ("ok" if manifest.get("status") == "ok" else "failed")
+        effective_status = "ok" if manifest.get("status") == "ok" else "failed"
         diagnostics = dict(manifest.get("diagnostics") or {})
         return RawResult(
             status=effective_status,
-            observations={
-                "case_id": manifest.get("case_id"),
-                "params": manifest.get("params", {}),
-                "circuit": manifest.get("circuit"),
-                "load": manifest.get("load"),
-                "solver": manifest.get("solver"),
-                "evaluator": "circuit",
-            },
             artifacts=artifacts,
             diagnostics=diagnostics,
             error=manifest.get("error"),
@@ -136,7 +123,7 @@ def _plugin_fingerprints(case: Case) -> dict[str, str | None]:
 def _referenced_file_fingerprints(case: Case, data: Mapping[str, Any]) -> dict[str, str | None]:
     """Hash declarative file inputs such as a netlist, table, or target trace."""
 
-    files: dict[str, str | None] = {}
+    files = _built_in_file_fingerprints(case, data)
 
     def visit(value: Any) -> None:
         if isinstance(value, Mapping):
@@ -161,6 +148,17 @@ def _referenced_file_fingerprints(case: Case, data: Mapping[str, Any]) -> dict[s
             _flattened, dependencies = flatten_netlist_file(path)
             for dependency in dependencies:
                 files[str(dependency)] = file_sha256(dependency)
+    return files
+
+
+def _built_in_file_fingerprints(case: Case, data: Mapping[str, Any]) -> dict[str, str | None]:
+    """Hash the same built-in data dependencies that artifact archiving owns."""
+
+    files: dict[str, str | None] = {}
+    for _field, declared in data_file_references(data):
+        path = Path(declared)
+        path = (path if path.is_absolute() else case.base_dir / path).resolve()
+        files[str(path)] = file_sha256(path)
     return files
 
 
@@ -202,7 +200,7 @@ def _runtime_fingerprint(case: Case, solver_override: str | None) -> dict[str, A
         "case_sha256": _sha256_json(case.data),
         "plugins": _plugin_fingerprints(case),
         "referenced_files": _referenced_file_fingerprints(case, case.data),
-        "solver": solver_identity(case, solver_override),
+        "solver": solver_identity(resolve_solver_settings(case, solver_override)),
     }
 
 
@@ -214,7 +212,7 @@ def _simulation_fingerprint(case: Case, solver_override: str | None) -> dict[str
         "simulation_case_sha256": _sha256_json(data),
         "plugins": _plugin_fingerprints(case),
         "referenced_files": _referenced_file_fingerprints(case, data),
-        "solver": solver_identity(case, solver_override),
+        "solver": solver_identity(resolve_solver_settings(case, solver_override)),
     }
 
 
@@ -276,6 +274,63 @@ def _feasibility_first_loss(rank: tuple[float, ...]) -> float:
     return min(max(bounded, 0.0), 1.0 - 1e-12)
 
 
+def _optimizer_feedback(spec: StudySpec, result: CandidateResult) -> tuple[tuple[float, ...], dict[str, Any]]:
+    rank = tuple(value if math.isfinite(value) else 1e30 for value in candidate_rank_key(spec, result))
+    loss = _feasibility_first_loss(rank)
+    return rank, {
+        "rank": rank,
+        "loss": loss,
+        "objective_rank": rank[4 : 4 + len(spec.objectives)],
+        "aggregates": dict(result.aggregates),
+        "feasible_fraction": result.feasible_fraction,
+        "success_fraction": result.success_fraction,
+        "total_violation": result.total_violation,
+        "control_margin": result.control_margin,
+        "edge_limited": result.edge_limited,
+    }
+
+
+def _failed_constraints(result: CandidateResult) -> dict[str, list[str]]:
+    failed: dict[str, list[str]] = {}
+    for scenario in result.scenarios:
+        names = sorted(item.name for item in scenario.selected.constraints if not item.satisfied)
+        if names:
+            failed[scenario.scenario.scenario_id] = names
+    return failed
+
+
+def _study_history_entry(
+    trial: int,
+    result: CandidateResult,
+    rank: tuple[float, ...],
+    optimizer_name: str,
+    seed: int,
+    proposal: Mapping[str, Any],
+) -> dict[str, Any]:
+    evaluations = result.control_evaluations
+    return {
+        "trial": trial,
+        "candidate_id": result.candidate.candidate_id,
+        "optimizer": optimizer_name,
+        "seed": seed,
+        "proposal": dict(proposal),
+        "params": dict(result.candidate.values),
+        "aggregates": dict(result.aggregates),
+        "scenario_count": len(result.scenarios),
+        "evaluation_count": len(evaluations),
+        "failed_evaluations": sum(not item.raw.ok for item in evaluations),
+        "failed_constraints": _failed_constraints(result),
+        "duration_s": sum(item.duration_s for item in evaluations),
+        "feasible_fraction": result.feasible_fraction,
+        "success_fraction": result.success_fraction,
+        "total_violation": result.total_violation,
+        "constraint_margins": result.constraint_margins,
+        "control_margin": result.control_margin,
+        "edge_limited": result.edge_limited,
+        "rank": rank,
+    }
+
+
 def _flatten_table_values(prefix: str, values: Mapping[str, Any]) -> dict[str, Any]:
     """Flatten nested mappings while retaining non-scalar values as JSON."""
 
@@ -316,7 +371,6 @@ def _evaluation_table_rows(
                 "total_violation": evaluation.total_violation,
                 "duration_s": evaluation.duration_s,
                 "from_cache": evaluation.from_cache,
-                "cache_key": evaluation.cache_key,
                 "raw_cache_key": evaluation.raw_cache_key,
                 "error": evaluation.raw.error,
                 **design,
@@ -334,10 +388,57 @@ def _evaluation_table_rows(
                         f"{prefix}.violation": constraint.violation,
                         f"{prefix}.value": constraint.value,
                         f"{prefix}.limit": constraint.limit,
+                        f"{prefix}.margin": constraint.margin,
                     }
                 )
             rows.append(row)
     return rows
+
+
+def _write_selected_projections(
+    case: Case,
+    result: CandidateResult,
+    generation_root: Path,
+    generation: Path,
+) -> dict[str, str]:
+    study_mode = str(mapping(case.data.get("study"), "study").get("analysis_mode", ""))
+    if study_mode != "quasi_static_snapshot":
+        return {}
+    filename = "snapshot_response.csv"
+    quasi_static_snapshot_table(result).to_csv(generation_root / filename, index=False)
+    return {"snapshot_response": str(generation / filename).replace("\\", "/")}
+
+
+def _write_pareto_projection(
+    case: Case,
+    study: StudySpec,
+    results: list[CandidateResult],
+    best: CandidateResult,
+    generation_root: Path,
+    generation: Path,
+    dataset_id: str,
+) -> tuple[dict[str, str], dict[str, Any] | None]:
+    if len(study.objectives) <= 1:
+        return {}, None
+
+    eligible = tuple(result for result in results if candidate_is_pareto_eligible(study, result))
+    front = pareto_front(study, results)
+    filename = "pareto_front.csv"
+    pareto_front_table(
+        study,
+        front,
+        selected_candidate_id=best.candidate.candidate_id,
+        dataset_id=dataset_id,
+    ).to_csv(generation_root / filename, index=False)
+    artifacts = {"pareto_front": str(generation / filename).replace("\\", "/")}
+    summary = {
+        "schema": "pareto_summary.v1",
+        "scope": "declared_grid" if case.has_exact_candidate_enumeration else "observed_candidates",
+        "eligibility": "complete_solver_evidence_and_full_feasibility",
+        "eligible_candidates": len(eligible),
+        "front_candidates": len(front),
+    }
+    return artifacts, summary
 
 
 def resolve_study_case(
@@ -450,7 +551,7 @@ def run_case_study(
         raise RuntimeError("study result generation was not initialized")
     generation = generation_root.relative_to(store.root)
     dataset_identity = {
-        "table_schema": "evaluation_table.v1",
+        "table_schema": "evaluation_table.v2",
         "dataset_id": f"{store.study_id}/{generation_root.name}",
         "study_id": store.study_id,
         "case_schema": str(case.authored_data.get("schema", "case_yaml.v1")),
@@ -461,45 +562,41 @@ def run_case_study(
     results = []
     history: list[dict[str, Any]] = []
     evaluation_rows: list[dict[str, Any]] = []
+    effective_optimizer = str((case.data.get("optimizer") or {}).get("name"))
+    effective_seed = int((case.data.get("optimizer") or {}).get("seed", 0))
     for index in range(effective_trials):
         params = validate_proposal(optimizer_case, optimizer.ask())
         candidate = Candidate(f"trial_{index:04d}", params)
         result = runner.evaluate_candidate(candidate)
         results.append(result)
         evaluation_rows.extend(_evaluation_table_rows(index, result, dataset_identity))
-        rank = tuple(value if math.isfinite(value) else 1e30 for value in candidate_rank_key(spec, result))
-        optimizer_loss = _feasibility_first_loss(rank)
-        feedback = {
-            "rank": rank,
-            "loss": optimizer_loss,
-            "objective_rank": rank[4 : 4 + len(spec.objectives)],
-            "aggregates": dict(result.aggregates),
-            "feasible_fraction": result.feasible_fraction,
-            "success_fraction": result.success_fraction,
-            "total_violation": result.total_violation,
-            "control_margin": result.control_margin,
-            "edge_limited": result.edge_limited,
-        }
+        rank, feedback = _optimizer_feedback(spec, result)
         optimizer.tell(params, feedback)
         history.append(
-            {
-                "trial": index,
-                "candidate_id": candidate.candidate_id,
-                "params": params,
-                "aggregates": dict(result.aggregates),
-                "feasible_fraction": result.feasible_fraction,
-                "success_fraction": result.success_fraction,
-                "total_violation": result.total_violation,
-                "control_margin": result.control_margin,
-                "edge_limited": result.edge_limited,
-                "rank": rank,
-                "optimizer_loss": optimizer_loss,
-            }
+            _study_history_entry(
+                index,
+                result,
+                rank,
+                effective_optimizer,
+                effective_seed,
+                optimizer.proposal_metadata(),
+            )
         )
 
     ordered = sorted(results, key=lambda item: candidate_rank_key(spec, item))
     best = ordered[0]
     n_failed = sum(not evaluation.raw.ok for result in results for evaluation in result.control_evaluations)
+    selected_candidate_path = store.save_selected_candidate(best)
+    selected_artifacts = _write_selected_projections(case, best, generation_root, generation)
+    pareto_artifacts, pareto_summary = _write_pareto_projection(
+        case,
+        spec,
+        results,
+        best,
+        generation_root,
+        generation,
+        dataset_identity["dataset_id"],
+    )
 
     def generated(name: str) -> str:
         return str(generation / name).replace("\\", "/")
@@ -509,9 +606,9 @@ def run_case_study(
         "study": spec.to_dict(),
         "execution": {
             "solver": str((case.data.get("solver") or {}).get("name")),
-            "optimizer": str((case.data.get("optimizer") or {}).get("name")),
+            "optimizer": effective_optimizer,
             "trials": effective_trials,
-            "seed": int((case.data.get("optimizer") or {}).get("seed", 0)),
+            "seed": effective_seed,
         },
         "dataset": dataset_identity,
         "run_root": str(store.root),
@@ -519,9 +616,11 @@ def run_case_study(
             "generation": str(generation).replace("\\", "/"),
             "case": generated("case.yaml"),
             "input_manifest": generated("input_manifest.json"),
-            "candidate_directory": generated("candidates"),
+            "best_candidate": generated(selected_candidate_path.name),
             "history": generated("study_history.json"),
             "evaluation_table": generated("evaluations.csv"),
+            **selected_artifacts,
+            **pareto_artifacts,
             **({"input_case": generated("input_case.yaml")} if (generation_root / "input_case.yaml").is_file() else {}),
             **(
                 {"resolved_plan": generated("resolved_plan.yaml")}
@@ -538,7 +637,7 @@ def run_case_study(
         "n_evaluations": sum(len(item.control_evaluations) for item in results),
         "n_failed_evaluations": n_failed,
         "best": best_decision_summary(spec, best, n_failed_evaluations=n_failed),
-        "optimizer_state": optimizer.state(),
+        **({"pareto": pareto_summary} if pareto_summary is not None else {}),
     }
     # Everything referenced by the root result exists before this final atomic
     # replacement.  An interrupted rerun therefore leaves the previous complete

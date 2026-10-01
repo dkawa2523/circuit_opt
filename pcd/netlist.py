@@ -15,20 +15,13 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any
 
-from .analysis import (
-    LOAD_AMMETER,
-    LOAD_CURRENT,
-    ac_probe_plan,
-    ac_sweep,
-    control_lines,
-    load_current,
-    probe_plan,
-    source_name,
-    source_voltage_vector,
-)
 from .case import Case
+from .circuit_graph import CircuitGraph, GraphComponent, GraphPort, GraphTerminal
+from .probes import LOAD_AMMETER, ProbePlan
 from .sim_registry import get as get_sim_method
 from .sim_registry import load_plugins as load_sim_plugins
+from .simulation import AC_FILE, LOAD_CURRENT_COLUMN, WAVEFORM_FILE, AcSweep, AnalysisRequest, TransientAnalysis
+from .simulation_input import MeasurementReference, ResolvedSimulationCase, resolve_source_specs
 from .spice import param_ref_or_value, should_emit_spice_param, spice_value
 
 
@@ -41,6 +34,7 @@ class Component:
     n2: str | None = None
     value: Any = None
     raw: str | None = None
+    graph_neutral: bool = False
 
     def to_spice(self) -> str:
         if self.raw is not None:
@@ -48,6 +42,17 @@ class Component:
         if self.ref is None or self.n1 is None or self.n2 is None or self.value is None:
             raise ValueError(f"invalid component: {self}")
         return f"{self.ref} {self.n1} {self.n2} {spice_value(self.value)}"
+
+
+@dataclass(frozen=True)
+class PhysicalComponent:
+    """One logical circuit element before solver instrumentation is added."""
+
+    ref: str
+    n1: str
+    n2: str
+    value: Any
+    series_resistance_ohm: float | None = None
 
 
 @dataclass
@@ -60,22 +65,64 @@ class Circuit:
     ground: str = "0"
     notes: list[str] = field(default_factory=list)
     preamble: list[str] = field(default_factory=list)
+    graph_components: list[PhysicalComponent] = field(default_factory=list)
+    graph_issues: list[str] = field(default_factory=list)
 
-    def add(self, ref: str, n1: str, n2: str, value: Any) -> None:
-        self.components.append(Component(ref=str(ref), n1=str(n1), n2=str(n2), value=value))
+    def add(self, ref: str, n1: str, n2: str, value: Any, *, include_in_graph: bool = True) -> None:
+        self.components.append(
+            Component(
+                ref=ref,
+                n1=n1,
+                n2=n2,
+                value=value,
+                graph_neutral=not include_in_graph,
+            )
+        )
+        if include_in_graph:
+            self.add_graph_component(ref, n1, n2, value)
 
-    def raw(self, line: str) -> None:
-        self.components.append(Component(raw=str(line)))
+    def add_graph_component(
+        self,
+        ref: str,
+        n1: str,
+        n2: str,
+        value: Any,
+        *,
+        series_resistance_ohm: float | None = None,
+    ) -> None:
+        """Declare one physical element independently of its SPICE rendering."""
+
+        self.graph_components.append(
+            PhysicalComponent(
+                ref=ref,
+                n1=n1,
+                n2=n2,
+                value=value,
+                series_resistance_ohm=series_resistance_ohm,
+            )
+        )
+
+    def mark_graph_unsupported(self, reason: str) -> None:
+        reason = reason.strip()
+        if reason and reason not in self.graph_issues:
+            self.graph_issues.append(reason)
+
+    def raw(self, line: str, *, graph_neutral: bool = False) -> None:
+        self.components.append(Component(raw=line, graph_neutral=graph_neutral))
+        if not graph_neutral:
+            self.mark_graph_unsupported("raw SPICE component has no declared graph semantics")
 
     def preamble_raw(self, line: str) -> None:
         """Add an authored statement before generated case parameters."""
 
-        self.preamble.append(str(line))
+        self.preamble.append(line)
+        self.mark_graph_unsupported("imported SPICE preamble has no declared graph semantics")
 
     def couple(self, ref: str, first: str, second: str, coefficient: float) -> None:
         """Magnetically couple two inductors, i.e. make them a transformer."""
 
         self.components.append(Component(raw=f"{ref} {first} {second} {spice_value(coefficient)}"))
+        self.mark_graph_unsupported(f"magnetic coupling {ref!r} is not represented by circuit_graph.v1")
 
     def nodes(self) -> set[str]:
         nodes = {self.ground}
@@ -91,14 +138,120 @@ class Circuit:
         out: list[str] = []
         if len(refs) != len(set(refs)):
             out.append("duplicate component reference names detected")
-        if self.output_node not in self.nodes():
+        # Imported/raw SPICE carries topology outside ``components``.  In that
+        # mode this check cannot prove that the output is absent, so avoid a
+        # misleading warning while retaining the check for structured cases.
+        has_unparsed_topology = bool(self.preamble) or any(
+            component.raw is not None and not component.graph_neutral for component in self.components
+        )
+        if self.output_node not in self.nodes() and not has_unparsed_topology:
             out.append(f"output_node '{self.output_node}' does not appear in two-terminal components")
         return out
+
+
+@dataclass(frozen=True)
+class NetlistInputs:
+    """In-memory circuit and load produced before allocating run artifacts."""
+
+    circuit_name: str
+    circuit: Circuit
+    load_name: str
+    load_subckt: str
+
+
+_GRAPH_COMPONENT_KINDS = {
+    "R": "resistor",
+    "C": "capacitor",
+    "L": "inductor",
+    "D": "diode",
+    "V": "voltage_source",
+    "I": "current_source",
+}
+
+
+def circuit_to_graph(
+    circuit: Circuit,
+    topology_family: str,
+    *,
+    source_node: str = "src",
+) -> CircuitGraph:
+    """Project a structured circuit builder result into the graph contract.
+
+    The projection uses physical component declarations rather than rendered
+    SPICE lines.  This keeps zero-volt observation sources and internal loss
+    nodes out of the learned topology.  Authored raw SPICE remains unsupported
+    unless a builder supplies equivalent physical declarations explicitly.
+    """
+
+    issues = _graph_issues(circuit)
+    if issues:
+        detail = "; ".join(dict.fromkeys(issues))
+        raise ValueError(f"circuit graph is unavailable: {detail}")
+    return CircuitGraph(
+        topology_family=topology_family,
+        components=tuple(_graph_component(circuit, component) for component in _physical_components(circuit)),
+        ports=(
+            GraphPort("source", source_node),
+            GraphPort("load", circuit.output_node),
+            GraphPort("ground", circuit.ground),
+        ),
+    )
+
+
+def _graph_issues(circuit: Circuit) -> list[str]:
+    issues = list(circuit.graph_issues)
+    if any(component.raw is not None and not component.graph_neutral for component in circuit.components):
+        issues.append("raw SPICE component has no declared graph semantics")
+    return issues
+
+
+def _physical_components(circuit: Circuit) -> list[PhysicalComponent]:
+    physical = list(circuit.graph_components)
+    declared_refs = {component.ref for component in physical}
+    for component in circuit.components:
+        if component.graph_neutral or component.raw is not None or component.ref in declared_refs:
+            continue
+        if component.ref is None or component.n1 is None or component.n2 is None or component.value is None:
+            raise ValueError(f"circuit graph cannot represent incomplete component: {component}")
+        physical.append(PhysicalComponent(component.ref, component.n1, component.n2, component.value))
+        declared_refs.add(component.ref)
+    return physical
+
+
+def _graph_component(circuit: Circuit, component: PhysicalComponent) -> GraphComponent:
+    value = (
+        circuit.params.get(component.value, component.value) if isinstance(component.value, str) else component.value
+    )
+    return GraphComponent(
+        reference=component.ref,
+        kind=_GRAPH_COMPONENT_KINDS.get(component.ref[:1].upper(), "component"),
+        terminals=(GraphTerminal("p", component.n1), GraphTerminal("n", component.n2)),
+        value=value,
+        series_resistance_ohm=component.series_resistance_ohm,
+    )
 
 
 # -----------------------------------------------------------------------------
 # Choosing and building the circuit and load
 # -----------------------------------------------------------------------------
+
+
+def circuit_config(case: Case) -> dict[str, Any]:
+    config = case.data.get("circuit")
+    if config is None:
+        return {}
+    if not isinstance(config, dict):
+        raise TypeError("circuit must be a mapping")
+    return config
+
+
+def load_config(case: Case) -> dict[str, Any]:
+    config = case.data.get("load")
+    if config is None:
+        return {}
+    if not isinstance(config, dict):
+        raise TypeError("load must be a mapping")
+    return config
 
 
 def _selected_name(cfg: dict[str, Any], params: dict[str, Any], key: str, variable_key: str, default: str) -> str:
@@ -117,13 +270,13 @@ def _selected_name(cfg: dict[str, Any], params: dict[str, Any], key: str, variab
 
 
 def select_circuit_name(case: Case, params: dict[str, Any]) -> str:
-    cfg = case.data.get("circuit", {}) or {}
+    cfg = circuit_config(case)
     key = "builder" if "builder" in cfg or "topology" not in cfg else "topology"
     return _selected_name(cfg, params, key, "builder_variable", "from_yaml")
 
 
 def select_load_name(case: Case, params: dict[str, Any]) -> str:
-    cfg = case.data.get("load", {}) or {}
+    cfg = load_config(case)
     if not cfg:
         return "none"
     return _selected_name(cfg, params, "name", "name_variable", "none")
@@ -142,7 +295,17 @@ def build_load_subckt(case: Case, params: dict[str, Any]) -> tuple[str, str]:
     load_sim_plugins(case.data.get("plugins"), case.base_dir)
     name = select_load_name(case, params)
     subckt = get_sim_method("load", name)(case.detached(), deepcopy(params))
-    return name, "" if subckt is None else str(subckt).strip()
+    if subckt is not None and not isinstance(subckt, str):
+        raise TypeError(f"load builder '{name}' must return str or None")
+    return name, "" if subckt is None else subckt.strip()
+
+
+def build_netlist_inputs(case: Case, params: dict[str, Any]) -> NetlistInputs:
+    """Build the complete in-memory model before any run directory exists."""
+
+    circuit_name, circuit = build_circuit(case, params)
+    load_name, load_subckt = build_load_subckt(case, params)
+    return NetlistInputs(circuit_name, circuit, load_name, load_subckt)
 
 
 # -----------------------------------------------------------------------------
@@ -208,16 +371,6 @@ SOURCE_RENDERERS: dict[str, SourceRenderer] = {
 }
 
 
-def _case_sources(case: Case) -> list[dict[str, Any]]:
-    """A case may declare `sources:` (a list) or `source:` (a single mapping)."""
-
-    if "sources" in case.data:
-        return case.data.get("sources") or []
-    if "source" in case.data:
-        return [case.data.get("source") or {}]
-    return []
-
-
 def _source_ac_suffix(src: dict[str, Any], params: dict[str, Any]) -> str:
     """Use an explicit AC magnitude, or the sine peak amplitude, for stress."""
 
@@ -235,7 +388,11 @@ def _source_ac_suffix(src: dict[str, Any], params: dict[str, Any]) -> str:
     return f" AC {spice_value(magnitude)} {spice_value(phase)}"
 
 
-def render_source(case: Case, params: dict[str, Any], ac_enabled: bool = False) -> list[str]:
+def render_source(
+    case: Case,
+    params: dict[str, Any],
+    active_source: str | None = None,
+) -> list[str]:
     """Render each source, using physical peak magnitude for AC when enabled.
 
     The impedance ratio is independent of source magnitude, while component
@@ -244,8 +401,7 @@ def render_source(case: Case, params: dict[str, Any], ac_enabled: bool = False) 
     """
 
     lines: list[str] = []
-    active = source_name(case)
-    for i, src in enumerate(_case_sources(case)):
+    for i, src in enumerate(resolve_source_specs(case)):
         if not src:
             continue
         if "raw" in src:
@@ -257,8 +413,9 @@ def render_source(case: Case, params: dict[str, Any], ac_enabled: bool = False) 
             raise ValueError(f"unknown source type: {typ}. available={sorted(SOURCE_RENDERERS)}")
         name = str(src.get("name", "Vsrc" if i == 0 else f"Vsrc{i}"))
         line = render(name, str(src.get("p", "src")), str(src.get("n", "0")), src, params)
-        ac_suffix = _source_ac_suffix(src, params) if name == active else " AC 0"
-        lines.append(line + (ac_suffix if ac_enabled else ""))
+        if active_source is not None:
+            line += _source_ac_suffix(src, params) if name == active_source else " AC 0"
+        lines.append(line)
     return lines
 
 
@@ -272,19 +429,17 @@ def render_ngspice_netlist(
     circuit: Circuit,
     load_subckt: str,
     params: dict[str, Any],
-    waveform_file: str = "waveform.csv",
+    simulation: ResolvedSimulationCase,
 ) -> str:
-    """Assemble the full netlist, including the .control transient block."""
+    """Assemble the full netlist, including its typed analysis request."""
 
-    solver_cfg = case.data.get("solver", {}) or {}
-    meas = case.data.get("measurement", {}) or {}
-    output_node = str(meas.get("voltage_node", circuit.output_node))
-    source = source_name(case)
-
-    ports = (case.data.get("load", {}) or {}).get("ports", {}) or {}
-    load_p = str(ports.get("p", circuit.output_node))
-    load_n = str(ports.get("n", "0"))
-    if "voltage_node" in meas:
+    request = simulation.analysis
+    probes = simulation.probes
+    measurement = simulation.measurement
+    output_node = measurement.voltage_node or circuit.output_node
+    load_p = measurement.load_positive or circuit.output_node
+    load_n = measurement.load_negative
+    if measurement.voltage_node is not None:
         output_vector = f"v({output_node})"
     else:
         output_vector = f"v({load_p})" if load_n == "0" else f"v({load_p},{load_n})"
@@ -292,35 +447,91 @@ def render_ngspice_netlist(
     lines = [f"* Auto-generated simulation netlist for case: {case.case_id}"]
     if circuit.preamble:
         lines += ["", "* Imported circuit deck", *circuit.preamble]
-    lines += _header_lines(circuit, params, solver_cfg)
-    lines += ["", "* Sources", *render_source(case, params, ac_enabled=bool(ac_sweep(solver_cfg, params)))]
-    lines += ["", "* Circuit", *(comp.to_spice() for comp in circuit.components)]
-    if load_subckt:
-        lines += ["", "* Optional load", load_subckt, *_load_instance(case, circuit.output_node)]
-    vectors, _columns = probe_plan(case)
-    ac_vectors, _ac_columns = ac_probe_plan(case)
+    lines += _header_lines(circuit, params, simulation.netlist_options)
     lines += [
         "",
-        *control_lines(solver_cfg, output_vector, source, source_voltage_vector(case), vectors, params, ac_vectors),
+        "* Sources",
+        *render_source(
+            case,
+            params,
+            active_source=probes.source_name if request.ac is not None else None,
+        ),
     ]
+    lines += ["", "* Circuit", *(comp.to_spice() for comp in circuit.components)]
+    if load_subckt:
+        lines += [
+            "",
+            "* Optional load",
+            load_subckt,
+            *_load_instance(circuit.output_node, probes.load_current_column, measurement),
+        ]
+    lines += ["", *render_control_lines(request, output_vector, probes)]
     return "\n".join(lines) + "\n"
 
 
-def _header_lines(circuit: Circuit, params: dict[str, Any], solver_cfg: dict[str, Any]) -> list[str]:
+def _render_transient(analysis: TransientAnalysis) -> str:
+    # Repeat the requested sample step as ngspice's explicit tmax.  This makes
+    # the numerical resolution independent of user/system `nostepsizelimit`
+    # settings and gives time-profile components a checkable upper bound.
+    return f"tran {analysis.step_s:g} {analysis.stop_s:g} 0 {analysis.step_s:g}"
+
+
+def _render_ac(sweep: AcSweep) -> str:
+    return f"ac {sweep.sweep} {sweep.points} {sweep.start_hz:g} {sweep.stop_hz:g}"
+
+
+def render_control_lines(request: AnalysisRequest, output_vector: str, probes: ProbePlan) -> list[str]:
+    """Render ngspice control syntax from solver-neutral request/probe types."""
+
+    voltage = output_vector if output_vector.strip().lower().startswith("v(") else f"v({output_vector})"
+    source_current = f"i({probes.source_name})"
+    transient_vectors = [voltage, source_current, *probes.transient_vectors]
+    ac_vectors = [probes.source_voltage_vector, source_current, voltage, *probes.ac_vectors]
+
+    saved: list[str] = []
+    if request.transient is not None:
+        saved.extend(transient_vectors)
+    if request.ac is not None:
+        saved.extend(ac_vectors)
+    saved = list(dict.fromkeys(saved))
+
+    lines = [
+        f".save {' '.join(saved)}",
+        ".control",
+        # Impedance divides voltage by current.  The default wrdata precision
+        # loses the small in-phase current of high-Q RF loads.
+        "set numdgt=15",
+    ]
+    if request.transient is not None:
+        lines += [_render_transient(request.transient), f"wrdata {WAVEFORM_FILE} time {' '.join(transient_vectors)}"]
+    if request.ac is not None:
+        lines += [_render_ac(request.ac), f"wrdata {AC_FILE} {' '.join(ac_vectors)}"]
+    lines += ["quit", ".endc", ".end"]
+    return lines
+
+
+def _header_lines(
+    circuit: Circuit,
+    params: dict[str, Any],
+    options: tuple[tuple[str, Any], ...],
+) -> list[str]:
     """`.param` for every design value, plus any `.options` the case sets."""
 
     lines = [
         f".param {name}={spice_value(value)}"
         for name, value in sorted({**circuit.params, **params}.items())
-        if should_emit_spice_param(str(name), value)
+        if should_emit_spice_param(name, value)
     ]
-    options = solver_cfg.get("options", {}) or {}
     if options:
-        lines.append(".options " + " ".join(f"{k}={v}" for k, v in options.items()))
+        lines.append(".options " + " ".join(f"{name}={value}" for name, value in options))
     return lines
 
 
-def _load_instance(case: Case, output_node: str) -> list[str]:
+def _load_instance(
+    output_node: str,
+    load_current_column: str | None,
+    measurement: MeasurementReference,
+) -> list[str]:
     """Wire the load subcircuit in, optionally through an ammeter.
 
     `measurement.load_current: auto` inserts a zero-volt source in series with
@@ -329,9 +540,9 @@ def _load_instance(case: Case, output_node: str) -> list[str]:
     also carries whatever the matching network's shunt elements draw.
     """
 
-    ports = (case.data.get("load", {}) or {}).get("ports", {}) or {}
-    p, n = str(ports.get("p", output_node)), str(ports.get("n", "0"))
-    if load_current(case) != LOAD_CURRENT:
+    p = measurement.load_positive or output_node
+    n = measurement.load_negative
+    if load_current_column != LOAD_CURRENT_COLUMN:
         return [f"Xload {p} {n} load_model"]
     metered = f"{p}_metered"
     return [f"{LOAD_AMMETER} {p} {metered} DC 0", f"Xload {metered} {n} load_model"]

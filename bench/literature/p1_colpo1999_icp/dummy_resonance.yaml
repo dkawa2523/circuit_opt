@@ -13,7 +13,7 @@ circuit:
   builder: from_yaml
   output_node: port
   components:
-    - {raw: "Rfixture src port 1e-6"}
+    - {ref: Rfixture, n1: src, n2: port, value: 1e-6}
 
 load:
   name: from_yaml
@@ -24,10 +24,10 @@ load:
     doi: 10.1063/1.369268
     figures: [7, 8]
   components:
-    - {raw: "Lsection1 p middle 8.5e-6"}
-    - {raw: "Csection1 p middle 60e-12"}
-    - {raw: "Lsection2 middle n 1.5e-6"}
-    - {raw: "Csection2 middle n 43e-12"}
+    - {ref: Lsection1, n1: p, n2: middle, value: 8.5e-6}
+    - {ref: Csection1, n1: p, n2: middle, value: 60e-12}
+    - {ref: Lsection2, n1: middle, n2: n, value: 1.5e-6}
+    - {ref: Csection2, n1: middle, n2: n, value: 43e-12}
 
 solver:
   name: ngspice_cli

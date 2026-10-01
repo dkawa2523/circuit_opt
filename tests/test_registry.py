@@ -143,10 +143,8 @@ def test_an_absolute_plugin_path_is_used_as_given(tmp_path):
 
 
 def test_application_registries_are_separate_and_complete():
-
     assert set(sim_registry.available()) == {"circuit", "load", "solver"}
     assert "ngspice_cli" in sim_registry.available()["solver"]
     assert "dummy" not in sim_registry.available()["solver"]
     assert "waveform_l2" in metric_registry.available()
-    assert "random" in search_registry.available()
-    assert "grid" in search_registry.available()
+    assert set(search_registry.available()) == {"differential_evolution", "grid", "random"}

@@ -1,8 +1,8 @@
 """Shared fixtures.
 
-The platform's own artifacts (``case.yaml``, ``sim_manifest.json``,
-``waveform.csv``) are the real fixtures, so these helpers only build minimal
-valid instances of them.
+The platform's own artifacts (``summary.json``, ``data/``, and ``debug/``) are
+the real fixtures, so these helpers only build minimal valid instances of
+them.
 """
 
 from __future__ import annotations

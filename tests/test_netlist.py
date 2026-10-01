@@ -21,6 +21,7 @@ from pcd.netlist import (
     select_circuit_name,
     select_load_name,
 )
+from pcd.simulation_input import resolve_simulation_case
 
 EX = Path(__file__).resolve().parents[1] / "examples"
 
@@ -40,6 +41,12 @@ def test_an_output_node_with_no_component_is_flagged():
     circuit = Circuit(output_node="electrode")
     circuit.add("R1", "src", "out", 50)
     assert any("electrode" in w for w in circuit.warnings())
+
+
+def test_imported_topology_does_not_claim_that_output_is_absent():
+    circuit = Circuit(output_node="out")
+    circuit.preamble_raw("R1 src out 1k")
+    assert not any("output_node" in warning for warning in circuit.warnings())
 
 
 def test_a_raw_line_is_emitted_verbatim():
@@ -155,7 +162,8 @@ def test_only_the_measured_source_excites_an_ac_analysis(make_case):
         }
     )
 
-    lines = render_source(case, {}, ac_enabled=True)
+    active_source = resolve_simulation_case(case).probes.source_name
+    lines = render_source(case, {}, active_source=active_source)
     assert lines[0].endswith("AC 0")
     assert lines[1].endswith("AC 4 0")
 
@@ -194,7 +202,7 @@ def test_a_case_without_a_load_emits_no_subcircuit(rc_case):
     params = default_params(rc_case)
     _, circuit = build_circuit(rc_case, params)
     load_name, subckt = build_load_subckt(rc_case, params)
-    text = render_ngspice_netlist(rc_case, circuit, subckt, params)
+    text = render_ngspice_netlist(rc_case, circuit, subckt, params, resolve_simulation_case(rc_case, params))
 
     assert load_name == "none"
     assert "Xload" not in text
@@ -205,7 +213,7 @@ def test_a_case_without_a_load_emits_no_subcircuit(rc_case):
 def test_the_netlist_carries_params_and_the_transient_block(rc_case):
     params = default_params(rc_case)
     _, circuit = build_circuit(rc_case, params)
-    text = render_ngspice_netlist(rc_case, circuit, "", params)
+    text = render_ngspice_netlist(rc_case, circuit, "", params, resolve_simulation_case(rc_case, params))
 
     assert ".param R1=1000" in text
     assert ".control" in text
@@ -218,7 +226,7 @@ def _render(case):
     params = default_params(case)
     _, circuit = build_circuit(case, params)
     _, subckt = build_load_subckt(case, params)
-    return render_ngspice_netlist(case, circuit, subckt, params)
+    return render_ngspice_netlist(case, circuit, subckt, params, resolve_simulation_case(case, params))
 
 
 def test_a_load_subcircuit_is_instantiated_at_its_ports(topology_case):
@@ -249,7 +257,7 @@ def test_an_impedance_point_emits_the_single_frequency_equivalent():
     params = default_params(case)
     _, circuit = build_circuit(case, params)
     _, subckt = build_load_subckt(case, params)
-    text = render_ngspice_netlist(case, circuit, subckt, params)
+    text = render_ngspice_netlist(case, circuit, subckt, params, resolve_simulation_case(case, params))
 
     assert "load model: impedance_point" in text
     assert "exact at 13560000 Hz" in text
@@ -297,7 +305,7 @@ def test_one_frequency_drives_source_load_and_ac_from_the_same_scenario_value(ma
     params = {"rf_frequency_Hz": 27.12e6, "load_R": 32.0, "load_X": 45.0}
     _, circuit = build_circuit(case, params)
     _, load = build_load_subckt(case, params)
-    text = render_ngspice_netlist(case, circuit, load, params)
+    text = render_ngspice_netlist(case, circuit, load, params, resolve_simulation_case(case, params))
 
     assert "SIN(0 1 27120000" in text
     assert "exact at 27120000 Hz" in text

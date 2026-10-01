@@ -13,14 +13,18 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 
 import pcd.sim_core as sim_core_module
 import pcd.solver as solver_module
 from pcd.case import load_case
 from pcd.metrics import measure_record
+from pcd.records import artifact_path
 from pcd.sim_core import prepare_case, simulate_case
 from pcd.sim_registry import available as sim_available
-from pcd.solver import SimulationResult
+from pcd.sim_registry import register_solver
+from pcd.simulation import SimulationResult
+from pcd.simulation_input import SolverRunRequest
 
 EX = Path(__file__).resolve().parents[1] / "examples" / "advanced"
 
@@ -31,11 +35,13 @@ EX = Path(__file__).resolve().parents[1] / "examples" / "advanced"
 def test_simulation_writes_artifacts_but_never_metrics(tmp_path, rc_case):
     rec = simulate_case(rc_case, run_root=tmp_path, solver_override="test_fake")
     assert rec.status == "ok"
-    assert (rec.run_dir / "waveform.csv").exists()
-    assert (rec.run_dir / "netlist.cir").exists()
+    assert (rec.run_dir / rec.waveform_file).exists()
+    assert (rec.run_dir / rec.netlist_file).exists()
+    assert {path.name for path in rec.run_dir.iterdir()} == {"summary.json", "data", "debug"}
 
     manifest = rec.manifest()
     assert manifest["schema"] == "simulation_record.v2"
+    assert rec.summary()["schema"] == "simulation_summary.v1"
     assert not (rec.run_dir / "metrics.json").exists()
 
     metrics = measure_record(rc_case, manifest)
@@ -53,20 +59,59 @@ def test_common_simulation_layer_persists_a_custom_solver_ac_result(tmp_path, rc
             frequency_response=response,
         )
 
-    monkeypatch.setattr(sim_core_module, "get_sim_method", lambda _kind, _name: custom_solver)
+    monkeypatch.setattr(sim_core_module, "invoke_solver", custom_solver)
     record = simulate_case(rc_case, run_root=tmp_path, solver_override="custom_ac")
 
-    assert record.frequency_response_file == "ac.csv"
-    pd.testing.assert_frame_equal(pd.read_csv(record.run_dir / "ac.csv"), response)
+    assert record.frequency_response_file == "data/ac.csv"
+    pd.testing.assert_frame_equal(pd.read_csv(record.run_dir / record.frequency_response_file), response)
+
+
+def test_a_typed_solver_receives_no_case_dictionary(tmp_path, rc_case):
+    observed = []
+
+    @register_solver("test_typed_request")
+    def typed_solver(request: SolverRunRequest) -> SimulationResult:
+        observed.append(request)
+        return SimulationResult(
+            time_s=np.asarray([0.0]),
+            voltage_V=np.asarray([0.0]),
+            current_A=np.asarray([0.0]),
+        )
+
+    record = simulate_case(rc_case, run_root=tmp_path, solver_override="test_typed_request")
+
+    assert record.status == "ok"
+    assert len(observed) == 1
+    assert observed[0].simulation.solver.name == "test_typed_request"
+    assert observed[0].netlist_path == record.run_dir / record.netlist_file
+
+
+def test_the_normal_run_resolves_solver_input_once(tmp_path, rc_case, monkeypatch):
+    real_resolve = sim_core_module.resolve_simulation_case
+    calls = []
+
+    def counted_resolve(*args, **kwargs):
+        calls.append((args, kwargs))
+        return real_resolve(*args, **kwargs)
+
+    monkeypatch.setattr(sim_core_module, "resolve_simulation_case", counted_resolve)
+    record = simulate_case(rc_case, run_root=tmp_path, solver_override="test_fake")
+
+    assert record.status == "ok"
+    assert len(calls) == 1
 
 
 def test_preparing_a_case_writes_everything_except_the_waveform(tmp_path, rc_case):
     rec = prepare_case(rc_case, run_root=tmp_path)
     assert rec.status == "prepared"
-    assert (rec.run_dir / "netlist.cir").exists()
-    assert (rec.run_dir / "case.yaml").exists()
-    assert json.loads((rec.run_dir / "params.json").read_text(encoding="utf-8"))["R1"] == 1000
-    assert "prepared only" in (rec.run_dir / "solver.log").read_text(encoding="utf-8")
+    assert (rec.run_dir / rec.netlist_file).exists()
+    archived_case = artifact_path(rec.manifest(), "case")
+    assert archived_case is not None
+    assert archived_case.is_file()
+    assert rec.manifest()["params"]["R1"] == 1000
+    assert not list(rec.run_dir.rglob("params.json")), "parameters belong in the debug manifest only"
+    assert "prepared only" in (rec.run_dir / rec.solver_log_file).read_text(encoding="utf-8")
+    assert rec.solver == "ngspice_cli"
 
 
 def test_registries_expose_the_documented_methods():
@@ -133,20 +178,45 @@ def test_provenance_records_the_resolved_solver(tmp_path, rc_case, monkeypatch):
 # --- failure handling ------------------------------------------------------
 
 
-def test_a_failed_simulation_still_leaves_a_complete_record(tmp_path, rc_case):
-    """A solver failure must not lose the observation record."""
+def test_a_solver_reported_failure_still_leaves_a_complete_record(tmp_path, rc_case, monkeypatch):
+    """An expected solver failure must not lose the observation record."""
 
-    rec = simulate_case(rc_case, run_root=tmp_path, solver_override="does_not_exist")
+    failed = SimulationResult(
+        time_s=np.asarray([0.0]),
+        voltage_V=np.asarray([np.nan]),
+        current_A=np.asarray([np.nan]),
+        status="failed",
+        log="convergence failed",
+        diagnostics={"returncode": 1},
+    )
+    monkeypatch.setattr(sim_core_module, "invoke_solver", lambda *_args: failed)
+    rec = simulate_case(rc_case, run_root=tmp_path, solver_override="test_failed_solver")
     assert rec.status == "failed"
-    assert rec.error
-    assert (rec.run_dir / "waveform.csv").exists()
-    assert (rec.run_dir / "params.json").exists()
-    assert (rec.run_dir / "case.yaml").exists()
-    assert any("simulation exception" in w for w in rec.warnings)
+    assert (rec.run_dir / rec.waveform_file).exists()
+    assert not list(rec.run_dir.rglob("params.json"))
+    archived_case = artifact_path(rec.manifest(), "case")
+    assert archived_case is not None
+    assert archived_case.is_file()
+    assert rec.diagnostics == {"returncode": 1}
+    assert "solver status: failed" in rec.warnings
 
 
-def test_a_failure_during_preparation_is_also_recorded(tmp_path, make_case):
-    """An unknown load fails before a netlist exists."""
+def test_an_unexpected_solver_exception_propagates_and_leaves_prepared_state(tmp_path, rc_case, monkeypatch):
+    def broken_solver(*_args):
+        raise RuntimeError("solver adapter bug")
+
+    monkeypatch.setattr(sim_core_module, "invoke_solver", broken_solver)
+    with pytest.raises(RuntimeError, match="solver adapter bug"):
+        simulate_case(rc_case, run_root=tmp_path, solver_override="test_broken_solver")
+
+    summaries = list(tmp_path.rglob("summary.json"))
+    assert len(summaries) == 1
+    assert json.loads(summaries[0].read_text(encoding="utf-8"))["status"] == "prepared"
+    assert not list(tmp_path.rglob("data/transient.csv"))
+
+
+def test_a_failure_during_preparation_propagates_without_a_fake_result(tmp_path, make_case):
+    """An unknown load is invalid input, not a simulation observation."""
 
     case = make_case(
         {
@@ -157,12 +227,26 @@ def test_a_failure_during_preparation_is_also_recorded(tmp_path, make_case):
             "solver": {"name": "test_fake", "tran": {"step_s": 1e-9, "stop_s": 1e-7}},
         }
     )
-    rec = simulate_case(case, run_root=tmp_path / "runs", solver_override="test_fake")
-    assert rec.status == "failed"
-    assert rec.circuit == "unknown"
-    assert (rec.run_dir / "sim_manifest.json").exists()
-    assert (rec.run_dir / "waveform.csv").exists()
-    assert list((tmp_path / "runs").iterdir()) == [rec.run_dir]
+    run_root = tmp_path / "runs"
+    with pytest.raises(KeyError, match="definitely_unknown"):
+        simulate_case(case, run_root=run_root, solver_override="test_fake")
+    assert not run_root.exists()
+
+
+def test_invalid_analysis_input_is_rejected_before_a_run_directory_is_created(tmp_path, make_case):
+    case = make_case(
+        {
+            "case_id": "invalid_analysis",
+            "source": {"type": "sine_voltage"},
+            "solver": {"timeout_s": 0, "tran": {"step_s": 1e-9, "stop_s": 1e-7}},
+        }
+    )
+    run_root = tmp_path / "runs"
+
+    with pytest.raises(ValueError, match="timeout_s"):
+        simulate_case(case, run_root=run_root, solver_override="test_fake")
+
+    assert not run_root.exists()
 
 
 def test_run_directory_collisions_are_resolved(tmp_path):

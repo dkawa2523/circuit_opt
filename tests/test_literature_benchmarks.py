@@ -5,7 +5,10 @@ import yaml
 from bench.literature.p0_lee2021_bias.run import _table_spice_netlist
 from bench.literature.p1_colpo1999_icp.digitized.run_uncertainty_challenge import _decision_stability
 from bench.literature.p1_gec_ccp.run_all32_benchmark import run as run_hargis_source
-from bench.literature.p1_gec_ccp.run_hardware_family_comparison import _materialize_family_case
+from bench.literature.p1_gec_ccp.run_hardware_family_comparison import (
+    _candidate_summary,
+    _materialize_family_case,
+)
 from pcd.case import load_case
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -53,6 +56,57 @@ def test_hargis_hardware_comparison_generates_a_valid_exact_candidate_case(tmp_p
     assert case.resolved_plan is not None
     assert case.resolved_plan["execution"]["optimizer"] == "grid"
     assert case.resolved_plan["execution"]["trials"] == len(spec["candidate_L1_H"])
+
+
+def test_hargis_hardware_summary_uses_the_flat_evaluation_table() -> None:
+    candidate = {
+        "design.L1": 1.5e-6,
+        "success_fraction": 1.0,
+        "control_margin": 0.5,
+    }
+    evaluations = [
+        {
+            "scenario_id": "a",
+            "selected_control": True,
+            "status": "ok",
+            "feasible": True,
+            "metric.reflection_magnitude": 0.1,
+            "control.C1": 2.0,
+            "control.C2": 20.0,
+        },
+        {
+            "scenario_id": "a",
+            "selected_control": False,
+            "status": "ok",
+            "feasible": False,
+            "metric.reflection_magnitude": 0.8,
+            "control.C1": 1.0,
+            "control.C2": 10.0,
+        },
+        {
+            "scenario_id": "b",
+            "selected_control": True,
+            "status": "ok",
+            "feasible": False,
+            "metric.reflection_magnitude": 0.4,
+            "control.C1": 1.0,
+            "control.C2": 20.0,
+        },
+    ]
+    metadata = {
+        "a": {"apparatus_group_MHz": "24"},
+        "b": {"apparatus_group_MHz": "34"},
+    }
+    controls = {"C1_F": [1.0, 2.0, 3.0], "C2_F": [10.0, 20.0, 30.0]}
+
+    summary = _candidate_summary(candidate, evaluations, metadata, controls, limit=0.5)
+
+    assert summary["scenario_count"] == 2
+    assert summary["feasible_scenarios"] == 1
+    assert summary["endpoint_scenarios"] == 1
+    assert summary["n_evaluations"] == 3
+    assert summary["minimum_control_margin"] == 0.5
+    assert summary["infeasible_scenarios"] == ["b"]
 
 
 def test_lee_metadata_and_plane_substitutions_are_explicit() -> None:

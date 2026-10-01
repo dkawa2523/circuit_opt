@@ -2,11 +2,11 @@
 
 ## Purpose
 
-The figure layer turns a frozen circuit-study result into diagrams that a
-third party can read without knowing the implementation. It does not perform
-simulation and it does not infer plasma physics. Benchmark-specific questions
-and data extraction remain in `bench/figures`; the reusable geometry and visual
-rules live in `pcd/figures`.
+The figure layer turns frozen circuit-study results into diagrams that a third
+party can read without knowing the implementation. It does not perform
+simulation, optimization, or plasma-state inference. Benchmark-specific
+questions and data extraction remain in `bench/figures`; the reusable geometry
+and visual rules live in `pcd/figures`.
 
 ```text
 frozen case + candidate + ngspice artifacts
@@ -104,8 +104,21 @@ P = 0.5 Re{V conj(I)}
 
 New AC simulations always save the declared output voltage in addition to
 source voltage/current. Optional load current remains available when the case
-requests it. Derived cycle samples are never written back to `waveform.csv`, so
+requests it. Derived cycle samples are never written back to `data/transient.csv`, so
 transient evidence and phasor reconstruction stay distinguishable.
+
+## Direct calculation-evidence pack
+
+`bench/figures/generate_calculation_evidence.py` is the compact evidence view
+for netlist execution, prescribed R(t), effective CCP/ICP terminal models, and
+target-waveform component optimization.  It reads the public CLI artifacts,
+and frozen core benchmark result without invoking a solver.
+Each numerical claim is a direct expected-versus-observed comparison; only the
+optimization page adds loss history and the complete finite design grid.
+
+This pack is separate from the broader core benchmark interpretation pack so
+the basic calculation proof does not inherit control-authority, stress, corner,
+or release-status panels that are unnecessary for that question.
 
 ## Minimal QA
 

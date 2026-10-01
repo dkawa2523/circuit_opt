@@ -41,11 +41,13 @@ dev = [
   "pytest>=7",
   "pytest-cov>=4.1",
   "hypothesis>=6.100",
+  "types-PyYAML>=6.0",
   "import-linter>=2.0",
   "bandit[toml]>=1.7.7",
   "pip-audit>=2.7",
   "detect-secrets>=1.5",
   "vulture>=2.11",
+  "radon>=6.0,<7",
 ]
 
 # -----------------------------------------------------------------------------

@@ -19,9 +19,11 @@ from pcd.core import (
 from pcd.core.aggregation import (
     aggregate_candidate,
     aggregate_objective,
+    candidate_is_pareto_eligible,
     candidate_rank_key,
     control_margin,
     evaluation_rank_key,
+    pareto_front,
 )
 
 
@@ -211,3 +213,64 @@ def test_candidate_order_uses_worst_control_margin_only_after_objectives():
 
     assert candidate_rank_key(study, centered) < candidate_rank_key(study, endpoint)
     assert candidate_rank_key(study, better_objective_at_edge) < candidate_rank_key(study, centered)
+
+
+def test_pareto_front_uses_declared_directions_and_only_complete_feasible_evidence():
+    scenario = Scenario("nominal")
+    study = StudySpec(
+        "tradeoff",
+        scenarios=(scenario,),
+        objectives=(Objective("error"), Objective("efficiency", direction="maximize")),
+    )
+
+    def candidate_result(
+        candidate_id: str,
+        error: float,
+        efficiency: float,
+        *,
+        feasible: bool = True,
+        failed_alternative: bool = False,
+    ) -> CandidateResult:
+        candidate = Candidate(candidate_id)
+        selected = EvaluationResult(
+            EvaluationRequest(candidate, scenario, ControlState({"tune": 0})),
+            RawResult("ok"),
+            MetricSet({"error": error, "efficiency": efficiency}),
+            (ConstraintResult("limit", feasible, 0.0 if feasible else 1.0),),
+        )
+        trials = [selected]
+        if failed_alternative:
+            trials.append(
+                EvaluationResult(
+                    EvaluationRequest(candidate, scenario, ControlState({"tune": 1})),
+                    RawResult("failed", error="solver failed"),
+                    MetricSet(),
+                    (ConstraintResult("evaluation_success", False, 1.0),),
+                )
+            )
+        return CandidateResult(
+            candidate,
+            (ScenarioResult(scenario, selected, tuple(trials)),),
+            {"error": error, "efficiency": efficiency},
+            feasible_fraction=1.0 if feasible else 0.0,
+            success_fraction=1.0,
+            total_violation=0.0 if feasible else 1.0,
+        )
+
+    low_error = candidate_result("low-error", 1.0, 0.5)
+    high_efficiency = candidate_result("high-efficiency", 2.0, 0.8)
+    same_tradeoff = candidate_result("same-tradeoff", 2.0, 0.8)
+    dominated = candidate_result("dominated", 3.0, 0.7)
+    incomplete = candidate_result("incomplete", 0.5, 0.9, failed_alternative=True)
+    infeasible = candidate_result("infeasible", 0.2, 1.0, feasible=False)
+
+    assert candidate_is_pareto_eligible(study, low_error)
+    assert not candidate_is_pareto_eligible(study, incomplete)
+    assert not candidate_is_pareto_eligible(study, infeasible)
+    assert [
+        item.candidate.candidate_id
+        for item in pareto_front(
+            study,
+            (low_error, high_efficiency, same_tradeoff, dominated, incomplete, infeasible),
+        )
+    ] == ["low-error", "high-efficiency", "same-tradeoff"]

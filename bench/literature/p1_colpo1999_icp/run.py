@@ -6,9 +6,10 @@ import math
 from pathlib import Path
 from typing import Any
 
-from pcd.analysis import at_frequency, input_impedance, read_ac
+from pcd.analysis import at_frequency, input_impedance
 from pcd.artifacts import write_json
 from pcd.case import load_case
+from pcd.ngspice_io import read_frequency_response
 from pcd.sim_core import simulate_case
 
 HERE = Path(__file__).resolve().parent
@@ -87,7 +88,9 @@ def run(run_root: Path) -> dict[str, Any]:
     if resonance_record.status != "ok" or resonance_record.frequency_response_file is None:
         raise RuntimeError(f"dummy resonance simulation failed: {resonance_record.warnings}")
 
-    response = input_impedance(read_ac(resonance_record.run_dir / resonance_record.frequency_response_file))
+    response = input_impedance(
+        read_frequency_response(resonance_record.run_dir / resonance_record.frequency_response_file)
+    )
     frequency = response["frequency_Hz"].astype(float).tolist()
     reactance = response["reactance_ohm"].astype(float).tolist()
     analytic = analytic_resonances()
@@ -121,7 +124,9 @@ def run(run_root: Path) -> dict[str, Any]:
     )
     if graphite_record.status != "ok" or graphite_record.frequency_response_file is None:
         raise RuntimeError(f"graphite dummy simulation failed: {graphite_record.warnings}")
-    graphite_response = input_impedance(read_ac(graphite_record.run_dir / graphite_record.frequency_response_file))
+    graphite_response = input_impedance(
+        read_frequency_response(graphite_record.run_dir / graphite_record.frequency_response_file)
+    )
     graphite_row = at_frequency(graphite_response, 13.56e6)
     graphite_actual = complex(float(graphite_row["resistance_ohm"]), float(graphite_row["reactance_ohm"]))
     graphite_expected = complex(1.26, 57.0)

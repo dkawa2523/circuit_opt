@@ -79,16 +79,19 @@ def _saved_waveform_record(tmp_path: Path, frame: pd.DataFrame, name: str = "run
     """Persist the same artifact shape produced by simulation, without a fake importer API."""
 
     run_dir = tmp_path / name
-    run_dir.mkdir(parents=True)
-    frame.to_csv(run_dir / "waveform.csv", index=False)
+    data_dir = run_dir / "data"
+    debug_dir = run_dir / "debug"
+    data_dir.mkdir(parents=True)
+    debug_dir.mkdir()
+    frame.to_csv(data_dir / "transient.csv", index=False)
     record = {
         "schema": "simulation_record.v2",
         "run_dir": str(run_dir),
         "status": "ok",
         "params": {},
-        "artifacts": {"waveform": "waveform.csv"},
+        "artifacts": {"waveform": "data/transient.csv"},
     }
-    (run_dir / "sim_manifest.json").write_text(json.dumps(record), encoding="utf-8")
+    (debug_dir / "manifest.json").write_text(json.dumps(record), encoding="utf-8")
     return record
 
 
@@ -123,9 +126,9 @@ def test_the_objective_ignores_waveform_row_order(tmp_path, rc_case):
 
 
 def test_a_failed_record_is_not_measured_as_a_fake_large_loss(tmp_path, topology_case):
-    (tmp_path / "sim_manifest.json").write_text(
-        json.dumps({"run_dir": str(tmp_path), "status": "failed"}), encoding="utf-8"
-    )
+    debug = tmp_path / "debug"
+    debug.mkdir()
+    (debug / "manifest.json").write_text(json.dumps({"run_dir": str(tmp_path), "status": "failed"}), encoding="utf-8")
     with pytest.raises(ValueError, match="status 'failed'"):
         measure_record(topology_case, tmp_path)
 
@@ -199,7 +202,7 @@ def test_proposing_candidates_never_touches_the_simulation_layer(tmp_path, topol
     frame = _candidate_frame(topology_case, n=5, seed=1)
     assert len(frame) == 5
     assert {"topology_choice", "load_model"} <= set(frame.columns)
-    assert list(tmp_path.rglob("sim_manifest.json")) == []
+    assert list(tmp_path.rglob("debug/manifest.json")) == []
 
 
 def test_the_same_seed_reproduces_the_same_candidates(topology_case):
@@ -369,10 +372,12 @@ def test_the_voltage_constraint_marks_only_an_overshoot_infeasible(make_case):
     within = constraint.evaluate(request, raw, MetricSet({"peak_abs_voltage_V": 90.0}))
     assert within.satisfied
     assert within.violation == 0.0
+    assert within.margin == pytest.approx(10.0)
 
     over = constraint.evaluate(request, raw, MetricSet({"peak_abs_voltage_V": 200.0}))
     assert not over.satisfied
     assert over.violation == pytest.approx(1.0)
+    assert over.margin == pytest.approx(-100.0)
 
 
 def test_no_declared_constraint_means_no_constraint(make_case):
@@ -407,7 +412,9 @@ def test_metric_bounds_define_engineering_feasibility_without_changing_the_objec
     failing = MetricSet({"reflection_magnitude": 0.5, "delivered_power_W": 80.0})
     results = {item.name: item.evaluate(request, RawResult("ok"), failing) for item in constraints}
     assert results["max_reflection_magnitude"].violation > 0.0
+    assert results["max_reflection_magnitude"].margin == pytest.approx(0.316227766 - 0.5)
     assert results["min_delivered_power_W"].violation == pytest.approx(0.2)
+    assert results["min_delivered_power_W"].margin == pytest.approx(-20.0)
 
 
 def test_a_missing_bounded_metric_is_infeasible(make_case):
@@ -506,3 +513,79 @@ def test_grid_optimizer_reports_completion_and_best_result(make_case):
     assert state["complete"] is True
     assert state["n_points"] == 2
     assert state["best"]["params"] == {"C1": 2.0}
+
+
+# --- bounded continuous search --------------------------------------------
+
+
+def _evolution_trace(case, seed: int, trials: int) -> list[tuple[dict, dict]]:
+    optimizer = create_optimizer(case, optimizer_name="differential_evolution", seed=seed)
+    trace = []
+    for _index in range(trials):
+        params = optimizer.ask()
+        loss = (float(params["x"]) - 1.25) ** 2 + (np.log10(float(params["gain"])) - 1.0) ** 2
+        optimizer.tell(params, {"rank": (0.0, 0.0, 0.0, 0.0, loss), "loss": loss})
+        trace.append((params, optimizer.proposal_metadata()))
+    return trace
+
+
+def test_differential_evolution_is_seeded_bounded_and_traceable(make_case):
+    case = make_case(
+        {
+            "case_id": "continuous",
+            "run": {"trials": 16},
+            "variables": {
+                "x": {"bounds": [-5.0, 5.0], "default": 2.0},
+                "gain": {"bounds": [1.0, 100.0], "scale": "log", "default": 10.0},
+                "fixed": {"choices": ["pi"], "default": "pi"},
+            },
+        }
+    )
+
+    first = _evolution_trace(case, seed=17, trials=16)
+    second = _evolution_trace(case, seed=17, trials=16)
+
+    assert first == second
+    assert first[0][0] == {"x": 2.0, "gain": 10.0, "fixed": "pi"}
+    assert all(-5.0 <= row[0]["x"] <= 5.0 and 1.0 <= row[0]["gain"] <= 100.0 for row in first)
+    assert first[0][1] == {"phase": "initialization", "generation": 0, "population_index": 0, "accepted": True}
+    assert first[8][1]["phase"] == "evolution"
+    assert first[8][1]["strategy"] == "DE/rand/1/bin"
+    assert len(first[8][1]["parents"]) == 3
+
+
+def test_differential_evolution_uses_feasibility_first_replacement(make_case):
+    case = make_case(
+        {
+            "case_id": "constrained",
+            "run": {"trials": 8},
+            "variables": {"x": {"bounds": [-2.0, 2.0], "default": 0.0}},
+        }
+    )
+    optimizer = create_optimizer(case, optimizer_name="differential_evolution", seed=3)
+    for index in range(4):
+        params = optimizer.ask()
+        rank = (1.0, 0.0, 1.0, 1.0, 0.0) if index == 0 else (0.0, 0.0, 0.0, 0.0, 10.0)
+        optimizer.tell(params, {"rank": rank})
+
+    child = optimizer.ask()
+    optimizer.tell(child, {"rank": (0.0, 0.0, 0.0, 0.0, 1000.0)})
+
+    assert optimizer.proposal_metadata()["population_index"] == 0
+    assert optimizer.proposal_metadata()["accepted"] is True
+
+
+def test_differential_evolution_rejects_incomplete_or_discrete_spaces(make_case):
+    too_small = make_case({"case_id": "small", "run": {"trials": 7}, "variables": {"x": {"bounds": [0.0, 1.0]}}})
+    with pytest.raises(ValueError, match="need at least 8"):
+        create_optimizer(too_small, optimizer_name="differential_evolution")
+
+    discrete = make_case(
+        {
+            "case_id": "discrete",
+            "run": {"trials": 8},
+            "variables": {"x": {"bounds": [0.0, 1.0]}, "topology": {"choices": ["l", "pi"]}},
+        }
+    )
+    with pytest.raises(ValueError, match="declares 2 choices"):
+        create_optimizer(discrete, optimizer_name="differential_evolution")

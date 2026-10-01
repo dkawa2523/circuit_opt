@@ -12,57 +12,18 @@ optimizer keeps collecting observations instead of aborting the run.
 from __future__ import annotations
 
 import hashlib
-import math
 import shutil
 import subprocess
 import sys
-from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 import numpy as np
-import pandas as pd
 
-from .analysis import AC_FILE, AC_LOAD_VOLTAGE, ac_probe_plan, ac_sweep, probe_plan, read_ac, transient_requested
-from .case import Case
-
-DEFAULT_TIMEOUT_S = 300.0
-
-
-@dataclass
-class SimulationResult:
-    """What every solver returns."""
-
-    time_s: np.ndarray
-    voltage_V: np.ndarray
-    current_A: np.ndarray | None = None
-    status: str = "ok"
-    log: str = ""
-    diagnostics: dict[str, Any] = field(default_factory=dict)
-    #: Frequency response, when the case asked for an AC sweep.
-    frequency_response: pd.DataFrame | None = None
-    #: Extra vectors the case asked for, keyed by the column name to store them under.
-    probes: dict[str, np.ndarray] = field(default_factory=dict)
-
-    def as_frame(self) -> pd.DataFrame:
-        """The boundary artifact.
-
-        The first three columns are the contract every consumer relies on.
-        Missing current is represented by NaN rather than physical zero;
-        probes are appended under their own names, so recording one more cannot
-        break a reader that selects by name.
-        """
-
-        current = (
-            self.current_A
-            if self.current_A is not None
-            else np.full(np.asarray(self.time_s).shape, np.nan, dtype=float)
-        )
-        frame = pd.DataFrame({"time_s": self.time_s, "voltage_V": self.voltage_V, "current_A": current})
-        for name, values in self.probes.items():
-            frame[name] = values
-        return frame
+from .ngspice_io import read_frequency_response, read_transient_output
+from .simulation import AC_FILE, AC_LOAD_VOLTAGE_COLUMN, WAVEFORM_FILE, SimulationResult, TransientAnalysis
+from .simulation_input import DEFAULT_SOLVER_TIMEOUT_S, SolverRunRequest, SolverSettings
 
 
 def _failed(log: str, diagnostics: dict[str, Any]) -> SimulationResult:
@@ -85,15 +46,6 @@ def default_ngspice_executable() -> str:
     return "ngspice"
 
 
-def solver_timeout_s(case: Case) -> float:
-    raw = (case.data.get("solver", {}) or {}).get("timeout_s", DEFAULT_TIMEOUT_S)
-    try:
-        timeout = float(raw)
-    except (TypeError, ValueError):
-        return DEFAULT_TIMEOUT_S
-    return timeout if math.isfinite(timeout) and timeout > 0 else DEFAULT_TIMEOUT_S
-
-
 @lru_cache(maxsize=16)
 def _solver_version_cached(resolved_executable: str, size: int, mtime_ns: int) -> str | None:
     """Read a version once for a particular installed solver binary."""
@@ -103,7 +55,7 @@ def _solver_version_cached(resolved_executable: str, size: int, mtime_ns: int) -
         completed = subprocess.run(
             [resolved_executable, "--version"], text=True, capture_output=True, check=False, timeout=5
         )
-    except Exception:
+    except (OSError, subprocess.SubprocessError):
         return None
     text = (completed.stdout or completed.stderr or "").strip()
     if not text:
@@ -168,30 +120,30 @@ def _solver_binary_identity(resolved: str | None) -> dict[str, Any]:
     }
 
 
-def solver_identity(case: Case, solver_name: str | None = None) -> dict[str, Any]:
+def solver_identity(settings: SolverSettings) -> dict[str, Any]:
     """Return the solver facts that affect execution and cache reuse."""
 
-    cfg = case.data.get("solver", {}) or {}
-    name = str(solver_name or cfg.get("name", "ngspice_cli"))
-    if "executable" in cfg:
-        executable = str(cfg["executable"])
-    elif name == "ngspice_cli":
+    if settings.executable:
+        executable = settings.executable
+    elif settings.name == "ngspice_cli":
         executable = default_ngspice_executable()
     else:
         executable = None
     resolved = shutil.which(executable) if executable else None
     return {
-        "name": name,
+        "name": settings.name,
         "executable": executable,
         "resolved_executable": resolved,
         "version": solver_version(executable) if executable and resolved else None,
-        "timeout_s": solver_timeout_s(case),
+        "timeout_s": settings.timeout_s,
         **_solver_binary_identity(resolved),
     }
 
 
 def diagnose_solver(
-    solver_name: str = "ngspice_cli", executable: str | None = None, timeout_s: float = DEFAULT_TIMEOUT_S
+    solver_name: str = "ngspice_cli",
+    executable: str | None = None,
+    timeout_s: float = DEFAULT_SOLVER_TIMEOUT_S,
 ) -> dict[str, Any]:
     """Report whether a solver can actually run here, before a long batch."""
 
@@ -232,45 +184,6 @@ def _ngspice_diagnostic(executable: str | None) -> dict[str, Any]:
     }
 
 
-#: Older ngspice releases wrote a different number of columns for the same
-#: three vectors, so the standard layouts stay pinned by column count.
-_WRDATA_COLUMNS = {6: (0, 3, 5), 5: (0, 2, 4), 4: (0, 1, 3), 3: (0, 1, 2)}
-
-
-def parse_wrdata(path: str | Path, probe_names: list[str] | None = None) -> SimulationResult:
-    """Read an ngspice transient `wrdata` file.
-
-    ngspice writes every vector as a ``(scale, value)`` pair, so a file with
-    probes has two columns per vector and the values sit at the odd indices.
-    """
-
-    arr = np.loadtxt(path)
-    if arr.ndim == 1:
-        arr = arr.reshape(1, -1)
-    width = arr.shape[1]
-    if width == 2:
-        return SimulationResult(time_s=arr[:, 0], voltage_V=arr[:, 1], current_A=None)
-
-    names = probe_names or []
-    if names:
-        values = arr[:, 1::2]
-        expected = 3 + len(names)
-        if values.shape[1] < expected:
-            raise ValueError(f"expected {expected} vectors for probes {names}, found {values.shape[1]}: {path}")
-        return SimulationResult(
-            time_s=values[:, 0],
-            voltage_V=values[:, 1],
-            current_A=values[:, 2],
-            probes={name: values[:, 3 + k] for k, name in enumerate(names)},
-        )
-
-    layout = _WRDATA_COLUMNS.get(min(width, 6))
-    if layout is None:
-        raise ValueError(f"cannot parse wrdata output: {path}")
-    t, v, i = layout
-    return SimulationResult(time_s=arr[:, t], voltage_V=arr[:, v], current_A=arr[:, i])
-
-
 def _as_text(value: str | bytes | None) -> str:
     """``subprocess`` types stdout/stderr as bytes on TimeoutExpired even in text mode."""
 
@@ -279,10 +192,33 @@ def _as_text(value: str | bytes | None) -> str:
     return value if isinstance(value, str) else value.decode("utf-8", errors="replace")
 
 
-def ngspice_cli(netlist_path: str | Path, run_dir: str | Path, case: Case, params: dict[str, Any]) -> SimulationResult:
-    run_dir = Path(run_dir)
-    exe = str(case.data.get("solver", {}).get("executable") or default_ngspice_executable())
-    timeout = solver_timeout_s(case)
+def _transient_completion_failure(
+    result: SimulationResult,
+    requested: TransientAnalysis,
+) -> dict[str, Any] | None:
+    """Describe a partial transient left behind by an otherwise clean process exit."""
+
+    finite_time = np.asarray(result.time_s, dtype=float)
+    finite_time = finite_time[np.isfinite(finite_time)]
+    last_time_s = float(np.max(finite_time)) if finite_time.size else None
+    tolerance_s = max(requested.step_s * 1.01, requested.stop_s * 1e-9)
+    if last_time_s is not None and last_time_s >= requested.stop_s - tolerance_s:
+        return None
+    return {
+        "incomplete_transient": True,
+        "last_time_s": last_time_s,
+        "requested_stop_s": requested.stop_s,
+    }
+
+
+def ngspice_cli(request: SolverRunRequest) -> SimulationResult:
+    """Execute ngspice from an already resolved, solver-facing request."""
+
+    run_dir = request.run_dir
+    netlist_path = request.netlist_path
+    simulation = request.simulation
+    exe = simulation.solver.executable or default_ngspice_executable()
+    timeout = simulation.solver.timeout_s
     diagnostics: dict[str, Any] = {"executable": exe, "timeout_s": timeout}
 
     if shutil.which(exe) is None:
@@ -309,11 +245,12 @@ def ngspice_cli(netlist_path: str | Path, run_dir: str | Path, case: Case, param
     log += f"\nSTDOUT:\n{_as_text(completed.stdout)}\nSTDERR:\n{_as_text(completed.stderr)}"
     diagnostics["returncode"] = completed.returncode
 
-    solver_cfg = case.data.get("solver", {}) or {}
-    waveform = run_dir / "waveform.csv"
+    analysis = simulation.analysis
+    probes = simulation.probes
+    waveform = run_dir / WAVEFORM_FILE
     ac_path = run_dir / AC_FILE
-    missing_waveform = transient_requested(solver_cfg) and not waveform.exists()
-    missing_ac = ac_sweep(solver_cfg, params) is not None and not ac_path.exists()
+    missing_waveform = analysis.transient is not None and not waveform.exists()
+    missing_ac = analysis.ac is not None and not ac_path.exists()
     if completed.returncode != 0 or missing_waveform or missing_ac:
         return _failed(
             log,
@@ -324,16 +261,25 @@ def ngspice_cli(netlist_path: str | Path, run_dir: str | Path, case: Case, param
             },
         )
     try:
-        if waveform.exists() and transient_requested(solver_cfg):
-            result = parse_wrdata(waveform, probe_plan(case)[1])
+        if waveform.exists() and analysis.transient is not None:
+            result = read_transient_output(waveform, probes.transient_columns)
+            incomplete = _transient_completion_failure(result, analysis.transient)
+            if incomplete is not None:
+                detail = (
+                    "ngspice transient ended before the requested stop time: "
+                    f"last={incomplete['last_time_s']!r} s, requested={analysis.transient.stop_s:g} s"
+                )
+                return _failed(
+                    f"{log}\nPCD: {detail}\n",
+                    {**diagnostics, **incomplete},
+                )
         else:
             empty = np.array([], dtype=float)
             result = SimulationResult(time_s=empty, voltage_V=empty, current_A=empty)
-        if ac_path.exists() and ac_sweep(solver_cfg, params) is not None:
-            ac_columns = ac_probe_plan(case)[1]
-            extras = [AC_LOAD_VOLTAGE, *ac_columns]
-            result.frequency_response = read_ac(ac_path, extras)
-    except Exception as exc:
+        if ac_path.exists() and analysis.ac is not None:
+            extras = [AC_LOAD_VOLTAGE_COLUMN, *probes.ac_columns]
+            result.frequency_response = read_frequency_response(ac_path, extras)
+    except (OSError, ValueError) as exc:
         return _failed(log, {**diagnostics, "parse_error": f"{type(exc).__name__}: {exc}"})
     result.log = log
     result.diagnostics.update(diagnostics)

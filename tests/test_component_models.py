@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import pytest
 
-from pcd.analysis import ac_probe_plan, probe_plan
 from pcd.case import default_params
 from pcd.component_models import observed_components, series_resistance_ohm
 from pcd.netlist import build_circuit, build_load_subckt, render_ngspice_netlist
+from pcd.simulation_input import build_probe_plan, resolve_simulation_case
 
 
 def _observed_case(make_case):
@@ -48,7 +48,7 @@ def test_structured_component_expands_to_meter_loss_and_core(make_case):
     params = default_params(case)
     _, circuit = build_circuit(case, params)
     _, load = build_load_subckt(case, params)
-    netlist = render_ngspice_netlist(case, circuit, load, params)
+    netlist = render_ngspice_netlist(case, circuit, load, params, resolve_simulation_case(case, params))
 
     assert "Vobserve_L1 src observe_L1_meter DC 0" in netlist
     assert "Rloss_L1 observe_L1_meter observe_L1_core 0.5" in netlist
@@ -59,14 +59,13 @@ def test_structured_component_expands_to_meter_loss_and_core(make_case):
 
 def test_component_observation_names_are_shared_by_ac_and_transient(make_case):
     case = _observed_case(make_case)
-    transient_vectors, transient_names = probe_plan(case)
-    ac_vectors, ac_names = ac_probe_plan(case)
+    probes = build_probe_plan(case)
 
     expected = ["component_L1_voltage_V", "component_L1_current_A", "load_current_A"]
-    assert ac_names == expected
-    assert transient_names[:3] == expected
-    assert ac_vectors == ["v(src,load)", "i(Vobserve_L1)", "i(Vload_meter)"]
-    assert transient_vectors[-1] == "v(src)"
+    assert list(probes.ac_columns) == expected
+    assert list(probes.transient_columns[:3]) == expected
+    assert list(probes.ac_vectors) == ["v(src,load)", "i(Vobserve_L1)", "i(Vload_meter)"]
+    assert probes.transient_vectors[-1] == "v(src)"
 
 
 def test_named_user_probes_keep_friendly_artifact_columns(make_case):
@@ -77,9 +76,9 @@ def test_named_user_probes_keep_friendly_artifact_columns(make_case):
             "measurement": {"probes": {"mid_voltage_V": "v(mid)", "branch_current_A": "i(Vsense)"}},
         }
     )
-    vectors, names = probe_plan(case)
-    assert vectors[:2] == ["v(mid)", "i(Vsense)"]
-    assert names[:2] == ["mid_voltage_V", "branch_current_A"]
+    probes = build_probe_plan(case)
+    assert list(probes.transient_vectors[:2]) == ["v(mid)", "i(Vsense)"]
+    assert list(probes.transient_columns[:2]) == ["mid_voltage_V", "branch_current_A"]
 
 
 def test_negative_or_unresolved_series_resistance_is_rejected():

@@ -8,6 +8,7 @@ physical ngspice path.
 from __future__ import annotations
 
 import json
+import math
 import shutil
 import subprocess
 import sys
@@ -15,6 +16,8 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+
+from pcd.results import read_best_candidate, selected_evaluation
 
 pytestmark = pytest.mark.e2e
 
@@ -25,6 +28,8 @@ RC_CASE = EXAMPLES / "advanced" / "generic_rc_filter.yaml"
 ADVANCED_CASE = FIXTURES / "advanced_case.yaml"
 FREQUENCY_TABLE_CASE = EXAMPLES / "rf_impedance_frequency_table.yaml"
 COMPONENT_STRESS_CASE = EXAMPLES / "rf_component_stress.yaml"
+QUASI_STATIC_CASE = EXAMPLES / "rf_quasi_static_profile.yaml"
+PROFILED_RESISTOR_CASE = EXAMPLES / "advanced" / "time_varying_resistor.yaml"
 ngspice_available = shutil.which("ngspice_con.exe") or shutil.which("ngspice")
 
 
@@ -50,11 +55,13 @@ def test_simulation_only_journey_produces_the_boundary_artifacts(tmp_path):
     run_root = tmp_path / "sim_only"
     pcd("sim-run", str(RC_CASE), "--solver", "ngspice_cli", "--run-root", str(run_root))
 
-    manifests = list(run_root.rglob("sim_manifest.json"))
-    assert len(manifests) == 1
-    run_dir = manifests[0].parent
-    assert (run_dir / "waveform.csv").exists()
-    assert (run_dir / "netlist.cir").exists()
+    summaries = list(run_root.rglob("summary.json"))
+    assert len(summaries) == 1
+    run_dir = summaries[0].parent
+    summary = json.loads(summaries[0].read_text(encoding="utf-8"))
+    assert (run_dir / summary["artifacts"]["waveform"]).exists()
+    assert (run_dir / summary["artifacts"]["debug_manifest"]).exists()
+    assert {path.name for path in run_dir.iterdir()} == {"summary.json", "data", "debug"}
     assert not (run_dir / "metrics.json").exists(), "simulation must never score"
 
 
@@ -87,14 +94,14 @@ def test_scenario_aware_study_journey(tmp_path):
 
 
 @pytest.mark.skipif(not ngspice_available, reason="ngspice is not installed on this machine")
-def test_production_safe_journey_uses_strict_flags(tmp_path):
-    """Strict validation gates input; the legacy run flag remains compatible."""
+def test_production_safe_journey_uses_strict_validation_and_default_failure_exit(tmp_path):
+    """Strict validation gates input; simulation failures are nonzero by default."""
 
     result = pcd("validate-case", str(RC_CASE), "--strict", expect_success=False)
     assert result.returncode == 0
 
     run_root = tmp_path / "prod"
-    pcd("sim-run", str(RC_CASE), "--solver", "ngspice_cli", "--run-root", str(run_root), "--strict-exit")
+    pcd("sim-run", str(RC_CASE), "--solver", "ngspice_cli", "--run-root", str(run_root))
 
 
 def test_netlist_visualization_journey(tmp_path):
@@ -115,13 +122,17 @@ def test_real_ngspice_transient_produces_a_physical_waveform(tmp_path):
     """The installed solver produces the physical transient artifact."""
 
     run_root = tmp_path / "ngspice"
-    result = pcd("sim-run", str(RC_CASE), "--solver", "ngspice_cli", "--run-root", str(run_root), "--strict-exit")
-    manifest = json.loads(result.stdout)
-    assert manifest["status"] == "ok"
-    assert manifest["solver"] == "ngspice_cli"
+    result = pcd("sim-run", str(RC_CASE), "--solver", "ngspice_cli", "--run-root", str(run_root), "--json")
+    summary = json.loads(result.stdout)
+    assert summary["status"] == "ok"
+    assert summary["solver"] == "ngspice_cli"
+
+    from pcd.records import read_sim_record
+
+    manifest = read_sim_record(Path(summary["run_dir"]) / "summary.json")
     assert manifest["provenance"]["solver"]["resolved_executable"]
 
-    frame = pd.read_csv(Path(manifest["run_dir"]) / "waveform.csv")
+    frame = pd.read_csv(Path(summary["run_dir"]) / summary["artifacts"]["waveform"])
     # The first three columns are the artifact contract; probes follow, and the
     # source voltage is always one of them so power flow is answerable.
     assert list(frame.columns)[:3] == ["time_s", "voltage_V", "current_A"]
@@ -134,6 +145,37 @@ def test_real_ngspice_transient_produces_a_physical_waveform(tmp_path):
     assert frame["time_s"].iloc[-1] == pytest.approx(stop, rel=0.05)
     # RC low-pass driven by a 0..5 V pulse: the output must stay inside the rail.
     assert frame["voltage_V"].abs().max() <= 5.0 + 1e-6
+
+
+@pytest.mark.skipif(not ngspice_available, reason="ngspice is not installed on this machine")
+def test_prescribed_resistance_profile_matches_the_analytic_divider(tmp_path):
+    result = pcd(
+        "sim-run",
+        str(PROFILED_RESISTOR_CASE),
+        "--solver",
+        "ngspice_cli",
+        "--run-root",
+        str(tmp_path),
+        "--json",
+    )
+    summary = json.loads(result.stdout)
+    assert summary["status"] == "ok"
+
+    frame = pd.read_csv(Path(summary["run_dir"]) / summary["artifacts"]["waveform"])
+
+    def prescribed_resistance(time_s: float) -> float:
+        if time_s <= 1e-6:
+            return 25.0 + 75.0 * time_s / 1e-6
+        if time_s <= 2e-6:
+            return 100.0 - 75.0 * (time_s - 1e-6) / 1e-6
+        return 25.0
+
+    resistance = frame["time_s"].map(prescribed_resistance)
+    expected_voltage = 10.0 * resistance / (50.0 + resistance)
+    assert (frame["voltage_V"] - expected_voltage).abs().max() < 1e-10
+    assert (frame["component_Rchamber_voltage_V"] - expected_voltage).abs().max() < 1e-10
+    expected_current = 10.0 / (50.0 + resistance)
+    assert (frame["component_Rchamber_current_A"] - expected_current).abs().max() < 1e-10
 
 
 @pytest.mark.skipif(not ngspice_available, reason="ngspice is not installed on this machine")
@@ -157,7 +199,9 @@ def test_real_ngspice_closed_loop_completes(tmp_path):
     payload = json.loads(result.stdout)
     assert payload["n_candidates"] == 3
     assert payload["n_failed_evaluations"] == 0
-    assert payload["best"]["aggregates"]["loss"] >= 0.0
+    assert payload["best"]["aggregates"]["normalized_rmse"] >= 0.0
+    assert payload["best"]["aggregates"]["peak_abs_voltage_V"] >= 0.0
+    assert payload["pareto"]["front_candidates"] >= 1
 
 
 @pytest.mark.skipif(not ngspice_available, reason="ngspice is not installed on this machine")
@@ -174,21 +218,54 @@ def test_measured_frequency_points_are_solved_only_at_their_own_frequency(tmp_pa
         "--json",
     )
     payload = json.loads(result.stdout)
-    candidate = json.loads(
-        (Path(payload["run_root"]) / payload["artifacts"]["candidate_directory"] / "trial_0000.json").read_text(
-            encoding="utf-8"
-        )
-    )
+    candidate = read_best_candidate(payload["run_root"])
 
     assert payload["n_evaluations"] == 3
     assert payload["n_failed_evaluations"] == 0
     for scenario in candidate["scenarios"]:
-        selected = scenario["selected"]
+        selected = selected_evaluation(scenario)
         values = selected["request"]["scenario"]["values"]
         metrics = selected["metrics"]
         assert metrics["match_frequency_Hz"] == pytest.approx(values["rf_frequency_Hz"])
         assert values["load_resistance_ohm"] > 0
         assert "reflection_magnitude" in metrics
+
+
+@pytest.mark.skipif(not ngspice_available, reason="ngspice is not installed on this machine")
+def test_quasi_static_profile_matches_the_pi_network_closed_form(tmp_path):
+    result = pcd(
+        "run",
+        str(QUASI_STATIC_CASE),
+        "--solver",
+        "ngspice_cli",
+        "--output",
+        str(tmp_path / "quasi_static"),
+        "--json",
+    )
+    payload = json.loads(result.stdout)
+    root = Path(payload["run_root"])
+    response = pd.read_csv(root / payload["artifacts"]["snapshot_response"])
+
+    assert payload["study"]["metadata"]["analysis_mode"] == "quasi_static_snapshot"
+    assert payload["n_evaluations"] == 15
+    assert payload["n_failed_evaluations"] == 0
+    assert len(response) == 5
+    assert response["time_s"].is_monotonic_increasing
+
+    for row in response.to_dict(orient="records"):
+        omega = 2.0 * math.pi * row["frequency_Hz"]
+        load = complex(row["load_resistance_ohm"], row["load_reactance_ohm"])
+        load_parallel_c2 = 1.0 / (1.0 / load + 1j * omega * row["control.C2"])
+        series_branch = 1j * omega * row["design.L1"] + load_parallel_c2
+        expected_input = 1.0 / (1j * omega * row["design.C1"] + 1.0 / series_branch)
+        expected_gamma = abs((expected_input - 50.0) / (expected_input + 50.0))
+
+        assert row["input_resistance_ohm"] == pytest.approx(expected_input.real, rel=2e-6)
+        assert row["input_reactance_ohm"] == pytest.approx(expected_input.imag, rel=2e-6)
+        assert row["reflection_magnitude"] == pytest.approx(expected_gamma, rel=2e-6)
+        assert row["reflected_power_fraction"] == pytest.approx(expected_gamma**2, rel=2e-6)
+        assert row["forward_power_W"] - row["reflected_power_W"] == pytest.approx(row["source_real_power_W"], rel=2e-6)
+        assert row["load_real_power_W"] + row["network_loss_W"] == pytest.approx(row["source_real_power_W"], rel=2e-6)
 
 
 @pytest.mark.skipif(not ngspice_available, reason="ngspice is not installed on this machine")
@@ -205,12 +282,8 @@ def test_public_component_stress_and_loss_are_internally_consistent(tmp_path):
         "--json",
     )
     payload = json.loads(result.stdout)
-    candidate = json.loads(
-        (Path(payload["run_root"]) / payload["artifacts"]["candidate_directory"] / "trial_0000.json").read_text(
-            encoding="utf-8"
-        )
-    )
-    metrics = candidate["scenarios"][0]["selected"]["metrics"]
+    candidate = read_best_candidate(payload["run_root"])
+    metrics = selected_evaluation(candidate["scenarios"][0])["metrics"]
 
     for ref, resistance in {"C1": 0.1, "L1": 0.5, "C2": 0.1}.items():
         current_rms = metrics[f"component_{ref}_current_rms_A"]
@@ -259,10 +332,11 @@ solver: {name: ngspice_cli, tran: {step_s: 1.0e-10, stop_s: 2.0e-5}}
 """.lstrip(),
         encoding="utf-8",
     )
-    result = pcd("sim-run", str(case), "--run-root", str(tmp_path / "runs"), "--strict-exit")
-    run_dir = Path(json.loads(result.stdout)["run_dir"])
+    result = pcd("sim-run", str(case), "--run-root", str(tmp_path / "runs"), "--json")
+    summary = json.loads(result.stdout)
+    run_dir = Path(summary["run_dir"])
 
-    frame = pd.read_csv(run_dir / "waveform.csv")
+    frame = pd.read_csv(run_dir / summary["artifacts"]["waveform"])
     assert "i(Vam)" in frame.columns, "the declared probe must reach the waveform"
 
     from pcd.analysis import rf_port_metrics
@@ -280,8 +354,9 @@ solver: {name: ngspice_cli, tran: {step_s: 1.0e-10, stop_s: 2.0e-5}}
     ["impedance_point", "ccp_lumped", "icp_transformer", "icp_transformer_high_q"],
 )
 def test_each_rf_load_matches_its_analytic_impedance_in_ngspice(tmp_path, case_name):
-    from pcd.analysis import at_frequency, input_impedance, read_ac
+    from pcd.analysis import at_frequency, input_impedance
     from pcd.artifacts import yaml_dump
+    from pcd.ngspice_io import read_frequency_response
     from pcd.rf_loads import ccp_lumped_impedance, icp_effective_impedance
 
     f0 = 13.56e6
@@ -352,11 +427,14 @@ def test_each_rf_load_matches_its_analytic_impedance_in_ngspice(tmp_path, case_n
         ),
         encoding="utf-8",
     )
-    result = pcd("sim-run", str(case), "--run-root", str(tmp_path / "runs"), "--strict-exit")
-    run_dir = Path(json.loads(result.stdout)["run_dir"])
-    row = at_frequency(input_impedance(read_ac(run_dir / "ac.csv")), f0)
+    result = pcd("sim-run", str(case), "--run-root", str(tmp_path / "runs"), "--json")
+    summary = json.loads(result.stdout)
+    run_dir = Path(summary["run_dir"])
+    row = at_frequency(
+        input_impedance(read_frequency_response(run_dir / summary["artifacts"]["frequency_response"])), f0
+    )
     assert complex(row["resistance_ohm"], row["reactance_ohm"]) == pytest.approx(expected, rel=2e-5, abs=1e-7)
-    assert pd.read_csv(run_dir / "waveform.csv").empty
+    assert pd.read_csv(run_dir / summary["artifacts"]["waveform"]).empty
 
 
 @pytest.mark.skipif(not ngspice_available, reason="ngspice is not installed on this machine")
@@ -409,18 +487,22 @@ solver:
 """.lstrip(),
         encoding="utf-8",
     )
-    result = pcd("sim-run", str(case), "--run-root", str(tmp_path / "runs"), "--strict-exit")
-    run_dir = Path(json.loads(result.stdout)["run_dir"])
-    frame = pd.read_csv(run_dir / "waveform.csv")
+    result = pcd("sim-run", str(case), "--run-root", str(tmp_path / "runs"), "--json")
+    summary = json.loads(result.stdout)
+    run_dir = Path(summary["run_dir"])
+    frame = pd.read_csv(run_dir / summary["artifacts"]["waveform"])
 
     omega = 2 * np.pi * f0
     expected_z = complex(r, omega * inductance - 1 / (omega * capacitance))
     assert abs(expected_z.imag) / expected_z.real > 500, "the load must be nearly reactive for this to bite"
 
     # The frequency domain: impedance straight off the AC sweep.
-    from pcd.analysis import at_frequency, input_impedance, read_ac
+    from pcd.analysis import at_frequency, input_impedance
+    from pcd.ngspice_io import read_frequency_response
 
-    row = at_frequency(input_impedance(read_ac(run_dir / "ac.csv")), f0)
+    row = at_frequency(
+        input_impedance(read_frequency_response(run_dir / summary["artifacts"]["frequency_response"])), f0
+    )
     assert row["reactance_ohm"] == pytest.approx(expected_z.imag, rel=2e-3)
     assert row["resistance_ohm"] == pytest.approx(expected_z.real, rel=0.05)
 

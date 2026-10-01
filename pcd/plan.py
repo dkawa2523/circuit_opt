@@ -111,6 +111,15 @@ class _ExecutionPlan:
     seed: int
 
 
+@dataclass(frozen=True)
+class _TabulatedImpedance:
+    raw_file: str
+    path: Path
+    columns: set[str]
+    rows: list[dict[str, Any]]
+    quasi_static: bool
+
+
 def compile_rf_case(data: Mapping[str, Any], base_dir: Path) -> ResolvedPlan:
     """Resolve a ``pcd.rf.v1`` mapping without executing plugins or solvers."""
 
@@ -152,34 +161,19 @@ def compile_rf_case(data: Mapping[str, Any], base_dir: Path) -> ResolvedPlan:
     )
     _reject_unknown(execution, {"solver", "candidate_state_limit", "control_state_limit"}, "execution")
     network = _network_plan(authored.get("network"), acceptance, execution, inferences)
-    operating = _operating_plan(authored, load, base_dir, network.needs_absolute_drive, inferences)
+    quasi_static = str(load.get("type", "")) == "impedance_profile"
+    operating = _operating_plan(
+        authored,
+        load,
+        base_dir,
+        network.needs_absolute_drive or quasi_static,
+        inferences,
+    )
     network = _observe_absolute_stress(network, operating.has_absolute_drive, inferences)
     run = _execution_plan(execution, network.search_variables, inferences)
     variables = {**network.variables, **_operating_defaults(operating, inferences)}
-
-    study: dict[str, Any] = {
-        "design_variables": list(network.variables),
-        "candidate_enumeration": "exact",
-        "objectives": [{"metric": "reflection_magnitude", "direction": "minimize", "aggregation": "worst"}],
-    }
-    if operating.table:
-        study["scenario_table"] = operating.table
-    elif operating.conditions:
-        study["scenarios"] = operating.conditions
-    if network.controls:
-        study["controls"] = {"variables": network.controls, "budget": network.control_states}
-    margin = _control_margin_limit(acceptance, bool(network.controls))
-    if margin is not None:
-        study["control_margin_min"] = margin
-        inferences.append(f"require at least {margin:g} normalized tuning headroom in every condition")
-
-    measurement: dict[str, Any] = {
-        "voltage_node": "electrode",
-        "current_source": "Vsrc",
-        "reference_impedance_ohm": 50.0,
-    }
-    if network.observed_refs or "loss_balance_fraction_max" in acceptance:
-        measurement["load_current"] = "auto"
+    study = _resolved_study(network, operating, acceptance, inferences, quasi_static=quasi_static)
+    measurement = _resolved_measurement(network, acceptance, quasi_static=quasi_static)
 
     resolved = {
         "schema": EXECUTABLE_SCHEMA,
@@ -206,6 +200,50 @@ def compile_rf_case(data: Mapping[str, Any], base_dir: Path) -> ResolvedPlan:
         "run": {"trials": run.trials},
     }
     return ResolvedPlan(resolved, tuple(inferences), run.trials, run.optimizer, run.seed)
+
+
+def _resolved_study(
+    network: _NetworkPlan,
+    operating: _OperatingPlan,
+    acceptance: Mapping[str, Any],
+    inferences: list[str],
+    *,
+    quasi_static: bool,
+) -> dict[str, Any]:
+    study: dict[str, Any] = {
+        "design_variables": list(network.variables),
+        "candidate_enumeration": "exact",
+        "objectives": [{"metric": "reflection_magnitude", "direction": "minimize", "aggregation": "worst"}],
+    }
+    if operating.table:
+        study["scenario_table"] = operating.table
+    elif operating.conditions:
+        study["scenarios"] = operating.conditions
+    if quasi_static:
+        study["analysis_mode"] = "quasi_static_snapshot"
+    if network.controls:
+        study["controls"] = {"variables": network.controls, "budget": network.control_states}
+    margin = _control_margin_limit(acceptance, bool(network.controls))
+    if margin is not None:
+        study["control_margin_min"] = margin
+        inferences.append(f"require at least {margin:g} normalized tuning headroom in every condition")
+    return study
+
+
+def _resolved_measurement(
+    network: _NetworkPlan,
+    acceptance: Mapping[str, Any],
+    *,
+    quasi_static: bool,
+) -> dict[str, Any]:
+    measurement: dict[str, Any] = {
+        "voltage_node": "electrode",
+        "current_source": "Vsrc",
+        "reference_impedance_ohm": 50.0,
+    }
+    if quasi_static or network.observed_refs or "loss_balance_fraction_max" in acceptance:
+        measurement["load_current"] = "auto"
+    return measurement
 
 
 def _network_plan(
@@ -328,7 +366,7 @@ def _operating_plan(
     conditions = _conditions(authored.get("conditions"))
     if table and conditions:
         raise ValueError(
-            "load.type: impedance_table and conditions cannot be combined; put each electrical point in the table"
+            "tabulated impedance loads and conditions cannot be combined; put each electrical point in the table"
         )
     resolved_frequency = _resolved_frequency(frequency, table, conditions)
     drive, has_absolute_drive = _resolved_drive(authored, table, conditions, needs_absolute_drive, inferences)
@@ -361,7 +399,7 @@ def _resolved_drive(
 ) -> tuple[float | str, bool]:
     table_drive = bool(table and "drive_amplitude_V" in table["values"])
     if table_drive and "drive_peak_V" in authored:
-        raise ValueError("drive_peak_V is already supplied by every impedance-table row; remove the top-level value")
+        raise ValueError("drive_peak_V is already supplied by every tabulated-load row; remove the top-level value")
     if table_drive:
         return "drive_amplitude_V", True
     condition_drive = any("drive_amplitude_V" in item["values"] for item in conditions)
@@ -373,7 +411,8 @@ def _resolved_drive(
         return _positive_number(authored["drive_peak_V"], "drive_peak_V"), True
     if needs_absolute_drive:
         raise ValueError(
-            "drive_peak_V (or drive_peak_V in every condition) is required for absolute component or source limits"
+            "drive_peak_V (or drive_peak_V in every condition/table row) is required for absolute power, "
+            "component, or source results"
         )
     inferences.append("use a 1 V peak AC source because reflection is amplitude independent")
     return 1.0, False
@@ -569,56 +608,83 @@ def _load_frequency_and_scenarios(
     authored: Mapping[str, Any], load: Mapping[str, Any], base_dir: Path, inferences: list[str]
 ) -> tuple[Any, dict[str, Any] | None]:
     load_type = str(load.get("type", ""))
-    if load_type != "impedance_table":
-        frequency = authored.get("frequency_Hz")
-        raw_conditions = authored.get("conditions") or []
-        condition_frequency = any(isinstance(item, Mapping) and "frequency_Hz" in item for item in raw_conditions)
-        if frequency is None and not condition_frequency:
-            raise ValueError("frequency_Hz is required unless the impedance table or every condition supplies it")
-        return frequency, None
+    if load_type not in {"impedance_table", "impedance_profile"}:
+        return _declared_frequency(authored), None
 
-    raw_file = load.get("file")
-    if not isinstance(raw_file, str) or not raw_file.strip():
-        raise ValueError("load.file is required for load.type: impedance_table")
-    path = Path(raw_file)
-    path = path if path.is_absolute() else base_dir / path
-    if not path.is_file():
-        raise ValueError(f"impedance table not found: {path.resolve()}")
-    with path.open("r", encoding="utf-8-sig", newline="") as handle:
-        reader = csv.DictReader(handle)
-        columns = set(reader.fieldnames or [])
-        rows = list(reader)
-    required = {"scenario_id", "resistance_ohm", "reactance_ohm"}
-    missing = sorted(required - columns)
-    if missing:
-        raise ValueError(f"impedance table is missing canonical columns {missing}: {path.resolve()}")
-    if not rows:
-        raise ValueError(f"impedance table is empty: {path.resolve()}")
-    has_frequency = "frequency_Hz" in columns
-    frequency = authored.get("frequency_Hz")
-    if has_frequency and frequency is not None:
-        raise ValueError("frequency_Hz is already supplied by every impedance-table row; remove the top-level value")
-    if not has_frequency and frequency is None:
-        raise ValueError("frequency_Hz is required when the impedance table has no frequency_Hz column")
-    _validate_impedance_table_rows(rows, columns, path.resolve())
-    values = _table_value_columns(columns, inferences)
+    table = _read_tabulated_impedance(load_type, load, base_dir)
+    frequency = _tabulated_frequency(authored, table.columns)
+    _validate_impedance_rows(table.rows, table.columns, table.path, quasi_static=table.quasi_static)
+    values = _table_value_columns(table.columns, inferences, quasi_static=table.quasi_static)
     defaults = {
-        parameter: _table_cell(rows[0][column], f"{path.resolve()}:2:{column}") for parameter, column in values.items()
+        parameter: _table_cell(table.rows[0][column], f"{table.path}:2:{column}")
+        for parameter, column in values.items()
     }
+    if table.quasi_static:
+        inferences.append(
+            "solve each time row as an independent quasi-static AC snapshot; no state is propagated between rows"
+        )
     return frequency, {
-        "table_file": raw_file,
+        "table_file": table.raw_file,
         "values": values,
-        "id_column": "scenario_id",
+        "id_column": "time_s" if table.quasi_static else "scenario_id",
         "weight_column": "weight",
         "defaults": defaults,
     }
 
 
-def _table_value_columns(columns: set[str], inferences: list[str]) -> dict[str, str]:
-    values = {
+def _declared_frequency(authored: Mapping[str, Any]) -> Any:
+    frequency = authored.get("frequency_Hz")
+    raw_conditions = authored.get("conditions") or []
+    condition_frequency = any(isinstance(item, Mapping) and "frequency_Hz" in item for item in raw_conditions)
+    if frequency is None and not condition_frequency:
+        raise ValueError("frequency_Hz is required unless a tabulated load or every condition supplies it")
+    return frequency
+
+
+def _read_tabulated_impedance(
+    load_type: str,
+    load: Mapping[str, Any],
+    base_dir: Path,
+) -> _TabulatedImpedance:
+    raw_file = load.get("file")
+    if not isinstance(raw_file, str) or not raw_file.strip():
+        raise ValueError(f"load.file is required for load.type: {load_type}")
+    path = Path(raw_file)
+    path = path if path.is_absolute() else base_dir / path
+    if not path.is_file():
+        raise ValueError(f"tabulated impedance file not found: {path.resolve()}")
+    path = path.resolve()
+    with path.open("r", encoding="utf-8-sig", newline="") as handle:
+        reader = csv.DictReader(handle)
+        columns = set(reader.fieldnames or [])
+        rows = list(reader)
+    quasi_static = load_type == "impedance_profile"
+    required = {"time_s" if quasi_static else "scenario_id", "resistance_ohm", "reactance_ohm"}
+    missing = sorted(required - columns)
+    if missing:
+        raise ValueError(f"{load_type} is missing canonical columns {missing}: {path}")
+    if not rows:
+        raise ValueError(f"{load_type} is empty: {path}")
+    return _TabulatedImpedance(raw_file, path, columns, rows, quasi_static)
+
+
+def _tabulated_frequency(authored: Mapping[str, Any], columns: set[str]) -> Any:
+    has_frequency = "frequency_Hz" in columns
+    frequency = authored.get("frequency_Hz")
+    if has_frequency and frequency is not None:
+        raise ValueError("frequency_Hz is already supplied by every tabulated-load row; remove the top-level value")
+    if not has_frequency and frequency is None:
+        raise ValueError("frequency_Hz is required when the tabulated load has no frequency_Hz column")
+    return frequency
+
+
+def _table_value_columns(columns: set[str], inferences: list[str], *, quasi_static: bool = False) -> dict[str, str]:
+    values: dict[str, str] = {
         "load_resistance_ohm": "resistance_ohm",
         "load_reactance_ohm": "reactance_ohm",
     }
+    if quasi_static:
+        values = {"snapshot_time_s": "time_s", **values}
     if "frequency_Hz" in columns:
         values = {"rf_frequency_Hz": "frequency_Hz", **values}
         inferences.append("run one exact-frequency AC solve for every impedance-table row")
@@ -627,19 +693,29 @@ def _table_value_columns(columns: set[str], inferences: list[str]) -> dict[str, 
     return values
 
 
-def _validate_impedance_table_rows(rows: list[dict[str, Any]], columns: set[str], path: Path) -> None:
+def _validate_impedance_rows(
+    rows: list[dict[str, Any]],
+    columns: set[str],
+    path: Path,
+    *,
+    quasi_static: bool,
+) -> None:
     seen_ids: set[str] = set()
+    previous_time: float | None = None
+    label = "impedance-profile" if quasi_static else "impedance-table"
     for index, row in enumerate(rows, start=2):
-        scenario_id = str(row.get("scenario_id", "")).strip()
-        if not scenario_id:
-            raise ValueError(f"impedance-table scenario_id is empty at {path}:{index}:scenario_id")
-        if scenario_id in seen_ids:
-            raise ValueError(f"impedance-table scenario_id must be unique; duplicate {scenario_id!r} at {path}:{index}")
-        seen_ids.add(scenario_id)
+        previous_time = _validate_impedance_row_identity(
+            row,
+            path,
+            index,
+            quasi_static=quasi_static,
+            previous_time=previous_time,
+            seen_ids=seen_ids,
+        )
 
         resistance = _table_cell(row.get("resistance_ohm"), f"{path}:{index}:resistance_ohm")
         if resistance < 0:
-            raise ValueError(f"impedance-table resistance_ohm must be non-negative at {path}:{index}")
+            raise ValueError(f"{label} resistance_ohm must be non-negative at {path}:{index}")
         _table_cell(row.get("reactance_ohm"), f"{path}:{index}:reactance_ohm")
         for column in ("frequency_Hz", "drive_peak_V"):
             if column in columns and _table_cell(row.get(column), f"{path}:{index}:{column}") <= 0:
@@ -649,7 +725,33 @@ def _validate_impedance_table_rows(rows: list[dict[str, Any]], columns: set[str]
             and str(row.get("weight", "")).strip()
             and _table_cell(row.get("weight"), f"{path}:{index}:weight") <= 0
         ):
-            raise ValueError(f"impedance-table weight must be positive at {path}:{index}")
+            raise ValueError(f"{label} weight must be positive at {path}:{index}")
+
+
+def _validate_impedance_row_identity(
+    row: Mapping[str, Any],
+    path: Path,
+    index: int,
+    *,
+    quasi_static: bool,
+    previous_time: float | None,
+    seen_ids: set[str],
+) -> float | None:
+    if quasi_static:
+        time_s = _table_cell(row.get("time_s"), f"{path}:{index}:time_s")
+        if time_s < 0:
+            raise ValueError(f"impedance-profile time_s must be non-negative at {path}:{index}")
+        if previous_time is not None and time_s <= previous_time:
+            raise ValueError(f"impedance-profile time_s must be strictly increasing at {path}:{index}")
+        return time_s
+
+    scenario_id = str(row.get("scenario_id", "")).strip()
+    if not scenario_id:
+        raise ValueError(f"impedance-table scenario_id is empty at {path}:{index}:scenario_id")
+    if scenario_id in seen_ids:
+        raise ValueError(f"impedance-table scenario_id must be unique; duplicate {scenario_id!r} at {path}:{index}")
+    seen_ids.add(scenario_id)
+    return previous_time
 
 
 def _table_cell(raw: Any, path: str) -> float:
@@ -689,7 +791,7 @@ def _conditions(value: Any) -> list[dict[str, Any]]:
 def _resolved_load(load: Mapping[str, Any], frequency: float | str) -> dict[str, Any]:
     load_type = _validated_load_type(load)
     common = _load_common(load)
-    if load_type == "impedance_table":
+    if load_type in {"impedance_table", "impedance_profile"}:
         characterization = common.get("characterization")
         if isinstance(characterization, dict):
             characterization.setdefault("table", str(load["file"]))
@@ -709,12 +811,15 @@ def _validated_load_type(load: Mapping[str, Any]) -> str:
     load_type = str(load.get("type", ""))
     allowed = {
         "impedance_table": {"type", "file", "reference_plane", "evidence"},
+        "impedance_profile": {"type", "file", "reference_plane", "evidence"},
         "impedance_point": {"type", "resistance_ohm", "reactance_ohm", "reference_plane", "evidence"},
         "ccp_lumped": {"type", "parameters", "reference_plane", "evidence"},
         "icp_transformer": {"type", "parameters", "reference_plane", "evidence"},
     }.get(load_type)
     if allowed is None:
-        raise ValueError("load.type must be impedance_table, impedance_point, ccp_lumped, or icp_transformer")
+        raise ValueError(
+            "load.type must be impedance_table, impedance_profile, impedance_point, ccp_lumped, or icp_transformer"
+        )
     _reject_unknown(load, allowed, "load")
     return load_type
 
@@ -787,7 +892,7 @@ def _effective_load_parameters(load_type: str, load: Mapping[str, Any]) -> dict[
 
 def _resolved_circuit(topology: str, loss_ohm: Mapping[str, Any], observed_refs: set[str]) -> dict[str, Any]:
     if not observed_refs:
-        return {"builder": topology, "output_node": "electrode"}
+        return {"builder": topology, "topology_family": topology, "output_node": "electrode"}
     components = []
     for ref, n1, n2 in _TOPOLOGY_COMPONENTS[topology]:
         item: dict[str, Any] = {"ref": ref, "n1": n1, "n2": n2, "value": ref}
@@ -796,7 +901,12 @@ def _resolved_circuit(topology: str, loss_ohm: Mapping[str, Any], observed_refs:
         if ref in observed_refs:
             item["observe"] = True
         components.append(item)
-    return {"builder": "from_yaml", "output_node": "electrode", "components": components}
+    return {
+        "builder": "from_yaml",
+        "topology_family": topology,
+        "output_node": "electrode",
+        "components": components,
+    }
 
 
 def _finite_number(value: Any, path: str) -> float:

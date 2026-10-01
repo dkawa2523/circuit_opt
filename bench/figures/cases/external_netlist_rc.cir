@@ -1,0 +1,3 @@
+* Authored circuit fragment imported by PCD; the case owns source and analysis.
+R1 src out 1k
+C1 out 0 100n

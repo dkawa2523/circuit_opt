@@ -23,7 +23,7 @@ if str(ROOT) not in sys.path:
 from bench.literature.p1_colpo1999_icp.digitized.run import run as run_central  # noqa: E402
 from pcd.artifacts import write_json  # noqa: E402
 from pcd.case import load_case  # noqa: E402
-from pcd.results import candidate_result_paths  # noqa: E402
+from pcd.results import read_best_candidate, selected_evaluation  # noqa: E402
 from pcd.study import run_case_study  # noqa: E402
 
 CORNER_COLUMNS = (
@@ -99,7 +99,7 @@ def _derive_corners(
 def _selected_scenarios(candidate: dict[str, Any]) -> list[dict[str, Any]]:
     selected: list[dict[str, Any]] = []
     for item in candidate["scenarios"]:
-        evaluation = item["selected"]
+        evaluation = selected_evaluation(item)
         constraints = evaluation.get("constraints", []) or []
         violated = sorted(str(row["name"]) for row in constraints if not bool(row["satisfied"]))
         feasible = evaluation["raw"]["status"] == "ok" and not violated
@@ -155,9 +155,7 @@ def _run_design_case(path: Path, run_root: Path, solver: str) -> dict[str, Any]:
         solver_override=solver,
         seed=0,
     )
-    candidate_id = str(study["best"]["candidate"]["candidate_id"])
-    candidate_path = next(path for path in candidate_result_paths(study["run_root"]) if path.stem == candidate_id)
-    candidate = json.loads(candidate_path.read_text(encoding="utf-8"))
+    candidate = read_best_candidate(study["run_root"])
     scenarios = _selected_scenarios(candidate)
     worst = max(float(item["reflection_magnitude"]) for item in scenarios)
     feasible_count = sum(bool(item["feasible"]) for item in scenarios)

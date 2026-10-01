@@ -1,0 +1,24 @@
+# P3 preregistered fixed pool: 13.56 MHz pi-network component sizing.
+schema: pcd.rf.v1
+case_id: ml_ranking_rf_match
+frequency_Hz: 13560000
+
+network:
+  type: pi_match
+  fixed:
+    C2: 7.45488022912e-12
+  search:
+    C1:
+      values: [8.0e-11, 1.2e-10, 1.8e-10, 2.2e-10, 2.58221757073e-10, 3.2e-10, 4.5e-10, 6.0e-10, 8.0e-10]
+    L1:
+      values: [5.0e-7, 7.0e-7, 9.0e-7, 1.05e-6, 1.19731080934e-6, 1.35e-6, 1.6e-6, 2.0e-6, 2.5e-6]
+
+load:
+  type: impedance_point
+  resistance_ohm: 25
+  reactance_ohm: -80.76908643457358
+  reference_plane: electrode_terminal
+  evidence: {origin: synthetic_benchmark, point: nominal_13p56MHz}
+
+acceptance:
+  reflected_power_fraction_max: 0.10

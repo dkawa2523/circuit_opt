@@ -117,6 +117,35 @@ def test_an_unset_load_value_becomes_a_netlist_parameter(make_case):
     assert "Rload p n {Rload}" in subckt
 
 
+@pytest.mark.parametrize(
+    ("name", "config", "message"),
+    [
+        ("impedance_point", {"resistance_ohm": 20, "reactance_ohm": -80}, "model_frequency_Hz"),
+        ("impedance_point", {"resistance_ohm": -1, "reactance_ohm": 0, "model_frequency_Hz": 1e6}, "passive"),
+        ("ccp_lumped", {"R_eff_ohm": 20, "L_eff_H": 1e-6}, "C_sheath_eq_F"),
+        (
+            "icp_transformer",
+            {"R_coil_ohm": 0.2, "L_coil_H": 1e-6, "reflected_inductance_H": 2e-7},
+            "secondary_damping_rate_rad_s",
+        ),
+    ],
+)
+def test_rf_load_builders_own_required_fields_and_physical_domains(make_case, name, config, message):
+    case = make_case({"source": {"frequency_Hz": 1e6}, "load": {"name": name, **config}})
+
+    with pytest.raises(ValueError, match=message):
+        build_load_subckt(case, {})
+
+
+def test_a_load_builder_must_return_netlist_text(make_case, monkeypatch):
+    import pcd.netlist as netlist_module
+
+    case = make_case({"load": {"name": "test_non_text_load"}})
+    monkeypatch.setattr(netlist_module, "get_sim_method", lambda _kind, _name: lambda _case, _params: object())
+    with pytest.raises(TypeError, match="must return str or None"):
+        build_load_subckt(case, {})
+
+
 def test_a_load_built_from_yaml_components(make_case):
     case = make_case(
         {
@@ -133,6 +162,27 @@ def test_a_load_built_from_yaml_components(make_case):
     _name, subckt = build_load_subckt(case, {})
     assert "Rx p mid 10" in subckt
     assert "Bx mid n I=V(mid,n)*1e-3" in subckt
+
+
+@pytest.mark.parametrize(
+    ("section", "components", "message"),
+    [
+        ("circuit", "R1 src out 50", "circuit.components must be a list"),
+        ("circuit", [{"ref": "R1", "n1": "src", "value": 50}], r"circuit.components\[0\] is missing"),
+        ("load", [1], r"load.components\[0\] must be a mapping"),
+    ],
+)
+def test_yaml_component_shape_is_owned_by_its_builder(make_case, section, components, message):
+    case = make_case({section: {"name" if section == "load" else "builder": "from_yaml", "components": components}})
+
+    if section == "load":
+        build = build_load_subckt
+    else:
+        from pcd.netlist import build_circuit
+
+        build = build_circuit
+    with pytest.raises((TypeError, ValueError), match=message):
+        build(case, {})
 
 
 # --- circuit builders ------------------------------------------------------

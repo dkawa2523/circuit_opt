@@ -1,4 +1,117 @@
-# Benchmark figure pack
+# Benchmark figure packs
+
+## Dynamic-impedance etch CCP with dual RF and DC superposition
+
+This five-page study extends the earlier minimal CCP example without turning
+PCD into a plasma-chemistry solver. The explicit circuit contains a 60 MHz
+upper source, 2 MHz wafer-bias source, pulsed negative DC bias tee, matching
+and feed parasitics, chamber/ESC stray capacitance, wall leakage, two lossy
+sheaths, and a bulk `R-L` path. The prescribed `R_p(t)`, `L_p(t)`,
+`C_s,u(t)`, and `C_s,w(t)` use charge/flux constitutive laws.
+
+1. [Apparatus and detailed equivalent circuit](etch_ccp_dcs/01-apparatus-and-equivalent-circuit.svg)
+   keep the chamber and circuit in the same top-to-bottom order and name every
+   input, dynamic element, objective, and held-out measurement plane.
+2. [Inputs and dynamic elements](etch_ccp_dcs/02-inputs-and-dynamic-elements.svg)
+   show the three electrical excitations, common plasma-state envelope, and
+   all four prescribed element profiles.
+3. [Forward conformance](etch_ccp_dcs/03-forward-conformance.svg) compares an
+   independent charge/flux MNA integration with ngspice for wafer voltage,
+   reflected voltage, bulk current, sheath charge, and inductor flux.
+4. [Dynamic branch impedance](etch_ccp_dcs/04-dynamic-branch-impedance.svg)
+   shows the frozen-time main-plasma-branch impedance at 2 MHz and 60 MHz.
+5. [Inverse identification](etch_ccp_dcs/05-inverse-identification.svg) ranks
+   all 81 bounded candidates using only wafer voltage, recovers the four true
+   on-state values, and checks upper reflection without fitting it.
+
+[`etch_ccp_dcs/figure_data.json`](etch_ccp_dcs/figure_data.json) records every
+source hash, forward error, candidate, selected value, and held-out error. The
+full literature boundary, equations, results, and reproduction commands are in
+[`docs/etch-ccp-dcs-dynamic-impedance-study-ja.md`](../../docs/etch-ccp-dcs-dynamic-impedance-study-ja.md).
+The combined publication artifact is
+[`output/pdf/etch-ccp-dcs-dynamic-impedance-study.pdf`](../../output/pdf/etch-ccp-dcs-dynamic-impedance-study.pdf).
+
+## Dual-frequency CCP with rectangular lower bias
+
+The four-page CCP study turns a literature-grounded apparatus class into one
+forward problem and two bounded inverse problems without claiming a
+plasma-state solve. It uses a 40 MHz upper excitation, an 800 kHz rectangular
+lower bias, fixed effective sheath capacitors, and a positive `R_p(t)`.
+
+1. [Equipment and vertical equivalent circuit](dual_frequency_ccp/01-apparatus-and-equivalent-circuit.svg)
+   maps the chamber top-to-bottom order, component names, wafer node, and
+   upper 50-ohm reflection reference plane directly to the ngspice circuit.
+2. [Forward observable conformance](dual_frequency_ccp/02-forward-observable-conformance.svg)
+   shows both source waveforms, prescribed `R_p(t)`, wafer/chuck voltage, and
+   upper reflected voltage against an independent RK4 calculation.
+3. [Inverse identification from wafer voltage](dual_frequency_ccp/03-inverse-from-wafer-voltage.svg)
+   uses only the wafer waveform to rank all 81 `R_p(t)` candidates and retains
+   upper reflection as a held-out waveform.
+4. [Inverse identification from upper reflection](dual_frequency_ccp/04-inverse-from-upper-reflection.svg)
+   reverses those roles and independently recovers the same four resistance
+   values from upper reflection alone.
+
+[`dual_frequency_ccp/figure_data.json`](dual_frequency_ccp/figure_data.json)
+records input and run hashes, direct numerical errors, all 162 candidate
+evaluations, held-out errors, and the excluded physical claims. The figure
+generator is read-only. The
+problem statement, literature boundary, results, and reproduction commands are
+in [`docs/dual-frequency-ccp-pulsed-bias-study-ja.md`](../../docs/dual-frequency-ccp-pulsed-bias-study-ja.md),
+and the combined artifact is
+[`output/pdf/dual-frequency-ccp-pulsed-bias-study.pdf`](../../output/pdf/dual-frequency-ccp-pulsed-bias-study.pdf).
+
+## Direct calculation evidence
+
+The four-page calculation-evidence pack answers the shortest third-party
+questions directly: can an authored netlist be solved, can a prescribed
+time-varying element be used correctly, do the effective CCP/ICP terminal
+circuits reproduce their equations, and does component optimization recover a
+known target waveform?  The generator reads completed artifacts only; it does
+not run ngspice or optimization while drawing.
+
+1. [Netlist to ngspice waveform](evidence/01-netlist-to-ngspice-waveform.svg):
+   authored `.cir` fragment, calculation path, circuit, input waveform, and
+   analytic-versus-ngspice output.
+2. [Time-varying element conformance](evidence/02-time-varying-element-conformance.svg):
+   prescribed resistance, output voltage, and element current against the
+   independent divider equation.
+3. [Effective plasma-load conformance](evidence/03-effective-plasma-load-conformance.svg):
+   CCP and reduced ICP terminal circuits connected through each case's fixed
+   L-match, with analytic and ngspice whole-network input
+   resistance/reactance at the three declared frequencies.  This is
+   equivalent-circuit propagation conformance, not plasma-state validation.
+4. [Target-waveform optimization](evidence/04-target-waveform-optimization.svg):
+   target versus selected waveform, exhaustive loss history, and the complete
+   3 x 3 component-value grid.
+
+The vector SVG files are publication masters, the PNG files are 300 dpi, and
+[`output/pdf/calculation-evidence-pack.pdf`](../../output/pdf/calculation-evidence-pack.pdf)
+contains the four fixed-size pages.  [`evidence/figure_data.json`](evidence/figure_data.json)
+records every source path and SHA-256 hash plus the independently calculated
+comparison errors.
+
+One compact reproduction uses the core conformance result plus three focused
+public-CLI runs:
+
+```powershell
+$root = "runs/calculation_evidence"
+uv run --frozen python bench/run_suite.py --run-root "$root/core"
+uv run --frozen pcd sim-run examples/advanced/time_varying_resistor.yaml `
+  --run-root "$root/varying"
+uv run --frozen pcd sim-run bench/figures/cases/external_netlist_rc.yaml `
+  --run-root "$root/netlist"
+uv run --frozen pcd sim-netlist bench/figures/cases/external_netlist_rc.yaml `
+  --out "$root/netlist/external_netlist_resolved.cir"
+uv run --frozen pcd run bench/figures/cases/target_waveform_conformance.yaml `
+  --output "$root/optimization"
+uv run --frozen python bench/figures/generate_calculation_evidence.py `
+  --benchmark-result "$root/core/benchmark_result.json" `
+  --varying-root "$root/varying" `
+  --netlist-root "$root/netlist" `
+  --optimization-root "$root/optimization"
+```
+
+## Core RF benchmark figure pack
 
 These figures explain the electrical questions and results in the core
 benchmark suite. They are newly drawn from the implemented circuit

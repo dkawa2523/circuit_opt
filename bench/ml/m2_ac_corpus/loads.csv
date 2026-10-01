@@ -1,0 +1,4 @@
+scenario_id,resistance_ohm,reactance_ohm,weight
+high_capacitance,18,-120,1
+nominal,30,-65,1
+low_capacitance,55,-25,1

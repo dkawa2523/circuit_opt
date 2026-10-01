@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Iterable
 
 from .models import Candidate, CandidateResult, ControlState, EvaluationResult, Objective, ScenarioResult, StudySpec
 
@@ -166,3 +167,56 @@ def candidate_rank_key(study: StudySpec, result: CandidateResult) -> tuple[float
     margin = result.control_margin
     key.append(float("inf") if margin is None else -margin)
     return tuple(key)
+
+
+def _pareto_vector(study: StudySpec, result: CandidateResult) -> tuple[float, ...] | None:
+    values: list[float] = []
+    for objective in study.objectives:
+        number = _finite_float(result.aggregates.get(objective.metric))
+        if number is None:
+            return None
+        values.append(number if objective.direction == "minimize" else -number)
+    return tuple(values)
+
+
+def candidate_is_pareto_eligible(study: StudySpec, result: CandidateResult) -> bool:
+    """Require complete electrical evidence and full declared feasibility.
+
+    ``success_fraction`` covers each scenario's selected control. Pareto
+    evidence is stricter: every explored control must have solved so a failed
+    alternative cannot hide a potentially better operating point.
+    """
+
+    return (
+        result.success_fraction == 1.0
+        and result.feasible_fraction == 1.0
+        and result.total_violation == 0.0
+        and all(evaluation.raw.ok for evaluation in result.control_evaluations)
+        and _pareto_vector(study, result) is not None
+    )
+
+
+def pareto_front(study: StudySpec, results: Iterable[CandidateResult]) -> tuple[CandidateResult, ...]:
+    """Return the nondominated set among fully evidenced feasible candidates."""
+
+    eligible = [
+        (result, vector)
+        for result in results
+        if candidate_is_pareto_eligible(study, result)
+        for vector in (_pareto_vector(study, result),)
+        if vector is not None
+    ]
+
+    def dominates(left: tuple[float, ...], right: tuple[float, ...]) -> bool:
+        return all(a <= b for a, b in zip(left, right, strict=True)) and any(
+            a < b for a, b in zip(left, right, strict=True)
+        )
+
+    return tuple(
+        result
+        for index, (result, vector) in enumerate(eligible)
+        if not any(
+            other_index != index and dominates(other_vector, vector)
+            for other_index, (_other, other_vector) in enumerate(eligible)
+        )
+    )

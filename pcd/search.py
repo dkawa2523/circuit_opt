@@ -138,6 +138,11 @@ class BaseOptimizer:
     def tell(self, params: dict[str, Any], feedback: dict[str, Any]) -> None:
         self.history.append({"params": dict(params), "feedback": dict(feedback)})
 
+    def proposal_metadata(self) -> dict[str, Any]:
+        """Describe the latest proposal for the persisted study trace."""
+
+        return {}
+
     def state(self) -> dict[str, Any]:
         ranked = [(feedback_rank(item["feedback"]), item) for item in self.history]
         usable = [(rank, item) for rank, item in ranked if rank is not None]
@@ -219,3 +224,12 @@ class GridOptimizer(BaseOptimizer):
 @register("grid")
 def grid_optimizer(case: Case, seed: int | None = None) -> BaseOptimizer:
     return GridOptimizer(case, seed=seed)
+
+
+@register("differential_evolution")
+def differential_evolution_optimizer(case: Case, seed: int | None = None) -> BaseOptimizer:
+    """Build the advanced continuous-space optimizer without a heavy dependency."""
+
+    from .continuous_search import DifferentialEvolutionOptimizer
+
+    return DifferentialEvolutionOptimizer(case, seed=seed)

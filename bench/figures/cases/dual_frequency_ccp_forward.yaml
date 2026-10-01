@@ -1,0 +1,81 @@
+# Forward problem: known plasma resistance trajectory -> two engineering
+# observables at named device reference planes.
+schema: case_yaml.v1
+case_id: dual_frequency_ccp_forward
+
+sources:
+  - type: voltage_sine
+    name: Vhf
+    p: hf_src
+    n: 0
+    dc_V: 0.0
+    amplitude_V: 400.0
+    frequency_Hz: 4.0e7
+    phase_deg: 0.0
+  - type: voltage_pulse
+    name: Vbias
+    p: bias_src
+    n: 0
+    v1_V: 100.0
+    v2_V: -400.0
+    delay_s: 0.0
+    rise_s: 5.0e-8
+    fall_s: 5.0e-8
+    width_s: 1.0e-6
+    period_s: 1.25e-6
+
+circuit:
+  builder: from_yaml
+  topology_family: dual_frequency_ccp_bias_path
+  output_node: top_electrode
+  components:
+    - {ref: Rhf, n1: hf_src, n2: top_electrode, value: 50.0}
+    - {ref: Rbias, n1: bias_src, n2: bias_feed, value: 50.0}
+    - {ref: Cblock, n1: bias_feed, n2: bottom_electrode, value: 2.0e-9}
+    # Voltage-wave monitors at the explicitly named 50-ohm upper reference
+    # plane. Current into the chamber is -i(Vhf), hence V-=(V+50*i(Vhf))/2.
+    - {raw: "Bupper_incident upper_incident_monitor 0 V = '(v(top_electrode)-50*i(Vhf))/2'"}
+    - {raw: "Bupper_reflected upper_reflected_monitor 0 V = '(v(top_electrode)+50*i(Vhf))/2'"}
+
+load:
+  name: from_yaml
+  ports: {p: top_electrode, n: bottom_electrode}
+  reference_plane: electrode_terminals
+  components:
+    - {ref: Csheath_upper, n1: p, n2: bulk_top, value: 1.0e-9}
+    - ref: Rplasma
+      n1: bulk_top
+      n2: bulk_bottom
+      value:
+        profile: dual_frequency_ccp_plasma_resistance.csv
+        time_column: time_s
+        value_column: resistance_ohm
+        interpolation: linear
+        repeat_period_s: 1.25e-6
+    - {ref: Csheath_wafer, n1: bulk_bottom, n2: n, value: 1.0e-9}
+
+measurement:
+  # Canonical objective channel for this forward case: wafer/chuck voltage
+  # relative to the grounded chamber.
+  voltage_node: bottom_electrode
+  current_source: Vhf
+  load_current: auto
+  reference_impedance_ohm: 50.0
+  probes:
+    wafer_voltage_V: v(bottom_electrode)
+    upper_port_voltage_V: v(top_electrode)
+    upper_incident_voltage_V: v(upper_incident_monitor)
+    upper_reflected_voltage_V: v(upper_reflected_monitor)
+    lower_bias_source_voltage_V: v(bias_src)
+
+solver:
+  name: ngspice_cli
+  timeout_s: 300
+  tran: {step_s: 2.5e-10, stop_s: 5.0e-6}
+
+target:
+  waveform_file: dual_frequency_ccp_target_wafer.csv
+  objective: waveform_l2
+  constraints:
+    metric_bounds:
+      peak_abs_voltage_V: {max: 1000.0}

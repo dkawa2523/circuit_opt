@@ -19,7 +19,8 @@ if str(REPOSITORY) not in sys.path:
 
 from pcd.analysis import input_impedance  # noqa: E402
 from pcd.case import Case, load_case  # noqa: E402
-from pcd.results import candidate_result_paths  # noqa: E402
+from pcd.results import read_best_candidate, selected_evaluation  # noqa: E402
+from pcd.simulation_input import SolverRunRequest, resolve_simulation_case  # noqa: E402
 from pcd.solver import ngspice_cli  # noqa: E402
 from pcd.study import run_case_study  # noqa: E402
 
@@ -97,7 +98,8 @@ def _table_spice(source: dict[str, Any], root: Path) -> complex:
             "solver": {"name": "ngspice_cli", "ac": {"frequency_Hz": frequency}},
         },
     )
-    simulation = ngspice_cli(netlist, run_dir, case, {})
+    request = SolverRunRequest(netlist, run_dir, resolve_simulation_case(case))
+    simulation = ngspice_cli(request)
     if simulation.status != "ok" or simulation.frequency_response is None:
         raise RuntimeError(f"Table-I ngspice run failed: {simulation.diagnostics}\n{simulation.log}")
     row = input_impedance(simulation.frequency_response).iloc[0]
@@ -108,10 +110,8 @@ def _matching_case(path: Path, root: Path) -> dict[str, Any]:
     authored = _read_yaml(path)
     case = load_case(path)
     study = run_case_study(case, run_root=root, n_trials=1, solver_override="ngspice_cli", seed=0)
-    candidate_id = str(study["best"]["candidate"]["candidate_id"])
-    candidate_path = next(path for path in candidate_result_paths(study["run_root"]) if path.stem == candidate_id)
-    candidate = json.loads(candidate_path.read_text(encoding="utf-8"))
-    selected = candidate["scenarios"][0]["selected"]
+    candidate = read_best_candidate(study["run_root"])
+    selected = selected_evaluation(candidate["scenarios"][0])
     metrics = selected["metrics"]
 
     frequency = float(authored["frequency_Hz"])

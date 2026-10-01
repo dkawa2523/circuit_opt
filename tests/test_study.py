@@ -23,7 +23,15 @@ from pcd.core import (
     StudyRunner,
     StudySpec,
 )
-from pcd.results import best_decision_summary, candidate_result_paths, candidate_summary, study_artifact_path
+from pcd.results import (
+    best_decision_summary,
+    candidate_summary,
+    quasi_static_snapshot_table,
+    read_best_candidate,
+    read_evaluation_table,
+    selected_evaluation,
+    study_artifact_path,
+)
 from pcd.results import store as store_module
 from pcd.sim_core import archive_case_bundle
 from pcd.study import (
@@ -53,6 +61,10 @@ def test_study_config_separates_design_scenario_and_control(topology_case):
     projected = candidate_case(case)
     assert [scenario.scenario_id for scenario in spec.scenarios] == ["light", "heavy"]
     assert set(projected.data["variables"]) == {"C1", "L1"}
+    assert spec.metadata["analysis"] == "transient"
+    assert spec.metadata["frequency_Hz"] == pytest.approx(1.0e6)
+    assert spec.metadata["reference_plane"] == "load_ports"
+    assert spec.metadata["reference_impedance_ohm"] == pytest.approx(50.0)
 
 
 def test_case_study_runs_through_the_generic_pipeline(tmp_path, topology_case):
@@ -97,11 +109,23 @@ def test_case_study_runs_through_the_generic_pipeline(tmp_path, topology_case):
         "metric.loss",
     } <= set(evaluation_table)
     assert evaluation_table["dataset_id"].nunique() == 1
-    assert result["dataset"]["table_schema"] == "evaluation_table.v1"
-    assert len(list((study_root / "evaluations").glob("*/result.json"))) == 2
+    assert result["dataset"]["table_schema"] == "evaluation_table.v2"
+    best_candidate_path = study_root / result["artifacts"]["best_candidate"]
+    assert best_candidate_path.is_file()
+    assert json.loads(best_candidate_path.read_text(encoding="utf-8"))["candidate"] == result["best"]["candidate"]
+    assert "snapshot_response" not in result["artifacts"]
+    assert "pareto_front" not in result["artifacts"]
+    assert "pareto" not in result
+    assert "raw_cache_key" in evaluation_table
+    assert "cache_key" not in evaluation_table
+    assert not any(str(name).startswith("observation.") for name in evaluation_table)
+    assert not (study_root / "evaluations").exists()
+    assert "candidate_directory" not in result["artifacts"]
+    assert not (best_candidate_path.parent / "candidates").exists()
+    assert read_evaluation_table(study_root).equals(evaluation_table)
     stored = json.loads((study_root / "study_result.json").read_text(encoding="utf-8"))
     assert stored["study"]["study_id"] == topology_case.case_id
-    archived_case_path = study_artifact_path(study_root, "case", "case.yaml")
+    archived_case_path = study_artifact_path(study_root, "case")
     assert archived_case_path is not None
     archived_case = load_case(archived_case_path)
     assert archived_case.data["run"]["trials"] == 2
@@ -112,6 +136,138 @@ def test_case_study_runs_through_the_generic_pipeline(tmp_path, topology_case):
     assert summary.loc[summary["selected"], "candidate_id"].item() == result["best"]["candidate"]["candidate_id"]
     assert "objective.loss" in summary
     assert "control_margin" in summary
+    candidate = read_best_candidate(study_root)
+    assert candidate["schema"] == "candidate_result.v2"
+    assert "selected" not in candidate["scenarios"][0]
+    assert selected_evaluation(candidate["scenarios"][0])["metrics"]["loss"] >= 0.0
+
+
+def test_continuous_study_persists_reproducible_search_evidence(tmp_path, rc_case):
+    result = run_case_study(
+        rc_case,
+        n_trials=16,
+        run_root=tmp_path,
+        optimizer_name="differential_evolution",
+        solver_override="test_fake",
+        seed=23,
+    )
+    study_root = Path(result["run_root"])
+    history = json.loads((study_root / result["artifacts"]["history"]).read_text(encoding="utf-8"))
+    pareto = pd.read_csv(study_root / result["artifacts"]["pareto_front"])
+    evaluations = pd.read_csv(study_root / result["artifacts"]["evaluation_table"])
+
+    assert result["execution"] == {
+        "solver": "test_fake",
+        "optimizer": "differential_evolution",
+        "trials": 16,
+        "seed": 23,
+    }
+    assert len(history) == result["n_candidates"] == 16
+    assert history[0]["proposal"]["phase"] == "initialization"
+    assert history[8]["proposal"]["phase"] == "evolution"
+    assert history[8]["proposal"]["strategy"] == "DE/rand/1/bin"
+    assert all(row["optimizer"] == "differential_evolution" and row["seed"] == 23 for row in history)
+    assert all(row["scenario_count"] == 1 and row["evaluation_count"] == 1 for row in history)
+    assert all(row["duration_s"] >= 0.0 and row["failed_evaluations"] == 0 for row in history)
+    assert all("optimizer_loss" not in row for row in history)
+    assert all(set(row["aggregates"]) == {"normalized_rmse", "peak_abs_voltage_V"} for row in history)
+    assert all("max_peak_abs_voltage_V" in row["constraint_margins"] for row in history)
+    assert "constraint.max_peak_abs_voltage_V.margin" in evaluations
+    assert "max_peak_abs_voltage_V" in result["best"]["constraint_margins"]
+    assert "max_peak_abs_voltage_V" in result["best"]["conditions"][0]["constraint_margins"]
+    assert result["best"]["coverage"] == {"conditions": 1, "solved": 1, "accepted": 1}
+    assert result["pareto"] == {
+        "schema": "pareto_summary.v1",
+        "scope": "observed_candidates",
+        "eligibility": "complete_solver_evidence_and_full_feasibility",
+        "eligible_candidates": 16,
+        "front_candidates": len(pareto),
+    }
+    assert len(pareto) >= 1
+    assert pareto["selected"].sum() == 1
+    assert {
+        "table_schema",
+        "dataset_id",
+        "candidate_id",
+        "selected",
+        "design.R1",
+        "design.C1",
+        "objective.normalized_rmse",
+        "objective.peak_abs_voltage_V",
+    } <= set(pareto)
+    assert set(pareto["table_schema"]) == {"pareto_front.v1"}
+    assert set(pareto["dataset_id"]) == {result["dataset"]["dataset_id"]}
+    assert result["best"]["candidate"]["candidate_id"] in set(pareto["candidate_id"])
+
+
+def test_multiobjective_study_publishes_an_empty_front_when_no_candidate_is_feasible(tmp_path, rc_case):
+    data = copy.deepcopy(rc_case.data)
+    data["target"]["constraints"]["metric_bounds"]["peak_abs_voltage_V"]["max"] = -1.0
+    case = Case(rc_case.path, data)
+
+    result = run_case_study(
+        case,
+        n_trials=1,
+        run_root=tmp_path,
+        optimizer_name="random",
+        solver_override="test_fake",
+        seed=5,
+    )
+    table = pd.read_csv(Path(result["run_root"]) / result["artifacts"]["pareto_front"])
+
+    assert result["pareto"]["eligible_candidates"] == 0
+    assert result["pareto"]["front_candidates"] == 0
+    assert table.empty
+    assert {"candidate_id", "selected", "objective.normalized_rmse", "objective.peak_abs_voltage_V"} <= set(table)
+
+
+def test_quasi_static_snapshot_table_is_a_concise_time_ordered_projection():
+    candidate = Candidate("best", {"L1": 1e-6})
+
+    def snapshot(time_s: float, resistance: float, reflection: float) -> ScenarioResult:
+        scenario = Scenario(
+            f"{time_s:g}",
+            {
+                "snapshot_time_s": time_s,
+                "load_resistance_ohm": resistance,
+                "load_reactance_ohm": -40.0,
+            },
+        )
+        request = EvaluationRequest(candidate, scenario, ControlState({"C1": 100e-12}))
+        evaluation = EvaluationResult(
+            request=request,
+            raw=RawResult("ok"),
+            metrics=MetricSet(
+                {
+                    "match_frequency_Hz": 13.56e6,
+                    "resistance_ohm": 50.0,
+                    "reactance_ohm": 0.0,
+                    "reflection_magnitude": reflection,
+                    "reflected_power_fraction": reflection**2,
+                    "forward_power_W": 100.0,
+                    "reflected_power_W": 100.0 * reflection**2,
+                    "load_real_power_W": 95.0,
+                }
+            ),
+        )
+        return ScenarioResult(scenario, evaluation, (evaluation,), control_margin=0.5)
+
+    result = CandidateResult(
+        candidate,
+        (snapshot(2e-6, 30.0, 0.2), snapshot(0.0, 20.0, 0.1)),
+        {"reflection_magnitude": 0.2},
+        1.0,
+        1.0,
+        0.0,
+    )
+
+    frame = quasi_static_snapshot_table(result)
+
+    assert frame["time_s"].tolist() == [0.0, 2e-6]
+    assert frame["load_resistance_ohm"].tolist() == [20.0, 30.0]
+    assert frame["reflected_power_fraction"].tolist() == pytest.approx([0.01, 0.04])
+    assert frame["design.L1"].tolist() == [1e-6, 1e-6]
+    assert frame["control.C1"].tolist() == [100e-12, 100e-12]
 
 
 def test_rerunning_a_study_publishes_one_new_candidate_generation(tmp_path, topology_case):
@@ -135,11 +291,14 @@ def test_rerunning_a_study_publishes_one_new_candidate_generation(tmp_path, topo
     study_root = Path(second["run_root"])
     assert first["run_root"] == second["run_root"]
     assert second["n_candidates"] == 1
-    first_candidates = study_root / first["artifacts"]["candidate_directory"]
-    second_candidates = study_root / second["artifacts"]["candidate_directory"]
-    assert first_candidates != second_candidates
-    assert len(list(first_candidates.glob("*.json"))) == 3
-    assert [path.name for path in second_candidates.glob("*.json")] == ["trial_0000.json"]
+    first_candidate = study_root / first["artifacts"]["best_candidate"]
+    second_candidate = study_root / second["artifacts"]["best_candidate"]
+    assert first_candidate != second_candidate
+    assert first_candidate.name == second_candidate.name == "best_candidate.json"
+    assert first_candidate.is_file()
+    assert second_candidate.is_file()
+    assert not (first_candidate.parent / "candidates").exists()
+    assert not (second_candidate.parent / "candidates").exists()
     assert candidate_summary(study_root)["candidate_id"].tolist() == ["trial_0000"]
 
 
@@ -176,7 +335,7 @@ def test_an_interrupted_rerun_keeps_the_previous_generation_committed(tmp_path, 
         )
 
     assert (study_root / "study_result.json").read_bytes() == committed
-    assert len(candidate_result_paths(study_root)) == 1
+    assert read_best_candidate(study_root)["candidate"] == first["best"]["candidate"]
 
 
 def test_best_decision_summary_distinguishes_failed_evidence_and_control_margin():
@@ -240,27 +399,37 @@ def test_best_decision_summary_distinguishes_failed_evidence_and_control_margin(
 
 def test_candidate_summary_matches_evidence_coverage_and_objective_direction(tmp_path):
     study_root = tmp_path / "summary"
-    candidates = study_root / "candidates"
-    candidates.mkdir(parents=True)
+    generation = study_root / "generations" / "g_test"
+    generation.mkdir(parents=True)
+    history = []
 
     def save(candidate_id, success, feasible, score, margin):
-        payload = {
-            "candidate": {"candidate_id": candidate_id, "values": {}},
-            "success_fraction": success,
-            "feasible_fraction": feasible,
-            "total_violation": 0.0,
-            "aggregates": {"score": score},
-            "control_margin": margin,
-        }
-        (candidates / f"{candidate_id}.json").write_text(json.dumps(payload), encoding="utf-8")
+        history.append(
+            {
+                "candidate_id": candidate_id,
+                "params": {},
+                "success_fraction": success,
+                "feasible_fraction": feasible,
+                "total_violation": 0.0,
+                "aggregates": {"score": score},
+                "control_margin": margin,
+            }
+        )
 
     save("failed", 0.5, 0.5, 1000.0, 1.0)
     save("incomplete", 1.0, 0.5, 100.0, 1.0)
     save("complete-low", 1.0, 1.0, 1.0, 1.0)
     save("complete-edge", 1.0, 1.0, 2.0, 0.0)
     save("complete-center", 1.0, 1.0, 2.0, 1.0)
+    (generation / "study_history.json").write_text(json.dumps(history), encoding="utf-8")
     (study_root / "study_result.json").write_text(
-        json.dumps({"study": {"objectives": [{"metric": "score", "direction": "maximize", "aggregation": "worst"}]}}),
+        json.dumps(
+            {
+                "study": {"objectives": [{"metric": "score", "direction": "maximize", "aggregation": "worst"}]},
+                "best": {"candidate": {"candidate_id": "complete-center"}},
+                "artifacts": {"history": "generations/g_test/study_history.json"},
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -274,6 +443,15 @@ def test_candidate_summary_matches_evidence_coverage_and_objective_direction(tmp
     ]
 
 
+def test_selected_evaluation_reads_the_indexed_candidate_trial():
+    first = {"metrics": {"loss": 1.0}}
+    second = {"metrics": {"loss": 2.0}}
+
+    assert selected_evaluation({"selected_trial": 1, "trials": [first, second]}) == second
+    with pytest.raises(ValueError, match="valid selected trial"):
+        selected_evaluation({"selected_trial": 2, "trials": [first]})
+
+
 def test_study_archives_external_data_once_at_the_study_root(tmp_path):
     case_path = Path(__file__).resolve().parents[1] / "bench" / "cases" / "match_fixed_nominal.yaml"
     _spec, runner, store = build_case_runner(load_case(case_path), tmp_path, solver_override="test_fake")
@@ -284,7 +462,9 @@ def test_study_archives_external_data_once_at_the_study_root(tmp_path):
     assert (root / "input_manifest.json").is_file()
     assert not list((root / "artifacts").rglob("inputs"))
     assert not list((root / "artifacts").rglob("input_manifest.json"))
-    evaluation_manifest = json.loads(next((root / "artifacts").glob("*/sim_manifest.json")).read_text(encoding="utf-8"))
+    evaluation_manifest = json.loads(
+        next((root / "artifacts").glob("*/debug/manifest.json")).read_text(encoding="utf-8")
+    )
     shared_manifest = evaluation_manifest["artifacts"]["input_manifest"]
     assert (Path(evaluation_manifest["run_dir"]) / shared_manifest).resolve() == (
         root / "input_manifest.json"

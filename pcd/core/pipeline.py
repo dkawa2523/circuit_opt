@@ -56,9 +56,6 @@ class StudyRunner:
                 for margin in (control_margin(control, controls),)
             )
             trials = tuple(result for result, _margin in trial_rows)
-            if self.store:
-                for trial in trials:
-                    self.store.save(trial)
             selected, margin = min(
                 trial_rows,
                 key=lambda row: self._control_rank(*row),
@@ -66,8 +63,6 @@ class StudyRunner:
             scenarios.append(ScenarioResult(scenario, selected, trials, margin))
 
         candidate_result = aggregate_candidate(self.study, candidate, tuple(scenarios))
-        if self.store:
-            self.store.save_candidate(candidate_result)
         return candidate_result
 
     def run(self, candidates: list[Candidate]) -> list[CandidateResult]:
@@ -118,6 +113,7 @@ class StudyRunner:
                 violation=distance / max(limit, 1e-12),
                 value=margin,
                 limit=limit,
+                margin=margin - limit,
             )
         return replace(result, constraints=(*result.constraints, constraint))
 
@@ -130,21 +126,11 @@ class StudyRunner:
         raw = self.store.load_raw(request) if self.store else None
         from_cache = raw is not None
         if raw is None:
-            raw = self._evaluate_raw(request)
+            raw = self.evaluator.evaluate(request)
             if self.store:
                 self.store.save_raw(request, raw)
         result = self._finish_evaluation(request, raw, started, from_cache)
         return result
-
-    def _evaluate_raw(self, request: EvaluationRequest) -> RawResult:
-        try:
-            return self.evaluator.evaluate(request)
-        except Exception as exc:  # an evaluation failure is data, not a lost study
-            return RawResult(
-                status="failed",
-                error=f"{type(exc).__name__}: {exc}",
-                diagnostics={"stage": "evaluate", "exception_type": type(exc).__name__},
-            )
 
     def _finish_evaluation(
         self,
@@ -160,16 +146,16 @@ class StudyRunner:
                 metrics = self._compute_metrics(request, raw)
                 self._require_objectives(metrics)
                 constraints.extend(item.evaluate(request, raw, metrics) for item in self.constraints)
-            except Exception as exc:
-                status = "not_settled" if isinstance(exc, UnsettledMeasurementError) else "failed"
+            except UnsettledMeasurementError as exc:
                 raw = RawResult(
-                    status=status,
+                    status="not_settled",
                     observations=raw.observations,
                     artifacts=raw.artifacts,
                     diagnostics={**dict(raw.diagnostics), "stage": "measure", "exception_type": type(exc).__name__},
                     error=f"{type(exc).__name__}: {exc}",
                 )
                 metrics = MetricSet()
+                constraints = []
 
         constraints.append(
             ConstraintResult(
@@ -179,14 +165,12 @@ class StudyRunner:
                 detail=None if raw.ok else raw.error or raw.status,
             )
         )
-        cache_key = self.store.key(request) if self.store else ""
         raw_cache_key = self.store.raw_key(request) if self.store else ""
         return EvaluationResult(
             request=request,
             raw=raw,
             metrics=metrics,
             constraints=tuple(constraints),
-            cache_key=cache_key,
             raw_cache_key=raw_cache_key,
             duration_s=time.perf_counter() - started,
             from_cache=from_cache,

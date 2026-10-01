@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pandas as pd
 
-from pcd.analysis import ac_sweep
-from pcd.case import Case
-from pcd.sim_registry import register
-from pcd.solver import SimulationResult
+from pcd.case import Case, load_case
+from pcd.records import artifact_path, read_sim_record
+from pcd.sim_registry import register_solver
+from pcd.simulation import SimulationResult
+from pcd.simulation_input import SolverRunRequest
 from pcd.spice import param_ref_or_value
 
 
@@ -67,12 +67,18 @@ def _source_waveform(
     return value("dc_V", default=0.0) + amplitude * np.sin(2 * np.pi * frequency * time_s + phase)
 
 
-@register("solver", "test_fake")
-def fake_solver(_netlist_path: Path, _run_dir: Path, case: Case, params: dict[str, Any]) -> SimulationResult:
+@register_solver("test_fake")
+def fake_solver(request: SolverRunRequest) -> SimulationResult:
     """Registry adapter for the deterministic test waveform."""
 
+    record = read_sim_record(request.run_dir)
+    case_path = artifact_path(record, "case")
+    if case_path is None:
+        raise ValueError("prepared simulation does not declare its archived case")
+    case = load_case(case_path)
+    params = dict(record.get("params") or {})
     waveform = fake_waveform(case, params)
-    status = "failed" if ac_sweep(case.data.get("solver", {}) or {}, params) is not None else "ok"
+    status = "failed" if request.simulation.analysis.ac is not None else "ok"
     return SimulationResult(
         time_s=waveform["time_s"].to_numpy(float),
         voltage_V=waveform["voltage_V"].to_numpy(float),

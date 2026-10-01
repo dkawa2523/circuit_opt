@@ -98,8 +98,8 @@ def test_identical_evaluations_are_resumed_from_content_cache(tmp_path):
     assert evaluator.calls == 2  # two scenarios, only on the first call
     assert not any(item.from_cache for item in first.evaluations)
     assert all(item.from_cache for item in second.evaluations)
-    assert len(list((store.root / "evaluations").glob("*/result.json"))) == 2
     assert len(list((store.root / "raw").glob("*/raw_result.json"))) == 2
+    assert not (store.root / "evaluations").exists()
     assert all(item.raw_cache_key for item in second.evaluations)
 
 
@@ -123,9 +123,7 @@ def test_physical_cache_ignores_attribution_ids_and_scenario_weights(tmp_path):
     assert [item.from_cache for item in first.evaluations] == [False, True]
     assert all(item.from_cache for item in second.evaluations)
     assert len({item.raw_cache_key for item in (*first.evaluations, *second.evaluations)}) == 1
-    assert len({item.cache_key for item in (*first.evaluations, *second.evaluations)}) == 4
     assert len(list((store.root / "raw").glob("*/raw_result.json"))) == 1
-    assert len(list((store.root / "evaluations").glob("*/result.json"))) == 4
     assert {item.request.candidate.candidate_id for item in second.evaluations} == {"second-label"}
 
 
@@ -176,10 +174,9 @@ def test_current_metrics_and_constraints_are_recomputed_from_cached_raw_output(t
     assert not any(item.feasible for item in second.evaluations)
     assert all(item.from_cache for item in second.evaluations)
     assert len(list((first_store.root / "raw").glob("*/raw_result.json"))) == 2
-    assert len(list((first_store.root / "evaluations").glob("*/result.json"))) == 4
 
 
-def test_measurement_failure_does_not_poison_reusable_raw_output(tmp_path):
+def test_measurement_bug_propagates_without_poisoning_reusable_raw_output(tmp_path):
     class BrokenMetric:
         def compute(self, request, raw):
             del request, raw
@@ -198,7 +195,9 @@ def test_measurement_failure_does_not_poison_reusable_raw_output(tmp_path):
             {"measurement": "broken"},
             raw_runtime_fingerprint=raw_fingerprint,
         ),
-    ).evaluate_candidate(candidate)
+    )
+    with pytest.raises(RuntimeError, match="metric definition is broken"):
+        broken.evaluate_candidate(candidate)
     recovered = StudyRunner(
         _study(),
         evaluator,
@@ -212,8 +211,8 @@ def test_measurement_failure_does_not_poison_reusable_raw_output(tmp_path):
     ).evaluate_candidate(candidate)
 
     assert evaluator.calls == 2
-    assert all(item.raw.diagnostics["stage"] == "measure" for item in broken.evaluations)
-    assert all(item.raw.ok and item.from_cache for item in recovered.evaluations)
+    assert [item.from_cache for item in recovered.evaluations] == [True, False]
+    assert all(item.raw.ok for item in recovered.evaluations)
 
 
 def test_inner_control_search_selects_a_different_operating_point_per_scenario(tmp_path):
@@ -354,22 +353,19 @@ def test_electrically_reachable_edge_is_retained_when_no_jointly_feasible_contro
     assert result.feasible_fraction == 0.0
     assert result.edge_limited
     assert result.to_dict()["scenarios"][0]["edge_limited"] is True
-    persisted = next((store.root / "evaluations").glob("*/result.json")).read_text(encoding="utf-8")
-    assert "min_control_margin" in persisted
+    assert any(item.name == "min_control_margin" for item in selected.constraints)
+    assert not (store.root / "candidates").exists()
 
 
-def test_failed_evaluation_is_recorded_and_does_not_abort_the_study(tmp_path):
+def test_unexpected_evaluator_exception_propagates(tmp_path):
     class Broken:
         def evaluate(self, request):
             del request
             raise RuntimeError("backend stopped")
 
     runner = StudyRunner(_study(), Broken(), metrics=(ScoreMetric(),), store=FileResultStore(tmp_path, "broken"))
-    result = runner.evaluate_candidate(Candidate("candidate", {"x": 1.0}))
-    assert result.success_fraction == 0.0
-    assert result.feasible_fraction == 0.0
-    assert all(item.raw.status == "failed" for item in result.evaluations)
-    assert all("backend stopped" in str(item.raw.error) for item in result.evaluations)
+    with pytest.raises(RuntimeError, match="backend stopped"):
+        runner.evaluate_candidate(Candidate("candidate", {"x": 1.0}))
     assert list((tmp_path / "broken" / "raw").glob("*/raw_result.json")) == []
 
 
@@ -429,17 +425,14 @@ def test_an_empty_control_policy_is_rejected_before_backend_work():
         runner.evaluate_candidate(Candidate("candidate", {"x": 1.0}))
 
 
-def test_duplicate_metric_names_become_a_recorded_measurement_failure():
+def test_duplicate_metric_names_are_rejected_as_a_definition_error():
     runner = StudyRunner(
         _study(),
         CountingEvaluator(),
         metrics=(ScoreMetric(), ScoreMetric()),
     )
-    result = runner.evaluate_candidate(Candidate("candidate", {"x": 1.0}))
-    assert all(item.raw.status == "failed" for item in result.evaluations)
-    assert all(item.raw.diagnostics["stage"] == "measure" for item in result.evaluations)
-    assert all("duplicate values" in str(item.raw.error) for item in result.evaluations)
-    assert all(item.cache_key == "" for item in result.evaluations)
+    with pytest.raises(ValueError, match="duplicate values"):
+        runner.evaluate_candidate(Candidate("candidate", {"x": 1.0}))
 
 
 def test_unsettled_metric_is_recorded_distinctly_from_a_backend_failure():
@@ -456,18 +449,15 @@ def test_unsettled_metric_is_recorded_distinctly_from_a_backend_failure():
     assert all("still ringing" in str(item.raw.error) for item in result.evaluations)
 
 
-def test_missing_objective_metric_becomes_a_recorded_measurement_failure():
+def test_missing_objective_metric_is_rejected_as_a_definition_error():
     class IncompleteMetric:
         def compute(self, request, raw):
             del request, raw
             return MetricSet({"diagnostic_only": 1.0})
 
-    result = StudyRunner(_study(), CountingEvaluator(), metrics=(IncompleteMetric(),)).evaluate_candidate(
-        Candidate("candidate", {"x": 1.0})
-    )
-
-    assert all(item.raw.status == "failed" for item in result.evaluations)
-    assert all("objective metric 'loss'" in str(item.raw.error) for item in result.evaluations)
+    runner = StudyRunner(_study(), CountingEvaluator(), metrics=(IncompleteMetric(),))
+    with pytest.raises(ValueError, match="objective metric 'loss'"):
+        runner.evaluate_candidate(Candidate("candidate", {"x": 1.0}))
 
 
 def test_a_backend_reported_failure_needs_no_exception_or_result_store():

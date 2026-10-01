@@ -12,6 +12,7 @@ import yaml
 
 from pcd.case import load_case
 from pcd.plan import compile_rf_case
+from pcd.records import artifact_path
 from pcd.sim_core import prepare_case
 from pcd.study_config import study_spec_from_case
 from pcd.validation import validate_case
@@ -61,11 +62,97 @@ def test_frequency_table_drives_source_load_and_solver_with_one_value():
     assert case.data["variables"]["rf_frequency_Hz"]["default"] == 10e6
 
 
+def test_quasi_static_profile_reuses_independent_ac_scenarios(tmp_path):
+    table = tmp_path / "profile.csv"
+    table.write_text(
+        "time_s,resistance_ohm,reactance_ohm\n0,20,-80\n1e-6,30,-60\n2e-6,40,-40\n",
+        encoding="utf-8",
+    )
+    data = _base()
+    data["drive_peak_V"] = 100
+    data["load"] = {
+        "type": "impedance_profile",
+        "file": table.name,
+        "reference_plane": "electrode_terminal",
+        "evidence": {"origin": "test_measurement"},
+    }
+
+    plan = compile_rf_case(data, tmp_path)
+
+    assert plan.case["study"]["analysis_mode"] == "quasi_static_snapshot"
+    scenario_table = plan.case["study"]["scenario_table"]
+    assert scenario_table["id_column"] == "time_s"
+    assert scenario_table["values"] == {
+        "snapshot_time_s": "time_s",
+        "load_resistance_ohm": "resistance_ohm",
+        "load_reactance_ohm": "reactance_ohm",
+    }
+    assert plan.case["load"]["name"] == "impedance_point"
+    assert plan.case["measurement"]["load_current"] == "auto"
+    assert plan.case["variables"]["snapshot_time_s"]["default"] == 0.0
+    assert any("no state is propagated" in item for item in plan.inferences)
+
+
+def test_quasi_static_profile_can_supply_frequency_and_drive_per_snapshot(tmp_path):
+    table = tmp_path / "profile.csv"
+    table.write_text(
+        "time_s,frequency_Hz,drive_peak_V,resistance_ohm,reactance_ohm\n0,1e6,50,20,-80\n1e-6,2e6,75,30,-60\n",
+        encoding="utf-8",
+    )
+    data = _base()
+    data.pop("frequency_Hz")
+    data["load"] = {
+        "type": "impedance_profile",
+        "file": table.name,
+        "reference_plane": "electrode_terminal",
+    }
+
+    plan = compile_rf_case(data, tmp_path)
+
+    values = plan.case["study"]["scenario_table"]["values"]
+    assert values["rf_frequency_Hz"] == "frequency_Hz"
+    assert values["drive_amplitude_V"] == "drive_peak_V"
+    assert plan.case["source"]["frequency_Hz"] == "rf_frequency_Hz"
+    assert plan.case["source"]["amplitude_V"] == "drive_amplitude_V"
+    assert plan.case["load"]["model_frequency_Hz"] == "rf_frequency_Hz"
+
+
+def test_quasi_static_profile_rejects_invalid_time_and_missing_absolute_drive(tmp_path):
+    table = tmp_path / "profile.csv"
+    data = _base()
+    data["load"] = {
+        "type": "impedance_profile",
+        "file": table.name,
+        "reference_plane": "electrode_terminal",
+    }
+    table.write_text(
+        "time_s,resistance_ohm,reactance_ohm\n0,20,-80\n1e-6,30,-60\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="drive_peak_V"):
+        compile_rf_case(data, tmp_path)
+
+    data["drive_peak_V"] = 100
+    for times, message in [
+        (("0", "0"), "strictly increasing"),
+        (("1e-6", "0"), "strictly increasing"),
+        (("-1e-6", "0"), "non-negative"),
+        (("0", "nan"), "finite"),
+    ]:
+        table.write_text(
+            f"time_s,resistance_ohm,reactance_ohm\n{times[0]},20,-80\n{times[1]},30,-60\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(ValueError, match=message):
+            compile_rf_case(data, tmp_path)
+
+
 def test_absolute_drive_exposes_every_named_matching_component():
     case = load_case(BENCH / "match_high_drive_stress.yaml")
     components = {item["ref"]: item for item in case.data["circuit"]["components"]}
 
     assert case.data["circuit"]["builder"] == "from_yaml"
+    assert case.data["circuit"]["topology_family"] == "pi_match"
     assert {ref for ref, item in components.items() if item.get("observe")} == {"C1", "L1", "C2"}
     assert components["L1"]["series_resistance_ohm"] == 0.5
     assert case.data["source"]["amplitude_V"] == "drive_amplitude_V"
@@ -79,6 +166,7 @@ def test_explicit_drive_without_limits_still_reports_named_component_stress():
 
     components = {item["ref"]: item for item in plan.case["circuit"]["components"]}
     assert plan.case["circuit"]["builder"] == "from_yaml"
+    assert plan.case["circuit"]["topology_family"] == "pi_match"
     assert all(item.get("observe") is True for item in components.values())
     assert "load_current" in plan.case["measurement"]
 
@@ -106,22 +194,29 @@ def test_source_limits_and_control_margin_compile_into_their_existing_execution_
 def test_run_archives_authored_input_and_resolved_plan(tmp_path):
     case = load_case(BENCH / "match_fixed_nominal.yaml")
     record = prepare_case(case, run_root=tmp_path)
+    persisted = record.manifest()
+    input_case = artifact_path(persisted, "input_case")
+    resolved_plan = artifact_path(persisted, "resolved_plan")
+    executable_case = artifact_path(persisted, "case")
+    input_manifest = artifact_path(persisted, "input_manifest")
+    assert input_case is not None
+    assert resolved_plan is not None
+    assert executable_case is not None
+    assert input_manifest is not None
 
-    assert yaml.safe_load((record.run_dir / "input_case.yaml").read_text(encoding="utf-8"))["schema"] == "pcd.rf.v1"
-    resolved = yaml.safe_load((record.run_dir / "resolved_plan.yaml").read_text(encoding="utf-8"))
+    assert yaml.safe_load(input_case.read_text(encoding="utf-8"))["schema"] == "pcd.rf.v1"
+    resolved = yaml.safe_load(resolved_plan.read_text(encoding="utf-8"))
     assert resolved["source_schema"] == "pcd.rf.v1"
-    assert resolved["case"] == yaml.safe_load((record.run_dir / "case.yaml").read_text(encoding="utf-8"))
-    assert record.manifest()["artifacts"]["resolved_plan"] == "resolved_plan.yaml"
-    assert record.manifest()["artifacts"]["input_manifest"] == "input_manifest.json"
+    assert resolved["case"] == yaml.safe_load(executable_case.read_text(encoding="utf-8"))
     assert record.provenance["input_schema"] == "pcd.rf.v1"
 
-    manifest = json.loads((record.run_dir / "input_manifest.json").read_text(encoding="utf-8"))
+    manifest = json.loads(input_manifest.read_text(encoding="utf-8"))
     assert manifest["schema"] == "input_manifest.v1"
     assert len(manifest["inputs"]) == 1
-    archived_input = record.run_dir / manifest["inputs"][0]["artifact"]
+    archived_input = input_manifest.parent / manifest["inputs"][0]["artifact"]
     assert archived_input.read_bytes() == (BENCH.parent / "load_scenarios.csv").read_bytes()
 
-    archived_case = load_case(record.run_dir / "case.yaml")
+    archived_case = load_case(executable_case)
     archived_table = archived_case.data["study"]["scenario_table"]["table_file"]
     assert not Path(archived_table).is_absolute()
     assert (archived_case.base_dir / archived_table).resolve() == archived_input.resolve()
@@ -144,7 +239,9 @@ def test_archived_case_replays_its_scenarios_after_the_source_table_is_removed(t
     table.unlink()
     case_path.unlink()
 
-    replay = load_case(record.run_dir / "case.yaml")
+    replay_path = artifact_path(record.manifest(), "case")
+    assert replay_path is not None
+    replay = load_case(replay_path)
     assert [item.scenario_id for item in study_spec_from_case(replay).scenarios] == ["nominal", "high"]
 
 
@@ -520,7 +617,7 @@ def test_table_rejects_missing_empty_and_frequency_ambiguous_data(tmp_path):
 
     data.pop("frequency_Hz")
     table.write_text("scenario_id,resistance_ohm,reactance_ohm\na,25,-80\n", encoding="utf-8")
-    with pytest.raises(ValueError, match="required when the impedance table"):
+    with pytest.raises(ValueError, match="required when the tabulated load"):
         compile_rf_case(data, tmp_path)
 
     data["frequency_Hz"] = 13.56e6

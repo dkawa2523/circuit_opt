@@ -271,6 +271,10 @@ def test_a_case_without_a_source_is_reported(make_case):
     assert NO_SOURCE_WARNING in case_warnings(make_case({"case_id": "nosrc"}))
 
 
+def test_an_empty_source_mapping_is_an_explicit_default_source(make_case):
+    assert NO_SOURCE_WARNING not in case_warnings(make_case({"case_id": "default_src", "source": {}}))
+
+
 # --- the drive frequency ----------------------------------------------------
 
 

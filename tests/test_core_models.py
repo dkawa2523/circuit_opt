@@ -31,13 +31,12 @@ def _request(scenario: Scenario | None = None) -> EvaluationRequest:
     )
 
 
-def _evaluation(scenario: Scenario | None = None, *, cache_key: str = "key") -> EvaluationResult:
+def _evaluation(scenario: Scenario | None = None) -> EvaluationResult:
     return EvaluationResult(
         request=_request(scenario),
         raw=RawResult("ok", {"waveform": [1.0, 2.0]}, {"file": "wave.csv"}),
         metrics=MetricSet({"loss": 0.25}),
-        constraints=(ConstraintResult("limit", True, value=0.25, limit=1.0),),
-        cache_key=cache_key,
+        constraints=(ConstraintResult("limit", True, value=0.25, limit=1.0, margin=0.75),),
         duration_s=0.1,
     )
 
@@ -89,6 +88,7 @@ def test_metric_values_must_be_persistable_finite_numbers():
         (lambda: ConstraintResult("limit", False, violation=-1), "non-negative"),
         (lambda: ConstraintResult("limit", False, violation=np.nan), "finite"),
         (lambda: ConstraintResult("limit", False, value=cast(Any, "bad")), "value must be finite"),
+        (lambda: ConstraintResult("limit", False, margin=np.inf), "margin must be finite"),
         (lambda: EvaluationResult(_request(), RawResult("ok"), duration_s=np.inf), "duration_s"),
     ],
 )
@@ -127,6 +127,7 @@ def test_evaluation_result_round_trip_preserves_all_boundary_fields():
     assert restored.to_dict() == original.to_dict()
     assert restored.feasible
     assert restored.total_violation == 0.0
+    assert restored.constraint_margins == {"limit": 0.75}
     assert restored.request.merged_inputs() == {"x": 1.0, "tune": 2.0}
 
 
@@ -154,8 +155,8 @@ def test_raw_key_describes_physics_not_study_attribution():
 
 def test_scenario_result_requires_a_real_selected_trial():
     scenario = Scenario("nominal")
-    selected = _evaluation(scenario, cache_key="selected")
-    other = _evaluation(scenario, cache_key="other")
+    selected = _evaluation(scenario)
+    other = _evaluation(scenario)
     with pytest.raises(ValueError, match="at least one"):
         ScenarioResult(scenario, selected, ())
     with pytest.raises(ValueError, match="one of"):

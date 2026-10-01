@@ -146,7 +146,7 @@ def case_warnings(case: Case) -> list[str]:
     """Return only concise warnings worth retaining with run artifacts."""
 
     warnings: list[str] = []
-    if not case.data.get("source") and not case.data.get("sources"):
+    if case.data.get("source") is None and not case.data.get("sources"):
         warnings.append(NO_SOURCE_WARNING)
 
     declared_in: dict[str, str] = {}

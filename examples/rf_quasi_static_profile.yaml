@@ -1,0 +1,25 @@
+# Replay a measured slow envelope as independent AC snapshots. Each row has
+# no propagated state; the output reports the selected C2 and electrical power.
+schema: pcd.rf.v1
+case_id: rf_quasi_static_profile
+frequency_Hz: 13560000
+drive_peak_V: 100
+
+network:
+  type: pi_match
+  fixed:
+    C1: 2.6e-10
+    L1: 1.2e-6
+  tuning:
+    C2: [8.0e-12, 5.0e-11, 1.5e-10]
+
+load:
+  type: impedance_profile
+  file: rf_quasi_static_profile.csv
+  reference_plane: electrode_terminal
+  evidence:
+    origin: synthetic_example_measurement
+    applicability: envelope_changes_slowly_relative_to_rf_period
+
+acceptance:
+  reflected_power_fraction_max: 0.25

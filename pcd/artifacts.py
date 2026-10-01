@@ -124,7 +124,7 @@ def archive_data_files(
     inputs = root / "inputs"
     entries: list[dict[str, Any]] = []
     replacements: dict[str, str] = {}
-    references = [*_data_file_references(data), *((field, str(path)) for field, path in extra_references)]
+    references = [*data_file_references(data), *((field, str(path)) for field, path in extra_references)]
     for field, declared in references:
         source = Path(declared)
         source = (source if source.is_absolute() else base / source).resolve()
@@ -161,30 +161,41 @@ def rewrite_data_file_paths(
 
     base = Path(base_dir)
 
-    def visit(value: Any) -> Any:
+    profile_fields = {field for field, _declared in data_file_references(data) if field.endswith(".value.profile")}
+
+    def visit(value: Any, path: str = "$") -> Any:
         if isinstance(value, Mapping):
             is_impedance_table = str(value.get("type", "")) == "impedance_table"
             out: dict[str, Any] = {}
             for raw_name, item in value.items():
                 name = str(raw_name)
-                is_file = name.endswith("_file") or (name == "file" and is_impedance_table)
+                item_path = f"{path}.{name}"
+                is_file = (
+                    name.endswith("_file") or (name == "file" and is_impedance_table) or item_path in profile_fields
+                )
                 if is_file and isinstance(item, str):
                     source = Path(item)
                     source = (source if source.is_absolute() else base / source).resolve()
                     out[name] = replacements.get(str(source), item)
                 else:
-                    out[name] = visit(item)
+                    out[name] = visit(item, item_path)
             return out
         if isinstance(value, list):
-            return [visit(item) for item in value]
+            return [visit(item, f"{path}[{index}]") for index, item in enumerate(value)]
         if isinstance(value, tuple):
-            return [visit(item) for item in value]
+            return [visit(item, f"{path}[{index}]") for index, item in enumerate(value)]
         return deepcopy(value)
 
     return visit(data)
 
 
-def _data_file_references(data: Mapping[str, Any]) -> list[tuple[str, str]]:
+def data_file_references(data: Mapping[str, Any]) -> list[tuple[str, str]]:
+    """Return data files owned by built-in case sections."""
+
+    return [*_fixed_data_file_references(data), *_component_profile_references(data)]
+
+
+def _fixed_data_file_references(data: Mapping[str, Any]) -> list[tuple[str, str]]:
     references: list[tuple[str, str]] = []
     for parts in _DATA_FILE_FIELDS:
         value: Any = data
@@ -195,6 +206,27 @@ def _data_file_references(data: Mapping[str, Any]) -> list[tuple[str, str]]:
         else:
             if isinstance(value, str) and value.strip():
                 references.append(("$." + ".".join(parts), value))
+    return references
+
+
+def _component_profile_references(data: Mapping[str, Any]) -> list[tuple[str, str]]:
+    references: list[tuple[str, str]] = []
+    for section_name in ("circuit", "load"):
+        section = data.get(section_name)
+        if not isinstance(section, Mapping):
+            continue
+        components = section.get("components")
+        if not isinstance(components, list):
+            continue
+        for index, component in enumerate(components):
+            if not isinstance(component, Mapping):
+                continue
+            value = component.get("value")
+            if not isinstance(value, Mapping):
+                continue
+            profile = value.get("profile")
+            if isinstance(profile, str) and profile.strip():
+                references.append((f"$.{section_name}.components[{index}].value.profile", profile))
     return references
 
 

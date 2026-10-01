@@ -20,7 +20,7 @@ import yaml
 from pcd import __version__
 from pcd.artifacts import write_json
 from pcd.case import load_case
-from pcd.results import candidate_result_paths
+from pcd.results import candidate_summary, read_best_candidate, selected_evaluation
 from pcd.study import run_case_study
 
 ROOT = Path(__file__).resolve().parent
@@ -53,7 +53,7 @@ def _parameters_match(actual: dict[str, Any], expected: dict[str, Any]) -> bool:
 def _selected_scenarios(candidate: dict[str, Any]) -> list[dict[str, Any]]:
     selected: list[dict[str, Any]] = []
     for item in candidate["scenarios"]:
-        evaluation = item["selected"]
+        evaluation = selected_evaluation(item)
         constraints = evaluation.get("constraints", []) or []
         violated = sorted(str(row["name"]) for row in constraints if not bool(row["satisfied"]))
         feasible = evaluation["raw"]["status"] == "ok" and all(bool(row["satisfied"]) for row in constraints)
@@ -100,7 +100,7 @@ def _selected_controls_match(scenarios: list[dict[str, Any]], expected: dict[str
 
 def _metric_ranges_match(candidate: dict[str, Any], expected: dict[str, Any]) -> bool:
     actual = {
-        str(item["scenario"]["scenario_id"]): dict(item["selected"].get("metrics") or {})
+        str(item["scenario"]["scenario_id"]): dict(selected_evaluation(item).get("metrics") or {})
         for item in candidate["scenarios"]
     }
     for scenario_id, ranges in expected.items():
@@ -173,12 +173,14 @@ def run_case(
         solver_override=solver,
         seed=0,
     )
-    candidates = [
-        json.loads(candidate_path.read_text(encoding="utf-8"))
-        for candidate_path in candidate_result_paths(study["run_root"])
+    candidates: list[dict[str, Any]] = [
+        {str(name): value for name, value in row.items()}
+        for row in candidate_summary(study["run_root"]).to_dict(orient="records")
     ]
     best_id = str(study["best"]["candidate"]["candidate_id"])
-    candidate = next(item for item in candidates if str(item["candidate"]["candidate_id"]) == best_id)
+    candidate = read_best_candidate(study["run_root"])
+    if str(candidate["candidate"]["candidate_id"]) != best_id:
+        raise ValueError("selected candidate artifact disagrees with study_result.json")
     scenarios = _selected_scenarios(candidate)
     worst = float(candidate["aggregates"]["reflection_magnitude"])
     feasible_fraction = float(candidate["feasible_fraction"])

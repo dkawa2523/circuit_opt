@@ -1,14 +1,17 @@
 """Quality entry points.
 
-    uv run nox -s quality-fast       # while editing
-    uv run nox -s quality-pr         # before finishing
-    uv run nox -s quality-nightly    # scheduled end-to-end/property checks
-    uv run nox -s benchmark-design   # engineering classification suite
-    uv run nox -s quality-baseline   # record the coverage floor
-    uv run nox -s clean              # remove generated local build state
+    uv run --frozen python -m nox -s quality-fast       # while editing
+    uv run --frozen python -m nox -s quality-pr         # before finishing
+    uv run --frozen python -m nox -s architecture-audit # dependency/type/complexity review
+    uv run --frozen python -m nox -s quality-nightly    # scheduled end-to-end/property checks
+    uv run --frozen python -m nox -s benchmark-design   # engineering classification suite
+    uv run --frozen python -m nox -s quality-baseline   # record the coverage floor
+    uv run --frozen python -m nox -s clean              # remove generated local build state
 
-Every gate is a direct tool invocation.  Each tool already exits non-zero on
-findings, so there is no wrapper layer to read, debug, or trust.
+Quality gates are direct tool invocations, so there is no wrapper layer to
+read, debug, or trust.  ``architecture-audit`` also includes deliberately
+non-gating Radon reports: complexity is review evidence, not a pass/fail proxy
+for architecture quality.
 
 Sessions run in the uv-managed ``.venv`` (``venv_backend="none"``); create it
 once with ``uv sync --group dev``.
@@ -81,7 +84,7 @@ def quality_fast(session: nox.Session) -> None:
     # Safe fixes only.  --unsafe-fixes can change behaviour and is never used.
     session.run("ruff", "check", "--fix", *targets, external=True)
     session.run("pyrefly", "check", external=True)
-    session.run("pytest", "-q", "-m", "not e2e", external=True)
+    session.run(sys.executable, "-m", "pytest", "-q", "-m", "not e2e", external=True)
 
 
 @nox.session(name="quality-pr", python=None)
@@ -105,12 +108,14 @@ def quality_pr(session: nox.Session) -> None:
     # Scoped to source: runs/ holds generated artifacts whose provenance SHA-256
     # digests are not secrets, and scanning them would need a large allowlist.
     session.run("detect-secrets-hook", *SOURCES, external=True)
-    session.run("pytest", "-q", "--cov=pcd", "--cov-branch", "--cov-report=", external=True)
+    session.run(sys.executable, "-m", "pytest", "-q", "--cov=pcd", "--cov-branch", "--cov-report=", external=True)
     # Checked with `coverage report`, not pytest's --cov-fail-under: the latter
     # compares the *rounded* percentage, so 90.53% would pass a 91% floor while
     # still printing a FAIL line.  Two decimals here, and the exit code agrees
     # with the message.
     session.run(
+        sys.executable,
+        "-m",
         "coverage",
         "report",
         "--show-missing",
@@ -121,12 +126,40 @@ def quality_pr(session: nox.Session) -> None:
     )
 
 
+@nox.session(name="architecture-audit", python=None)
+def architecture_audit(session: nox.Session) -> None:
+    """Read-only architecture report without turning every metric into a gate.
+
+    Ruff guards clear local complexity regressions, Pyrefly checks typed
+    interactions, and Import Linter protects the few dependency directions
+    that are already intentional. Radon reports C-or-worse functions and
+    B-or-worse modules so refactoring can target actual hotspots. Its scores
+    are evidence for review, not a reason to split cohesive numerical code.
+    """
+
+    session.run("ruff", "check", "pcd", "--select", "C90", external=True)
+    # Warnings are migration evidence here.  The regular quality gate still
+    # fails on Pyrefly errors, while this report also exposes untyped/overly
+    # defensive boundaries without making the existing warning backlog a gate.
+    session.run(
+        "pyrefly",
+        "check",
+        "--min-severity",
+        "warn",
+        external=True,
+        success_codes=[0, 1],
+    )
+    session.run("lint-imports", "--config", ".importlinter", external=True)
+    session.run("radon", "cc", "pcd", "-s", "-a", "-n", "C", external=True)
+    session.run("radon", "mi", "pcd", "-s", "-n", "B", external=True)
+
+
 @nox.session(name="quality-nightly", python=None)
 def quality_nightly(session: nox.Session) -> None:
     """Scheduled end-to-end and property-based checks."""
 
-    session.run("pytest", "-q", "-m", "e2e", external=True)
-    session.run("pytest", "-q", "-m", "property", external=True)
+    session.run(sys.executable, "-m", "pytest", "-q", "-m", "e2e", external=True)
+    session.run(sys.executable, "-m", "pytest", "-q", "-m", "property", external=True)
 
 
 @nox.session(name="benchmark-design", python=None)
@@ -150,9 +183,17 @@ def quality_baseline(session: nox.Session) -> None:
     Deliberate and manual: no other session and no CI job writes this file.
     """
 
-    session.run("pytest", "-q", "--cov=pcd", "--cov-branch", "--cov-report=", external=True)
+    session.run(sys.executable, "-m", "pytest", "-q", "--cov=pcd", "--cov-branch", "--cov-report=", external=True)
     output = session.run(
-        "coverage", "report", "--format=total", "--precision=2", external=True, silent=True, success_codes=[0, 2]
+        sys.executable,
+        "-m",
+        "coverage",
+        "report",
+        "--format=total",
+        "--precision=2",
+        external=True,
+        silent=True,
+        success_codes=[0, 2],
     )
     try:
         measured = float(str(output).strip())

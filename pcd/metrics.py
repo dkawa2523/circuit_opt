@@ -15,27 +15,17 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from .analysis import (
-    AC_LOAD_VOLTAGE,
-    DEFAULT_Z0,
-    ac_component_metrics,
-    ac_power_flow,
-    ac_probe_plan,
-    at_frequency,
-    component_loss_balance,
-    input_impedance,
-    load_current,
-    read_ac,
-    rf_measurement_options,
-    rf_port_metrics,
-    transient_component_metrics,
-)
+from .analysis.ac import DEFAULT_Z0, ac_power_flow, at_frequency, input_impedance
+from .analysis.stress import ac_component_metrics, component_loss_balance, transient_component_metrics
+from .analysis.transient import rf_measurement_options, rf_port_metrics
 from .case import Case, resolve_path
 from .component_models import observed_components
 from .core.models import ConstraintResult, EvaluationRequest, MetricSet, RawResult
 from .metric_registry import get as get_metric
 from .metric_registry import load_plugins, register
-from .records import frequency_response_path, load_waveform, read_sim_record
+from .records import frequency_response_path, load_frequency_response, load_waveform, read_sim_record
+from .simulation import AC_LOAD_VOLTAGE_COLUMN
+from .simulation_input import build_probe_plan
 from .spice import fundamental_hz
 
 
@@ -127,18 +117,19 @@ def impedance_match(case: Case, record: dict[str, Any], waveform: pd.DataFrame) 
     params = record.get("params") or {}
     target_frequency = fundamental_hz(case, params)
     components = observed_components(case, params)
-    ac_columns = ac_probe_plan(case)[1]
-    extras = [AC_LOAD_VOLTAGE, *ac_columns] if ac_columns else None
+    probes = build_probe_plan(case)
+    extras = [AC_LOAD_VOLTAGE_COLUMN, *probes.ac_columns] if probes.ac_columns else None
     # Interpolate the complex voltage/current first. Reflection and impedance
     # are nonlinear ratios, so interpolating those derived fields would be a
     # subtly different calculation.
-    response = at_frequency(read_ac(path, extras), target_frequency)
+    response = at_frequency(load_frequency_response(record, extras), target_frequency)
     row = input_impedance(pd.DataFrame([response]), reference).iloc[0]
     reflection = float(row["reflection_magnitude"])
     metrics: dict[str, Any] = {
         "loss": reflection,
         "objective": "impedance_match",
         "reflection_magnitude": reflection,
+        "reflected_power_fraction": reflection**2,
         "reflection_db": _finite_or_none(row["reflection_db"]),
         "vswr": _finite_or_none(row["vswr"]),
         "resistance_ohm": _finite_or_none(row["resistance_ohm"]),
@@ -146,7 +137,7 @@ def impedance_match(case: Case, record: dict[str, Any], waveform: pd.DataFrame) 
         "match_frequency_Hz": float(row["frequency_Hz"]),
         "reference_impedance_ohm": reference,
     }
-    metrics.update(ac_power_flow(response, load_current(case)))
+    metrics.update(ac_power_flow(response, probes.load_current_column, reference))
     metrics.update(ac_component_metrics(response, components))
     metrics.update(component_loss_balance(metrics))
     return metrics
@@ -159,10 +150,11 @@ def rf_load(case: Case, record: dict[str, Any], waveform: pd.DataFrame) -> dict[
     params = record.get("params") or {}
     frequency = fundamental_hz(case, params)
     options = rf_measurement_options(case.data.get("measurement"))
+    probes = build_probe_plan(case)
     values: dict[str, Any] = rf_port_metrics(
         waveform,
         frequency,
-        load_current(case),
+        probes.load_current_column,
         periodic_cycles=int(options["periodic_cycles"]),
         settling_comparisons=int(options["settling_comparisons"]),
         settling_tolerance=float(options["settling_tolerance"]),
@@ -244,6 +236,7 @@ class MetricLimitConstraint:
             violation=distance / max(abs(self.limit), 1e-12),
             value=value,
             limit=self.limit,
+            margin=self.limit - value if self.bound == "max" else value - self.limit,
         )
 
 

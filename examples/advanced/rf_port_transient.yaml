@@ -6,7 +6,7 @@ source: {type: sine_voltage, name: Vsrc, p: src, n: 0, amplitude_V: 100, frequen
 circuit:
   builder: from_yaml
   output_node: load_port
-  components: [{raw: "Rnetwork src load_port 50"}]
+  components: [{ref: Rnetwork, n1: src, n2: load_port, value: 50}]
 load:
   name: resistor
   ports: {p: load_port, n: 0}

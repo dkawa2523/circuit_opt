@@ -1,4 +1,4 @@
-"""Content-addressed storage for generic evaluation results."""
+"""Reusable raw-result cache and selected study evidence storage."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from pcd.artifacts import artifact_path_segment, atomic_write_text, file_sha256
-from pcd.core.models import CandidateResult, EvaluationRequest, EvaluationResult, RawResult, to_plain
+from pcd.core.models import CandidateResult, EvaluationRequest, RawResult, to_plain
 
 _CACHE_PATH_KEY_LENGTH = 24
 _STUDY_SEGMENT_MAX = 32
@@ -22,11 +22,6 @@ _INTERNAL_PATH_RESERVE = 64
 
 def _stable_json(value: Any) -> str:
     return json.dumps(to_plain(value), sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
-
-
-def evaluation_key(request: EvaluationRequest, runtime_fingerprint: Mapping[str, Any] | None = None) -> str:
-    payload = {"request": request.to_dict(), "runtime": to_plain(runtime_fingerprint or {})}
-    return hashlib.sha256(_stable_json(payload).encode("utf-8")).hexdigest()
 
 
 def raw_evaluation_identity(
@@ -71,7 +66,7 @@ def _cache_path_key(full_key: str) -> str:
 
 
 class FileResultStore:
-    """Persist attributed evaluations and reuse physical evaluator output."""
+    """Reuse physical evaluator output and commit one selected candidate."""
 
     def __init__(
         self,
@@ -93,24 +88,14 @@ class FileResultStore:
     def generation_root(self) -> Path | None:
         return self._generation_root
 
-    @property
-    def candidate_directory(self) -> Path:
-        return (self._generation_root / "candidates") if self._generation_root else (self.root / "candidates")
-
     def begin_generation(self) -> Path:
         """Create an unpublished result generation for one complete study run."""
 
         if self._generation_root is not None:
             raise RuntimeError("a result generation is already active")
         self._generation_root = self.root / "generations" / f"g_{uuid.uuid4().hex[:16]}"
-        self.candidate_directory.mkdir(parents=True, exist_ok=False)
+        self._generation_root.mkdir(parents=True, exist_ok=False)
         return self._generation_root
-
-    def key(self, request: EvaluationRequest) -> str:
-        return evaluation_key(request, self.runtime_fingerprint)
-
-    def evaluation_dir(self, request: EvaluationRequest) -> Path:
-        return self.root / "evaluations" / _cache_path_key(self.key(request))
 
     def raw_key(self, request: EvaluationRequest) -> str:
         return raw_evaluation_key(request, self.raw_runtime_fingerprint)
@@ -195,25 +180,14 @@ class FileResultStore:
                 return False
         return True
 
-    def save(self, result: EvaluationResult) -> None:
-        path = self.evaluation_dir(result.request) / "result.json"
-        key = self.key(result.request)
-        if path.exists():
-            existing = json.loads(path.read_text(encoding="utf-8"))
-            if existing.get("cache_key") != key:
-                raise ValueError(f"shortened evaluation cache path collision: {path}")
-        payload = result.to_dict()
-        payload["cache_key"] = key
-        self._write_json(path, payload)
+    def save_selected_candidate(self, result: CandidateResult) -> Path:
+        """Persist the selected structured evidence after ranking completes."""
 
-    def save_candidate(self, result: CandidateResult) -> None:
-        path = self.candidate_directory / f"{artifact_path_segment(result.candidate.candidate_id)}.json"
-        if path.exists():
-            existing = json.loads(path.read_text(encoding="utf-8"))
-            existing_id = str((existing.get("candidate") or {}).get("candidate_id", ""))
-            if existing_id != result.candidate.candidate_id:
-                raise ValueError(f"shortened candidate path collision: {path}")
+        if self._generation_root is None:
+            raise RuntimeError("selected candidate requires an active result generation")
+        path = self._generation_root / "best_candidate.json"
         self._write_json(path, result.to_dict())
+        return path
 
     @staticmethod
     def _write_json(path: Path, payload: Mapping[str, Any]) -> None:

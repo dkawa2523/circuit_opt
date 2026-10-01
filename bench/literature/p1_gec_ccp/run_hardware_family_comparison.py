@@ -20,7 +20,7 @@ if str(ROOT) not in sys.path:
 
 from pcd.artifacts import write_json  # noqa: E402
 from pcd.case import load_case  # noqa: E402
-from pcd.results import candidate_result_paths  # noqa: E402
+from pcd.results import candidate_summary, read_evaluation_table  # noqa: E402
 from pcd.study import run_case_study  # noqa: E402
 
 SPEC_PATH = HERE / "hardware_family_spec.yaml"
@@ -133,34 +133,31 @@ def _materialize_family_case(
     return case_path, {"passed": all(checks.values()), "checks": checks}, metadata
 
 
-def _selected_is_feasible(selected: dict[str, Any]) -> bool:
-    constraints = list(selected.get("constraints") or [])
-    return selected["raw"]["status"] == "ok" and all(bool(item["satisfied"]) for item in constraints)
-
-
 def _at_grid_edge(value: Any, values: list[float]) -> bool:
     number = float(value)
     return math.isclose(number, min(values), rel_tol=1e-12) or math.isclose(number, max(values), rel_tol=1e-12)
 
 
 def _candidate_summary(
-    candidate: dict[str, Any], metadata: dict[str, dict[str, str]], controls: dict[str, Any], limit: float
+    candidate: dict[str, Any],
+    evaluations: list[dict[str, Any]],
+    metadata: dict[str, dict[str, str]],
+    controls: dict[str, Any],
+    limit: float,
 ) -> dict[str, Any]:
     feasible_count = 0
     endpoint_count = 0
     gammas: list[float] = []
-    margins: list[float] = []
     by_group: dict[str, dict[str, Any]] = {}
     infeasible: list[str] = []
 
-    for item in candidate["scenarios"]:
-        scenario_id = str(item["scenario"]["scenario_id"])
-        selected = item["selected"]
-        feasible = _selected_is_feasible(selected)
-        gamma = float(selected["metrics"]["reflection_magnitude"])
-        control = dict(selected["request"]["control"]["values"])
-        edge = _at_grid_edge(control["C1"], [float(value) for value in controls["C1_F"]]) or _at_grid_edge(
-            control["C2"], [float(value) for value in controls["C2_F"]]
+    selected_rows = [item for item in evaluations if bool(item["selected_control"])]
+    for item in selected_rows:
+        scenario_id = str(item["scenario_id"])
+        feasible = str(item["status"]) == "ok" and bool(item["feasible"])
+        gamma = float(item["metric.reflection_magnitude"])
+        edge = _at_grid_edge(item["control.C1"], [float(value) for value in controls["C1_F"]]) or _at_grid_edge(
+            item["control.C2"], [float(value) for value in controls["C2_F"]]
         )
         group_id = metadata[scenario_id]["apparatus_group_MHz"]
         group = by_group.setdefault(
@@ -172,17 +169,17 @@ def _candidate_summary(
         feasible_count += int(feasible)
         endpoint_count += int(edge)
         gammas.append(gamma)
-        if item.get("control_margin") is not None:
-            margins.append(float(item["control_margin"]))
         if not feasible:
             infeasible.append(scenario_id)
 
-    scenario_count = len(candidate["scenarios"])
+    scenario_count = len(selected_rows)
     for group in by_group.values():
         group["feasible_fraction"] = int(group["feasible_scenarios"]) / int(group["scenario_count"])
     worst = max(gammas)
+    raw_margin = candidate.get("control_margin")
+    minimum_control_margin = float(raw_margin) if raw_margin is not None and math.isfinite(float(raw_margin)) else None
     return {
-        "L1_H": float(candidate["candidate"]["values"]["L1"]),
+        "L1_H": float(candidate["design.L1"]),
         "feasible": feasible_count == scenario_count and float(candidate["success_fraction"]) == 1.0,
         "feasible_scenarios": feasible_count,
         "scenario_count": scenario_count,
@@ -190,9 +187,9 @@ def _candidate_summary(
         "worst_reflection_magnitude": worst,
         "worst_reflected_power_fraction": worst**2,
         "worst_reflection_margin": limit - worst,
-        "minimum_control_margin": min(margins) if margins else None,
+        "minimum_control_margin": minimum_control_margin,
         "endpoint_scenarios": endpoint_count,
-        "n_evaluations": scenario_count * len(controls["C1_F"]) * len(controls["C2_F"]),
+        "n_evaluations": len(evaluations),
         "by_apparatus_group": by_group,
         "infeasible_scenarios": infeasible,
     }
@@ -299,10 +296,27 @@ def run(run_root: Path, solver: str) -> dict[str, Any]:
         family_id = str(family["id"])
         case_path, integrity, metadata = _materialize_family_case(spec, family, run_root / "input" / family_id)
         study = run_case_study(load_case(case_path), run_root=run_root / "studies" / family_id, solver_override=solver)
-        raw_candidates = [
-            json.loads(path.read_text(encoding="utf-8")) for path in candidate_result_paths(study["run_root"])
+        summaries: list[dict[str, Any]] = [
+            {str(name): value for name, value in row.items()}
+            for row in candidate_summary(study["run_root"]).to_dict(orient="records")
         ]
-        candidates = [_candidate_summary(item, metadata, controls, limit) for item in raw_candidates]
+        rows_by_candidate: dict[str, list[dict[str, Any]]] = {}
+        evaluation_rows = [
+            {str(name): value for name, value in row.items()}
+            for row in read_evaluation_table(study["run_root"]).to_dict(orient="records")
+        ]
+        for row in evaluation_rows:
+            rows_by_candidate.setdefault(str(row["candidate_id"]), []).append(row)
+        candidates = [
+            _candidate_summary(
+                item,
+                rows_by_candidate.get(str(item["candidate_id"]), []),
+                metadata,
+                controls,
+                limit,
+            )
+            for item in summaries
+        ]
         candidates.sort(key=lambda item: float(item["L1_H"]))
         checks = _check_family(study, candidates, expectations["families"][family_id], control_count)
         family_results.append(

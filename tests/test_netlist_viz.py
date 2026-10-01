@@ -10,6 +10,7 @@ from pcd.case import default_params, load_case
 from pcd.netlist import build_circuit, build_load_subckt, render_ngspice_netlist
 from pcd.netlist_parse import netlist_summary, parse_netlist
 from pcd.netlist_viz import _main_signal_path, _series_shunt_pairs, render_netlist_schematic
+from pcd.simulation_input import resolve_simulation_case
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -67,7 +68,10 @@ def test_rendering_produces_a_schematic_and_a_summary(tmp_path):
     params = default_params(case)
     _, circuit = build_circuit(case, params)
     _, load = build_load_subckt(case, params)
-    netlist = _write(tmp_path, render_ngspice_netlist(case, circuit, load, params))
+    netlist = _write(
+        tmp_path,
+        render_ngspice_netlist(case, circuit, load, params, resolve_simulation_case(case, params)),
+    )
 
     out = tmp_path / "level1.png"
     render_netlist_schematic(netlist, out, title="Level 1")

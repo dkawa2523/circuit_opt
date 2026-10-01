@@ -1,0 +1,22 @@
+schema: pcd.rf.v1
+case_id: m2_ac_pi_match_harmonic
+frequency_Hz: 13560000
+
+network:
+  type: pi_match_harmonic
+  fixed:
+    C1: 1.8e-10
+    L1: 1.2e-6
+    C2: 8.0e-11
+  search:
+    Lh: {values: [1.5e-7, 3.5e-7, 8.0e-7, 1.8e-6], default: 3.5e-7}
+    Ch: {values: [1.5e-11, 6.0e-11, 2.4e-10], default: 6.0e-11}
+
+load:
+  type: impedance_table
+  file: loads.csv
+  reference_plane: electrode_terminal
+  evidence: {origin: synthetic_m2_coverage}
+
+acceptance:
+  reflected_power_fraction_max: 1.0

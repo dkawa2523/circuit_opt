@@ -106,9 +106,33 @@ def _objective_specs(case: Case) -> tuple[Objective, ...]:
     return tuple(Objective.from_dict(mapping(item, f"study.objectives[{index}]")) for index, item in enumerate(raw))
 
 
+def _electrical_context(case: Case) -> dict[str, Any]:
+    """Return the small physical context needed to interpret a study result."""
+
+    solver = mapping(case.data.get("solver"), "solver")
+    measurement = mapping(case.data.get("measurement"), "measurement")
+    load = mapping(case.data.get("load"), "load")
+    analyses = [name for name in ("ac", "tran") if name in solver]
+    context: dict[str, Any] = {
+        "analysis": "+".join("transient" if name == "tran" else name for name in analyses) or "unspecified",
+        "reference_plane": str(load.get("reference_plane", "load_ports")),
+        "reference_impedance_ohm": float(measurement.get("reference_impedance_ohm", 50.0)),
+    }
+
+    ac = mapping(solver.get("ac"), "solver.ac")
+    source = mapping(case.data.get("source"), "source")
+    raw_frequency = ac.get("frequency_Hz", source.get("frequency_Hz"))
+    if isinstance(raw_frequency, int | float) and not isinstance(raw_frequency, bool):
+        frequency = float(raw_frequency)
+        if math.isfinite(frequency) and frequency > 0:
+            context["frequency_Hz"] = frequency
+    return context
+
+
 def study_spec_from_case(case: Case) -> StudySpec:
     study_cfg = mapping(case.data.get("study"), "study")
     target_cfg = mapping(case.data.get("target"), "target")
+    analysis_mode = str(study_cfg.get("analysis_mode", "")).strip()
     if "fidelities" in study_cfg:
         raise ValueError(
             "study.fidelities is no longer supported; select one solver in solver.name "
@@ -126,6 +150,8 @@ def study_spec_from_case(case: Case) -> StudySpec:
             "case_schema": str(case.authored_data.get("schema", "case_yaml.v1")),
             "resolved_case_schema": str(case.data.get("schema", "case_yaml.v1")),
             "objective_adapter": str(target_cfg.get("objective", "waveform_l2")),
+            **_electrical_context(case),
+            **({"analysis_mode": analysis_mode} if analysis_mode else {}),
         },
     )
 

@@ -5,7 +5,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .case import NO_SOURCE_WARNING, Case, resolve_path, variable_specs
+from .case import NO_SOURCE_WARNING, Case, default_params, resolve_path, variable_specs
+from .netlist import NetlistInputs, build_netlist_inputs, load_config
+from .simulation_input import ResolvedSimulationCase, resolve_simulation_case
+from .spice import fundamental_hz
 
 
 @dataclass(frozen=True)
@@ -52,85 +55,17 @@ def validate_case(case: Case, strict: bool = False) -> ValidationReport:
         report.add("error", "case.root_not_mapping", "case root must be a mapping")
         return report
 
-    _validate_sources(data, report)
+    if data.get("source") is None and not data.get("sources"):
+        report.add("warning", "case.no_source", NO_SOURCE_WARNING)
     _validate_variables(case, report)
-    _validate_plugins(case, report)
-    _validate_circuit(case, report)
-    _validate_solver(case, report)
-    _validate_load(case, report)
-    _validate_measurement(case, report)
+    plugins_ok = _validate_plugins(case, report)
+    simulation = _validate_simulation_input(case, report)
+    netlist_inputs = _validate_netlist_inputs(case, report) if plugins_ok and simulation is not None else None
+    _validate_load_applicability(case, report, simulation, netlist_inputs)
+    _validate_measurement(case, report, simulation)
     _validate_target(case, report)
     _validate_study(case, report)
     return report
-
-
-def _validate_circuit(case: Case, report: ValidationReport) -> None:
-    """Validate only the explicit choices needed by an imported SPICE file."""
-
-    circuit = case.data.get("circuit")
-    if circuit is None:
-        return
-    if not isinstance(circuit, dict):
-        report.add("error", "circuit.not_mapping", "circuit must be a mapping", "$.circuit")
-        return
-    if str(circuit.get("builder", "from_yaml")) != "from_netlist":
-        return
-
-    from .netlist_import import NETLIST_IMPORT_MODES, SOURCE_POLICIES
-
-    declared = circuit.get("netlist_file")
-    if not isinstance(declared, str) or not declared.strip():
-        report.add(
-            "error",
-            "circuit.missing_netlist_file",
-            "from_netlist requires a non-empty circuit.netlist_file",
-            "$.circuit.netlist_file",
-        )
-    mode = str(circuit.get("netlist_mode", "fragment")).strip().lower()
-    if mode not in NETLIST_IMPORT_MODES:
-        report.add(
-            "error",
-            "circuit.invalid_netlist_mode",
-            f"netlist_mode must be one of {sorted(NETLIST_IMPORT_MODES)}",
-            "$.circuit.netlist_mode",
-        )
-    source_policy = str(circuit.get("source_policy", "replace_named")).strip().lower()
-    if source_policy not in SOURCE_POLICIES:
-        report.add(
-            "error",
-            "circuit.invalid_source_policy",
-            f"source_policy must be one of {sorted(SOURCE_POLICIES)}",
-            "$.circuit.source_policy",
-        )
-
-
-def _validate_sources(data: dict[str, Any], report: ValidationReport) -> None:
-    if not data.get("source") and not data.get("sources"):
-        report.add("warning", "case.no_source", NO_SOURCE_WARNING)
-    if data.get("source") is not None and not isinstance(data.get("source"), dict):
-        report.add("error", "case.source_not_mapping", "source must be a mapping", "$.source")
-    if data.get("sources") is not None and not isinstance(data.get("sources"), list):
-        report.add("error", "case.sources_not_list", "sources must be a list", "$.sources")
-        return
-    sources = data.get("sources")
-    if not isinstance(sources, list):
-        return
-    names: set[str] = set()
-    for index, source in enumerate(sources):
-        path = f"$.sources[{index}]"
-        if not isinstance(source, dict):
-            report.add("error", "case.source_not_mapping", "each source must be a mapping", path)
-            continue
-        if "raw" in source:
-            continue
-        name = str(source.get("name", "Vsrc" if index == 0 else f"Vsrc{index}")).strip()
-        if not name:
-            report.add("error", "case.source_empty_name", "structured source name must not be empty", f"{path}.name")
-        elif name in names:
-            report.add(
-                "error", "case.duplicate_source_name", f"duplicate structured source name {name!r}", f"{path}.name"
-            )
-        names.add(name)
 
 
 def _validate_variables(case: Case, report: ValidationReport) -> None:
@@ -221,137 +156,48 @@ def _validate_default_within_bounds(
         report.add("warning", "variable.default_out_of_bounds", "default is outside bounds", path)
 
 
-def _validate_solver(case: Case, report: ValidationReport) -> None:
-    solver = case.data.get("solver")
-    if solver is None:
-        solver = {}
-    if not isinstance(solver, dict):
-        report.add("error", "solver.not_mapping", "solver must be a mapping", "$.solver")
-        return
-    name = str(solver.get("name", "ngspice_cli"))
+def _validate_simulation_input(case: Case, report: ValidationReport) -> ResolvedSimulationCase | None:
+    """Compile the same input used by execution, then check solver availability."""
+
+    try:
+        simulation = resolve_simulation_case(case, default_params(case))
+    except (TypeError, ValueError) as exc:
+        report.add("error", "simulation.invalid_input", str(exc))
+        return None
+
     from .sim_registry import available
 
     known = available()["solver"]
-    if name not in known:
+    if simulation.solver.name not in known:
         report.add(
             "error",
             "solver.unknown",
-            f"unknown solver {name!r}; available={known}",
+            f"unknown solver {simulation.solver.name!r}; available={known}",
             "$.solver.name",
         )
-    if "tran" in solver or "ac" not in solver:
-        _validate_tran(solver.get("tran", {}) or {}, report)
-    if "ac" in solver:
-        _validate_ac(solver.get("ac"), report)
-    _validate_timeout(solver.get("timeout_s"), report)
+    return simulation
 
 
-def _validate_tran(tran: Any, report: ValidationReport) -> None:
-    """The transient window: both bounds positive, and step inside stop."""
+def _validate_netlist_inputs(case: Case, report: ValidationReport) -> NetlistInputs | None:
+    """Build the same in-memory circuit/load model used by execution."""
 
-    if not isinstance(tran, dict):
-        report.add("error", "solver.tran_not_mapping", "solver.tran must be a mapping", "$.solver.tran")
-        return
     try:
-        step = float(tran.get("step_s", 1e-9))
-        stop = float(tran.get("stop_s", 1e-6))
-    except (TypeError, ValueError):
-        report.add("error", "solver.tran_non_numeric", "tran step_s and stop_s must be numeric", "$.solver.tran")
-        return
-    if not math.isfinite(step) or not math.isfinite(stop):
-        report.add("error", "solver.tran_non_finite", "tran step_s and stop_s must be finite", "$.solver.tran")
-    elif step <= 0 or stop <= 0:
-        report.add("error", "solver.tran_non_positive", "tran step_s and stop_s must be positive", "$.solver.tran")
-    if step > stop:
-        report.add("warning", "solver.step_exceeds_stop", "tran step_s exceeds stop_s", "$.solver.tran")
+        return build_netlist_inputs(case, default_params(case))
+    except (KeyError, OSError, TypeError, ValueError) as exc:
+        report.add("error", "model.invalid_input", str(exc))
+        return None
 
 
-def _validate_ac(ac: Any, report: ValidationReport) -> None:
-    if not isinstance(ac, dict):
-        report.add("error", "solver.ac_not_mapping", "solver.ac must be a mapping", "$.solver.ac")
+def _validate_load_applicability(
+    case: Case,
+    report: ValidationReport,
+    simulation: ResolvedSimulationCase | None,
+    netlist_inputs: NetlistInputs | None,
+) -> None:
+    if netlist_inputs is None or netlist_inputs.load_name not in {"impedance_point", "ccp_lumped", "icp_transformer"}:
         return
-    if "frequency_Hz" in ac:
-        _validate_ac_point(ac, report)
-        return
-    if str(ac.get("sweep", "dec")) not in {"lin", "dec", "oct"}:
-        report.add("error", "solver.ac_invalid_sweep", "ac sweep must be lin, dec, or oct", "$.solver.ac.sweep")
-    try:
-        points_value = float(ac.get("points", 20))
-        start = float(ac.get("start_Hz", 1e6))
-        stop = float(ac.get("stop_Hz", 1e8))
-    except (TypeError, ValueError):
-        report.add("error", "solver.ac_non_numeric", "ac points/start_Hz/stop_Hz must be numeric", "$.solver.ac")
-        return
-    if not points_value.is_integer():
-        report.add("error", "solver.ac_non_integer_points", "ac points must be an integer", "$.solver.ac.points")
-    points = int(points_value) if math.isfinite(points_value) else 0
-    if (
-        not all(math.isfinite(value) for value in (points_value, start, stop))
-        or points <= 0
-        or start <= 0
-        or stop <= 0
-        or stop < start
-    ):
-        report.add(
-            "error",
-            "solver.ac_invalid_range",
-            "ac points and frequencies must be positive, with stop_Hz >= start_Hz",
-            "$.solver.ac",
-        )
-
-
-def _validate_ac_point(ac: dict[str, Any], report: ValidationReport) -> None:
-    conflicting = sorted({"sweep", "points", "start_Hz", "stop_Hz"} & set(ac))
-    if conflicting:
-        report.add(
-            "error",
-            "solver.ac_point_conflict",
-            f"ac.frequency_Hz is a one-point analysis and cannot be combined with {conflicting}",
-            "$.solver.ac",
-        )
-    raw = ac["frequency_Hz"]
-    try:
-        frequency = float(raw)
-    except (TypeError, ValueError):
-        if not isinstance(raw, str) or not raw.strip():
-            report.add(
-                "error",
-                "solver.ac_non_numeric",
-                "ac.frequency_Hz must be positive numeric data or a parameter reference",
-                "$.solver.ac.frequency_Hz",
-            )
-    else:
-        if frequency <= 0 or not math.isfinite(frequency):
-            report.add(
-                "error",
-                "solver.ac_invalid_range",
-                "ac.frequency_Hz must be positive and finite",
-                "$.solver.ac.frequency_Hz",
-            )
-
-
-def _validate_load(case: Case, report: ValidationReport) -> None:
-    cfg = case.data.get("load")
-    if cfg is None:
-        cfg = {}
-    if not isinstance(cfg, dict):
-        report.add("error", "load.not_mapping", "load must be a mapping", "$.load")
-        return
-    name = str(cfg.get("name", cfg.get("model", "none")))
-    fields = {
-        "impedance_point": ("resistance_ohm", "reactance_ohm", "model_frequency_Hz"),
-        "ccp_lumped": ("R_eff_ohm", "L_eff_H", "C_sheath_eq_F"),
-    }
-    required = fields.get(name)
-    if required is None and name != "icp_transformer":
-        return
-    if name == "icp_transformer":
-        _validate_icp_parameters(cfg, report)
-    else:
-        missing = [field for field in required or () if field not in cfg]
-        if missing:
-            report.add("error", "load.missing_parameters", f"{name} is missing parameters: {missing}", "$.load")
-    _validate_load_parameters(name, cfg, report)
+    cfg = load_config(case)
+    name = netlist_inputs.load_name
     if not str(cfg.get("reference_plane", "")).strip():
         report.add("error", "load.missing_reference_plane", f"{name} requires load.reference_plane", "$.load")
     if not isinstance(cfg.get("characterization"), dict):
@@ -362,9 +208,8 @@ def _validate_load(case: Case, report: ValidationReport) -> None:
             "$.load.characterization",
         )
     if name == "impedance_point":
-        solver = case.data.get("solver", {}) or {}
-        ac = solver.get("ac") if isinstance(solver, dict) else None
-        if isinstance(ac, dict) and "frequency_Hz" not in ac:
+        ac = simulation.analysis.ac if simulation is not None else None
+        if ac is not None and (ac.points != 1 or ac.start_hz != ac.stop_hz):
             report.add(
                 "error",
                 "load.impedance_point_requires_ac_point",
@@ -373,88 +218,21 @@ def _validate_load(case: Case, report: ValidationReport) -> None:
             )
 
 
-def _validate_icp_parameters(cfg: dict[str, Any], report: ValidationReport) -> None:
-    required = {
-        "R_coil_ohm",
-        "L_coil_H",
-        "reflected_inductance_H",
-        "secondary_damping_rate_rad_s",
-    }
-    missing = sorted(required - set(cfg))
-    if missing:
-        report.add(
-            "error",
-            "load.missing_parameters",
-            f"icp_transformer is missing parameters: {missing}",
-            "$.load",
-        )
-
-
-def _literal_float(value: Any) -> float | None:
-    """Return a literal number; bare strings may intentionally be parameters."""
-
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _validate_load_parameters(name: str, cfg: dict[str, Any], report: ValidationReport) -> None:
-    """Apply the same physical domain rules used by the load renderers."""
-
-    from .rf_loads import ccp_lumped_impedance, icp_effective_impedance, impedance_point
-
-    try:
-        if name == "impedance_point":
-            values = [_literal_float(cfg.get(field)) for field in ("resistance_ohm", "reactance_ohm")]
-            if all(value is not None for value in values):
-                impedance_point(*values)  # type: ignore[arg-type]
-            frequency = _literal_float(cfg.get("model_frequency_Hz"))
-            if frequency is not None and (not math.isfinite(frequency) or frequency <= 0):
-                raise ValueError("model_frequency_Hz must be positive and finite")
-        elif name == "ccp_lumped":
-            fields = ("R_eff_ohm", "L_eff_H", "C_sheath_eq_F")
-            values = [_literal_float(cfg.get(field)) for field in fields]
-            if all(value is not None for value in values):
-                ccp_lumped_impedance(1.0, *values)  # type: ignore[arg-type]
-        elif name == "icp_transformer":
-            fields = (
-                "R_coil_ohm",
-                "L_coil_H",
-                "reflected_inductance_H",
-                "secondary_damping_rate_rad_s",
-            )
-            values = [_literal_float(cfg.get(field)) for field in fields]
-            parallel = _literal_float(cfg.get("C_parallel_F", 0.0))
-            if all(value is not None for value in values) and parallel is not None:
-                icp_effective_impedance(1.0, *values, parallel)  # type: ignore[arg-type]
-    except (TypeError, ValueError) as exc:
-        report.add("error", "load.invalid_parameters", str(exc), "$.load")
-
-
-def _validate_timeout(timeout: Any, report: ValidationReport) -> None:
-    if timeout is None:
-        return
-    try:
-        value = float(timeout)
-        if not math.isfinite(value) or value <= 0:
-            report.add("error", "solver.timeout_non_positive", "timeout_s must be positive", "$.solver.timeout_s")
-    except (TypeError, ValueError):
-        report.add("error", "solver.timeout_non_numeric", "timeout_s must be numeric", "$.solver.timeout_s")
-
-
-def _validate_measurement(case: Case, report: ValidationReport) -> None:
+def _validate_measurement(
+    case: Case,
+    report: ValidationReport,
+    simulation: ResolvedSimulationCase | None,
+) -> None:
     """`load_current: auto` meters the load, so there has to be a load."""
 
     measurement = case.data.get("measurement")
     if measurement is None:
         measurement = {}
     if not isinstance(measurement, dict):
-        report.add("error", "measurement.not_mapping", "measurement must be a mapping", "$.measurement")
         return
     _validate_reference_impedance(measurement, report)
     try:
-        from .analysis import rf_measurement_options
+        from .analysis.transient import rf_measurement_options
 
         rf_measurement_options(measurement)
     except ValueError as exc:
@@ -468,13 +246,7 @@ def _validate_measurement(case: Case, report: ValidationReport) -> None:
                 "measurement.load_current: auto inserts an ammeter in series with the load, but no load is declared",
                 "$.measurement.load_current",
             )
-    try:
-        from .analysis import probe_plan
-
-        probe_plan(case)
-    except (TypeError, ValueError) as exc:
-        report.add("error", "measurement.invalid_probe", str(exc), "$.measurement")
-    _validate_measurement_duration(case, report)
+    _validate_measurement_duration(case, report, simulation)
 
 
 def _validate_reference_impedance(measurement: dict[str, Any], report: ValidationReport) -> None:
@@ -499,25 +271,29 @@ def _validate_reference_impedance(measurement: dict[str, Any], report: Validatio
         )
 
 
-def _validate_measurement_duration(case: Case, report: ValidationReport) -> None:
+def _validate_measurement_duration(
+    case: Case,
+    report: ValidationReport,
+    simulation: ResolvedSimulationCase | None,
+) -> None:
     """Require enough history for the configured periodic measurement window."""
 
-    solver = case.data.get("solver", {}) or {}
     source = case.data.get("source", {}) or {}
-    if not isinstance(solver, dict) or not isinstance(source, dict):
+    target = case.data.get("target", {}) or {}
+    if simulation is None or not isinstance(source, dict) or not isinstance(target, dict):
         return
-    tran = solver.get("tran", {}) or {}
-    if not isinstance(tran, dict):
+    if "frequency_Hz" not in source and "fundamental_Hz" not in target:
         return
+    params = default_params(case)
     try:
-        stop_s = float(tran.get("stop_s", 0.0))
-        frequency = float(source.get("frequency_Hz", 0.0))
+        frequency = fundamental_hz(case, params)
     except (TypeError, ValueError):
-        return  # a design-variable reference; nothing to check statically
-    if stop_s <= 0 or frequency <= 0:
+        return  # the typed boundary reports invalid or unresolved input
+    if simulation.analysis.transient is None or frequency <= 0:
         return
+    stop_s = simulation.analysis.transient.stop_s
 
-    from .analysis import rf_measurement_options
+    from .analysis.transient import rf_measurement_options
 
     try:
         options = rf_measurement_options(case.data.get("measurement"))
@@ -535,13 +311,13 @@ def _validate_measurement_duration(case: Case, report: ValidationReport) -> None
         )
 
 
-def _validate_plugins(case: Case, report: ValidationReport) -> None:
+def _validate_plugins(case: Case, report: ValidationReport) -> bool:
     plugins = case.data.get("plugins")
     if plugins is None:
         plugins = []
     if not isinstance(plugins, list):
         report.add("error", "plugins.not_list", "plugins must be a list", "$.plugins")
-        return
+        return False
     valid = True
     for i, raw in enumerate(plugins):
         try:
@@ -556,13 +332,15 @@ def _validate_plugins(case: Case, report: ValidationReport) -> None:
             report.add("error", "plugin.not_found", f"plugin not found: {path}", f"$.plugins[{i}]")
             valid = False
     if not valid or not plugins:
-        return
+        return valid
     try:
         from .sim_registry import load_plugins
 
         load_plugins(plugins, case.base_dir)
     except Exception as exc:
         report.add("error", "plugin.load_failed", f"{type(exc).__name__}: {exc}", "$.plugins")
+        return False
+    return True
 
 
 def _validate_study(case: Case, report: ValidationReport) -> None:

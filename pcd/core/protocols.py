@@ -6,11 +6,9 @@ from typing import Protocol
 
 from .models import (
     Candidate,
-    CandidateResult,
     ConstraintResult,
     ControlState,
     EvaluationRequest,
-    EvaluationResult,
     MetricSet,
     RawResult,
     Scenario,
@@ -40,17 +38,13 @@ class ControlPolicy(Protocol):
 
 
 class ResultStore(Protocol):
-    def key(self, request: EvaluationRequest) -> str: ...
+    """Reusable physical-result storage used while evaluating a study."""
 
     def raw_key(self, request: EvaluationRequest) -> str: ...
 
     def load_raw(self, request: EvaluationRequest) -> RawResult | None: ...
 
     def save_raw(self, request: EvaluationRequest, raw: RawResult) -> None: ...
-
-    def save(self, result: EvaluationResult) -> None: ...
-
-    def save_candidate(self, result: CandidateResult) -> None: ...
 
 
 class FixedControlPolicy:

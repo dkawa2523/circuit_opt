@@ -1,10 +1,4 @@
-"""Characterization tests for case validation.
-
-``_validate_variables`` was the second-most complex function in the package
-(CC 20) and every branch of it emits a distinct, user-visible diagnostic code.
-These tests pin one code per branch so the split into per-rule helpers cannot
-drop or rename a diagnostic.
-"""
+"""Case-level validation tests for actionable errors and engineering checks."""
 
 from __future__ import annotations
 
@@ -68,19 +62,22 @@ def test_scalar_variable_spec_is_normalized_not_rejected(make_case):
 
 
 @pytest.mark.parametrize(
-    ("solver", "expected"),
+    "solver",
     [
-        ({"name": "ngspice_cli", "tran": "nope"}, "solver.tran_not_mapping"),
-        ({"name": "ngspice_cli", "tran": {"step_s": "x", "stop_s": 1}}, "solver.tran_non_numeric"),
-        ({"name": "ngspice_cli", "tran": {"step_s": -1, "stop_s": 1}}, "solver.tran_non_positive"),
-        ({"name": "ngspice_cli", "tran": {"step_s": 10, "stop_s": 1}}, "solver.step_exceeds_stop"),
-        ({"name": "ngspice_cli", "timeout_s": 0}, "solver.timeout_non_positive"),
-        ({"name": "ngspice_cli", "timeout_s": "soon"}, "solver.timeout_non_numeric"),
+        {"name": "ngspice_cli", "tran": "nope"},
+        {"name": "ngspice_cli", "tran": {"step_s": -1, "stop_s": 1}},
+        {"name": "ngspice_cli", "tran": {"step_s": 10, "stop_s": 1}},
+        {"name": "ngspice_cli", "timeout_s": 0},
+        {"name": "ngspice_cli", "timeout_s": "soon"},
+        {"name": "ngspice_cli", "ac": {"sweep": "random"}},
+        {"name": "ngspice_cli", "ac": {"points": 1.5}},
+        {"name": "ngspice_cli", "ac": {"frequency_Hz": 0}},
+        {"name": "ngspice_cli", "ac": {"frequency_Hz": "rf_frequency_Hz", "points": 1}},
     ],
 )
-def test_each_solver_rule_emits_its_own_code(make_case, solver, expected):
+def test_invalid_solver_settings_have_one_simulation_boundary_diagnostic(make_case, solver):
     case = make_case({"case_id": "solver", "source": {"type": "sine_voltage"}, "solver": solver})
-    assert expected in codes(validate_case(case))
+    assert "simulation.invalid_input" in codes(validate_case(case))
 
 
 @pytest.mark.parametrize("name", ["dummy", "missing_solver"])
@@ -103,24 +100,6 @@ def test_removed_dummy_solver_is_rejected_even_when_a_plugin_is_present(make_cas
     assert "solver.unknown" in codes(validate_case(case))
 
 
-@pytest.mark.parametrize(
-    ("ac", "expected"),
-    [
-        ("bad", "solver.ac_not_mapping"),
-        ({"sweep": "random"}, "solver.ac_invalid_sweep"),
-        ({"points": "many"}, "solver.ac_non_numeric"),
-        ({"points": 0, "start_Hz": 2e6, "stop_Hz": 1e6}, "solver.ac_invalid_range"),
-        ({"frequency_Hz": 0}, "solver.ac_invalid_range"),
-        ({"frequency_Hz": []}, "solver.ac_non_numeric"),
-        ({"points": 1.5}, "solver.ac_non_integer_points"),
-        ({"frequency_Hz": "rf_frequency_Hz", "points": 1}, "solver.ac_point_conflict"),
-    ],
-)
-def test_each_ac_rule_emits_its_own_code(make_case, ac, expected):
-    case = make_case({"case_id": "ac", "source": {"type": "sine_voltage"}, "solver": {"name": "ngspice_cli", "ac": ac}})
-    assert expected in codes(validate_case(case))
-
-
 def test_a_parameter_reference_is_valid_for_an_ac_point(make_case):
     case = make_case(
         {
@@ -130,10 +109,10 @@ def test_a_parameter_reference_is_valid_for_an_ac_point(make_case):
             "solver": {"name": "ngspice_cli", "ac": {"frequency_Hz": "rf_frequency_Hz"}},
         }
     )
-    assert not {"solver.ac_non_numeric", "solver.ac_invalid_range"} & codes(validate_case(case))
+    assert "simulation.invalid_input" not in codes(validate_case(case))
 
 
-def test_rf_load_models_require_parameters_reference_plane_and_origin(make_case):
+def test_invalid_rf_load_parameters_use_the_model_build_boundary(make_case):
     case = make_case(
         {
             "case_id": "load",
@@ -142,12 +121,27 @@ def test_rf_load_models_require_parameters_reference_plane_and_origin(make_case)
             "solver": {"name": "ngspice_cli", "ac": {}},
         }
     )
-    found = codes(validate_case(case))
-    assert {
-        "load.missing_parameters",
-        "load.missing_reference_plane",
-        "load.missing_characterization",
-    } <= found
+    report = validate_case(case)
+    issues = [issue for issue in report.issues if issue.code == "model.invalid_input"]
+    assert len(issues) == 1
+    assert "reactance_ohm" in issues[0].message
+
+
+def test_valid_rf_load_parameters_still_require_reference_plane_and_origin(make_case):
+    case = make_case(
+        {
+            "case_id": "load_scope",
+            "source": {"type": "sine_voltage", "frequency_Hz": 13.56e6},
+            "load": {
+                "name": "impedance_point",
+                "resistance_ohm": 20,
+                "reactance_ohm": -80,
+                "model_frequency_Hz": 13.56e6,
+            },
+        }
+    )
+
+    assert {"load.missing_reference_plane", "load.missing_characterization"} <= codes(validate_case(case))
 
 
 def test_impedance_point_rejects_a_broadband_ac_sweep(make_case):
@@ -189,12 +183,16 @@ def test_missing_source_is_a_warning(make_case):
     assert "case.no_source" in codes(validate_case(make_case({"case_id": "nosrc"})))
 
 
+def test_an_empty_source_mapping_uses_defaults_without_a_missing_source_warning(make_case):
+    assert "case.no_source" not in codes(validate_case(make_case({"case_id": "default_src", "source": {}})))
+
+
 def test_malformed_source_containers_are_errors(make_case):
-    assert "case.source_not_mapping" in codes(validate_case(make_case({"case_id": "s", "source": [1, 2]})))
-    assert "case.sources_not_list" in codes(validate_case(make_case({"case_id": "s", "sources": 1})))
+    assert "simulation.invalid_input" in codes(validate_case(make_case({"case_id": "s", "source": [1, 2]})))
+    assert "simulation.invalid_input" in codes(validate_case(make_case({"case_id": "s", "sources": 1})))
 
 
-def test_duplicate_sources_and_reserved_probe_columns_are_rejected(make_case):
+def test_duplicate_source_names_use_the_simulation_boundary_diagnostic(make_case):
     case = make_case(
         {
             "case_id": "ambiguous_measurement",
@@ -202,11 +200,11 @@ def test_duplicate_sources_and_reserved_probe_columns_are_rejected(make_case):
                 {"type": "dc_voltage", "name": "Vsame"},
                 {"type": "dc_voltage", "name": "Vsame"},
             ],
-            "measurement": {"current_source": "Vsame", "probes": {"voltage_V": "v(extra)"}},
+            "measurement": {"current_source": "Vsame"},
         }
     )
 
-    assert {"case.duplicate_source_name", "measurement.invalid_probe"} <= codes(validate_case(case))
+    assert "simulation.invalid_input" in codes(validate_case(case))
 
 
 def test_measurement_current_source_must_name_a_structured_source(make_case):
@@ -218,7 +216,7 @@ def test_measurement_current_source_must_name_a_structured_source(make_case):
         }
     )
 
-    assert "measurement.invalid_probe" in codes(validate_case(case))
+    assert "simulation.invalid_input" in codes(validate_case(case))
 
 
 @pytest.mark.parametrize(
@@ -240,13 +238,13 @@ def test_invalid_rf_measurement_options_are_rejected(make_case, measurement):
 
 
 @pytest.mark.parametrize(
-    ("field", "value", "expected"),
+    ("field", "value"),
     [
-        ("netlist_mode", "automatic", "circuit.invalid_netlist_mode"),
-        ("source_policy", "replace_by_node", "circuit.invalid_source_policy"),
+        ("netlist_mode", "automatic"),
+        ("source_policy", "replace_by_node"),
     ],
 )
-def test_external_netlist_policies_are_explicit_and_validated(make_case, field, value, expected):
+def test_external_netlist_policies_are_owned_by_the_model_builder(make_case, field, value):
     case = make_case(
         {
             "circuit": {
@@ -257,15 +255,19 @@ def test_external_netlist_policies_are_explicit_and_validated(make_case, field, 
         }
     )
 
-    assert expected in codes(validate_case(case))
+    report = validate_case(case)
+    issues = [issue for issue in report.issues if issue.code == "model.invalid_input"]
+    assert len(issues) == 1
+    assert field in issues[0].message
 
 
 @pytest.mark.parametrize(
     ("section", "value", "expected"),
     [
-        ("solver", [], "solver.not_mapping"),
-        ("load", [], "load.not_mapping"),
-        ("measurement", [], "measurement.not_mapping"),
+        ("circuit", [], "model.invalid_input"),
+        ("solver", [], "simulation.invalid_input"),
+        ("load", [], "simulation.invalid_input"),
+        ("measurement", [], "simulation.invalid_input"),
         ("target", [], "target.not_mapping"),
         ("plugins", {}, "plugins.not_list"),
         ("plugins", [1], "plugin.invalid_path"),

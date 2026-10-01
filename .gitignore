@@ -21,6 +21,8 @@ dist/
 
 report.html
 *.pptx
+.chart-data-*/
+.codex-pptx-build/
 
 .env
 .env.*

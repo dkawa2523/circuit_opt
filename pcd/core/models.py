@@ -314,13 +314,14 @@ class ConstraintResult:
     value: float | None = None
     limit: float | None = None
     detail: str | None = None
+    margin: float | None = None
 
     def __post_init__(self) -> None:
         _require_id(self.name, "constraint")
         violation = float(self.violation)
         if not math.isfinite(violation) or violation < 0:
             raise ValueError("constraint violation must be finite and non-negative")
-        for name, value in (("value", self.value), ("limit", self.limit)):
+        for name, value in (("value", self.value), ("limit", self.limit), ("margin", self.margin)):
             if value is None:
                 continue
             try:
@@ -340,6 +341,7 @@ class ConstraintResult:
             "value": self.value,
             "limit": self.limit,
             "detail": self.detail,
+            "margin": self.margin,
         }
 
     @classmethod
@@ -351,6 +353,7 @@ class ConstraintResult:
             value=float(data["value"]) if data.get("value") is not None else None,
             limit=float(data["limit"]) if data.get("limit") is not None else None,
             detail=str(data["detail"]) if data.get("detail") is not None else None,
+            margin=float(data["margin"]) if data.get("margin") is not None else None,
         )
 
 
@@ -360,7 +363,6 @@ class EvaluationResult:
     raw: RawResult
     metrics: MetricSet = MetricSet()
     constraints: tuple[ConstraintResult, ...] = ()
-    cache_key: str = ""
     raw_cache_key: str = ""
     duration_s: float = 0.0
     from_cache: bool = False
@@ -382,14 +384,24 @@ class EvaluationResult:
     def total_violation(self) -> float:
         return sum(item.violation for item in self.constraints)
 
+    @property
+    def constraint_margins(self) -> dict[str, float]:
+        """Signed numeric reserve by constraint name for this evaluation."""
+
+        margins: dict[str, float] = {}
+        for constraint in self.constraints:
+            if constraint.margin is None:
+                continue
+            margins[constraint.name] = min(margins.get(constraint.name, constraint.margin), constraint.margin)
+        return dict(sorted(margins.items()))
+
     def to_dict(self) -> dict[str, Any]:
         return {
-            "schema": "evaluation_result.v1",
+            "schema": "evaluation_result.v2",
             "request": self.request.to_dict(),
             "raw": self.raw.to_dict(),
             "metrics": self.metrics.to_dict(),
             "constraints": [item.to_dict() for item in self.constraints],
-            "cache_key": self.cache_key,
             "raw_cache_key": self.raw_cache_key,
             "duration_s": self.duration_s,
             "from_cache": self.from_cache,
@@ -402,7 +414,6 @@ class EvaluationResult:
             raw=RawResult.from_dict(data["raw"]),
             metrics=MetricSet.from_dict(data.get("metrics", {}) or {}),
             constraints=tuple(ConstraintResult.from_dict(item) for item in data.get("constraints", []) or []),
-            cache_key=str(data.get("cache_key", "")),
             raw_cache_key=str(data.get("raw_cache_key", "")),
             duration_s=float(data.get("duration_s", 0.0)),
             from_cache=bool(data.get("from_cache", False)),
@@ -421,7 +432,7 @@ class ScenarioResult:
     def __post_init__(self) -> None:
         if not self.trials:
             raise ValueError("a scenario result needs at least one control trial")
-        if self.selected not in self.trials:
+        if not any(self.selected is item for item in self.trials):
             raise ValueError("selected evaluation must be one of the scenario trials")
         if self.control_margin is not None:
             margin = float(self.control_margin)
@@ -442,12 +453,12 @@ class ScenarioResult:
         )
 
     def to_dict(self) -> dict[str, Any]:
+        selected_trial = next(index for index, item in enumerate(self.trials) if item is self.selected)
         return {
             "scenario": self.scenario.to_dict(),
-            "selected_cache_key": self.selected.cache_key,
+            "selected_trial": selected_trial,
             "control_margin": self.control_margin,
             "edge_limited": self.edge_limited,
-            "selected": self.selected.to_dict(),
             "trials": [item.to_dict() for item in self.trials],
         }
 
@@ -501,14 +512,25 @@ class CandidateResult:
             item.selected.feasible or item.edge_limited for item in self.scenarios
         )
 
+    @property
+    def constraint_margins(self) -> dict[str, float]:
+        """Worst selected-scenario signed reserve for each numeric constraint."""
+
+        margins: dict[str, float] = {}
+        for evaluation in self.evaluations:
+            for name, margin in evaluation.constraint_margins.items():
+                margins[name] = min(margins.get(name, margin), margin)
+        return dict(sorted(margins.items()))
+
     def to_dict(self) -> dict[str, Any]:
         return {
-            "schema": "candidate_result.v1",
+            "schema": "candidate_result.v2",
             "candidate": self.candidate.to_dict(),
             "aggregates": to_plain(self.aggregates),
             "feasible_fraction": self.feasible_fraction,
             "success_fraction": self.success_fraction,
             "total_violation": self.total_violation,
+            "constraint_margins": self.constraint_margins,
             "control_margin": self.control_margin,
             "edge_limited": self.edge_limited,
             "scenarios": [item.to_dict() for item in self.scenarios],

@@ -2,14 +2,35 @@
 
 from __future__ import annotations
 
-from pcd.api import Case, Circuit, SimulationResult, register_simulation
+from pcd.api import (
+    AnalysisRequest,
+    Case,
+    Circuit,
+    MeasurementReference,
+    NamedProbe,
+    ProbePlan,
+    ResolvedSimulationCase,
+    SimulationResult,
+    SolverRunRequest,
+    SolverSettings,
+    register_simulation,
+    register_solver,
+)
 from pcd.netlist import build_circuit
 
 
 def test_public_api_exposes_core_extension_types():
     assert Case.__name__ == "Case"
     assert Circuit.__name__ == "Circuit"
+    assert MeasurementReference.__name__ == "MeasurementReference"
+    assert NamedProbe.__name__ == "NamedProbe"
+    assert ProbePlan.__name__ == "ProbePlan"
+    assert AnalysisRequest.__name__ == "AnalysisRequest"
     assert SimulationResult.__name__ == "SimulationResult"
+    assert ResolvedSimulationCase.__name__ == "ResolvedSimulationCase"
+    assert SolverRunRequest.__name__ == "SolverRunRequest"
+    assert SolverSettings.__name__ == "SolverSettings"
+    assert callable(register_solver)
 
 
 def test_a_case_owns_the_mapping_passed_to_its_constructor(tmp_path):

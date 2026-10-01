@@ -1,4 +1,4 @@
-"""pcd.solver — running a netlist and reading back a waveform.
+"""Solver execution plus the separate ngspice output adapter.
 
 A solver never raises for a simulation problem; it returns a failed result
 carrying the reason, so an optimizer keeps collecting observations.
@@ -14,13 +14,24 @@ import pytest
 
 import pcd.solver as solver_module
 from pcd.case import Case
-from pcd.solver import diagnose_solver, ngspice_cli, parse_wrdata, solver_identity, solver_timeout_s
+from pcd.ngspice_io import read_transient_output
+from pcd.simulation_input import SolverRunRequest, resolve_simulation_case, resolve_solver_settings
+from pcd.solver import diagnose_solver, ngspice_cli, solver_identity
 from tests.fakes import fake_waveform
 
 EX = Path(__file__).resolve().parents[1] / "examples" / "advanced"
 
 ATOL_TIME = 1e-18  # s; transient steps are ~1e-9
 RTOL_SIGNAL = 1e-9
+
+
+def _ngspice(case: Case, run_dir: Path, params: dict | None = None):
+    request = SolverRunRequest(
+        netlist_path=run_dir / "netlist.cir",
+        run_dir=run_dir,
+        simulation=resolve_simulation_case(case, params or {}),
+    )
+    return ngspice_cli(request)
 
 
 # --- the waveform contract -------------------------------------------------
@@ -75,7 +86,7 @@ def test_every_wrdata_layout_decodes_to_the_same_signal(tmp_path, columns):
     path = tmp_path / "wrdata.txt"
     np.savetxt(path, np.column_stack(layouts[columns]))
 
-    result = parse_wrdata(path)
+    result = read_transient_output(path)
     np.testing.assert_allclose(result.time_s, t, rtol=0, atol=ATOL_TIME)
     np.testing.assert_allclose(result.voltage_V, v, rtol=RTOL_SIGNAL, atol=0)
     assert result.current_A is not None
@@ -85,7 +96,7 @@ def test_every_wrdata_layout_decodes_to_the_same_signal(tmp_path, columns):
 def test_a_two_column_output_has_no_current_channel(tmp_path):
     path = tmp_path / "wrdata.txt"
     np.savetxt(path, np.column_stack([np.array([0.0, 1e-9]), np.array([0.0, 1.0])]))
-    result = parse_wrdata(path)
+    result = read_transient_output(path)
     assert result.current_A is None
     assert result.as_frame()["current_A"].isna().all()
 
@@ -93,23 +104,31 @@ def test_a_two_column_output_has_no_current_channel(tmp_path):
 def test_a_single_row_output_is_still_parsed(tmp_path):
     path = tmp_path / "wrdata.txt"
     np.savetxt(path, np.array([[0.0, 1.0, 0.1]]))
-    assert parse_wrdata(path).time_s.shape == (1,)
+    assert read_transient_output(path).time_s.shape == (1,)
 
 
 # --- solver configuration --------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    ("configured", "expected"),
-    [(None, 300.0), (12.5, 12.5), (0, 300.0), (-1, 300.0), (float("inf"), 300.0), ("soon", 300.0)],
-)
-def test_the_timeout_falls_back_to_the_default_when_unusable(configured, expected):
-    data = {"solver": {}} if configured is None else {"solver": {"timeout_s": configured}}
-    assert solver_timeout_s(Case(path=EX / "generic_rc_filter.yaml", data=data)) == expected
+def test_the_timeout_uses_a_default_only_when_omitted():
+    case = Case(path=EX / "generic_rc_filter.yaml", data={"solver": {}})
+    assert resolve_solver_settings(case).timeout_s == 300.0
+
+
+def test_an_explicit_timeout_is_preserved():
+    case = Case(path=EX / "generic_rc_filter.yaml", data={"solver": {"timeout_s": 12.5}})
+    assert resolve_solver_settings(case).timeout_s == 12.5
+
+
+@pytest.mark.parametrize("configured", [0, -1, float("inf"), "soon"])
+def test_an_invalid_timeout_is_not_silently_replaced(configured):
+    case = Case(path=EX / "generic_rc_filter.yaml", data={"solver": {"timeout_s": configured}})
+    with pytest.raises(ValueError, match="timeout_s"):
+        resolve_solver_settings(case)
 
 
 def test_ngspice_is_the_default_solver_identity(rc_case):
-    assert solver_identity(rc_case)["name"] == "ngspice_cli"
+    assert solver_identity(resolve_solver_settings(rc_case))["name"] == "ngspice_cli"
 
 
 def test_solver_identity_includes_the_resolved_binary_digest(tmp_path, monkeypatch):
@@ -119,7 +138,8 @@ def test_solver_identity_includes_the_resolved_binary_digest(tmp_path, monkeypat
     monkeypatch.setattr(solver_module, "solver_version", lambda _name: "test-1")
     solver_module.clear_solver_version_cache()
 
-    identity = solver_identity(Case(path=tmp_path / "case.yaml", data={"solver": {"executable": "solver"}}))
+    case = Case(path=tmp_path / "case.yaml", data={"solver": {"executable": "solver"}})
+    identity = solver_identity(resolve_solver_settings(case))
     assert len(identity["executable_sha256"]) == 64
     assert identity["executable_size"] == executable.stat().st_size
     assert identity["executable_mtime_ns"] == executable.stat().st_mtime_ns
@@ -136,7 +156,7 @@ def test_an_unknown_solver_reports_that_it_cannot_be_diagnosed():
 
 def test_a_missing_binary_is_reported_as_a_diagnostic(tmp_path):
     case = Case(path=EX / "generic_rc_filter.yaml", data={"solver": {"executable": "not_a_real_ngspice"}})
-    result = ngspice_cli(tmp_path / "netlist.cir", tmp_path, case, {})
+    result = _ngspice(case, tmp_path)
     assert result.status == "failed"
     assert result.diagnostics["missing_executable"] is True
 
@@ -149,7 +169,7 @@ def test_a_timeout_is_reported_as_a_diagnostic(tmp_path, monkeypatch):
         raise subprocess.TimeoutExpired(args[0], kwargs["timeout"], output="out", stderr="err")
 
     monkeypatch.setattr(solver_module.subprocess, "run", fake_run)
-    result = ngspice_cli(tmp_path / "netlist.cir", tmp_path, case, {})
+    result = _ngspice(case, tmp_path)
     assert result.status == "failed"
     assert result.diagnostics["timed_out"] is True
     assert "timed out" in result.log
@@ -165,7 +185,7 @@ def test_byte_output_from_a_timeout_is_decoded(tmp_path, monkeypatch):
         raise subprocess.TimeoutExpired(args[0], kwargs["timeout"], output=b"out\xff", stderr=None)
 
     monkeypatch.setattr(solver_module.subprocess, "run", fake_run)
-    assert "out" in ngspice_cli(tmp_path / "netlist.cir", tmp_path, case, {}).log
+    assert "out" in _ngspice(case, tmp_path).log
 
 
 def test_a_nonzero_exit_is_reported_as_a_failure(tmp_path, monkeypatch):
@@ -176,9 +196,66 @@ def test_a_nonzero_exit_is_reported_as_a_failure(tmp_path, monkeypatch):
         "run",
         lambda cmd, **kw: subprocess.CompletedProcess(cmd, 1, stdout="boom", stderr=""),
     )
-    result = ngspice_cli(tmp_path / "netlist.cir", tmp_path, case, {})
+    result = _ngspice(case, tmp_path)
     assert result.status == "failed"
     assert result.diagnostics["returncode"] == 1
+
+
+def test_malformed_solver_output_is_reported_as_a_parse_failure(tmp_path, monkeypatch):
+    case = Case(path=EX / "generic_rc_filter.yaml", data={"solver": {"executable": "ngspice"}})
+    monkeypatch.setattr(solver_module.shutil, "which", lambda exe: exe)
+
+    def fake_run(cmd, **kwargs):
+        (Path(kwargs["cwd"]) / "waveform.csv").write_text("malformed", encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(solver_module.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        solver_module, "read_transient_output", lambda *_args: (_ for _ in ()).throw(ValueError("bad data"))
+    )
+    result = _ngspice(case, tmp_path)
+    assert result.status == "failed"
+    assert result.diagnostics["parse_error"] == "ValueError: bad data"
+
+
+def test_a_partial_transient_is_not_reported_as_success(tmp_path, monkeypatch):
+    """ngspice can return zero after a time-step abort while leaving a partial CSV."""
+
+    case = Case(
+        path=EX / "generic_rc_filter.yaml",
+        data={"solver": {"executable": "ngspice", "tran": {"step_s": 1e-9, "stop_s": 1e-6}}},
+    )
+    monkeypatch.setattr(solver_module.shutil, "which", lambda exe: exe)
+
+    def fake_run(cmd, **kwargs):
+        time_s = np.array([0.0, 1e-9, 2e-9])
+        np.savetxt(Path(kwargs["cwd"]) / "waveform.csv", np.column_stack([time_s, time_s] * 4))
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(solver_module.subprocess, "run", fake_run)
+    result = _ngspice(case, tmp_path)
+    assert result.status == "failed"
+    assert result.diagnostics["incomplete_transient"] is True
+    assert result.diagnostics["last_time_s"] == pytest.approx(2e-9)
+    assert result.diagnostics["requested_stop_s"] == pytest.approx(1e-6)
+
+
+def test_unexpected_parser_exception_propagates(tmp_path, monkeypatch):
+    case = Case(path=EX / "generic_rc_filter.yaml", data={"solver": {"executable": "ngspice"}})
+    monkeypatch.setattr(solver_module.shutil, "which", lambda exe: exe)
+
+    def fake_run(cmd, **kwargs):
+        (Path(kwargs["cwd"]) / "waveform.csv").write_text("irrelevant", encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(solver_module.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        solver_module,
+        "read_transient_output",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("parser implementation bug")),
+    )
+    with pytest.raises(RuntimeError, match="parser implementation bug"):
+        _ngspice(case, tmp_path)
 
 
 def test_an_ac_only_run_succeeds_without_a_waveform_file(tmp_path, monkeypatch):
@@ -201,7 +278,7 @@ def test_an_ac_only_run_succeeds_without_a_waveform_file(tmp_path, monkeypatch):
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
     monkeypatch.setattr(solver_module.subprocess, "run", fake_run)
-    result = ngspice_cli(tmp_path / "netlist.cir", tmp_path, case, {})
+    result = _ngspice(case, tmp_path)
     assert result.status == "ok"
     assert result.time_s.size == 0
     assert result.frequency_response is not None
@@ -227,13 +304,13 @@ def test_windows_runs_the_console_binary_without_opening_a_window(tmp_path, wind
 
     def fake_run(cmd, **kwargs):
         observed.update(cmd=cmd, kwargs=kwargs)
-        t = np.array([0.0, 1e-9, 2e-9])
+        t = np.array([0.0, 5e-7, 1e-6])
         # wrdata writes a (scale, value) pair per vector: time, v(out), i(Vsrc), v(src).
         np.savetxt(Path(kwargs["cwd"]) / "waveform.csv", np.column_stack([t, t] * 4))
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
     windows_ngspice.setattr(solver_module.subprocess, "run", fake_run)
-    result = ngspice_cli(tmp_path / "netlist.cir", tmp_path, Case(path=EX / "generic_rc_filter.yaml", data={}), {})
+    result = _ngspice(Case(path=EX / "generic_rc_filter.yaml", data={}), tmp_path)
     assert result.status == "ok"
     assert "source_voltage_V" in result.probes
     assert observed["cmd"][0] == "ngspice_con.exe"

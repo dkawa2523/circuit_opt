@@ -115,6 +115,47 @@ or qualify a passive structured model outside PCD and use `ccp_lumped` or
 `icp_transformer`. Interpolating R and X independently can violate causality or
 passivity and is therefore not a silent platform default.
 
+## Quasi-static time snapshots
+
+`impedance_profile` is the time-ordered counterpart of the measured-frequency
+table, not another equivalent-circuit topology. Each finite, passive
+`time_s, resistance_ohm, reactance_ohm` row is realized as an independent
+`impedance_point` and solved at exactly one frequency. Time must be
+non-negative and strictly increasing. An absolute drive is required so
+forward, reflected, and accepted load power have physical watt units.
+
+The same fixed matching hardware is evaluated over all snapshots. Discrete
+tuner settings may be selected separately at each time point, making actuator
+requirements visible without pretending to simulate actuator motion. The
+selected-candidate `snapshot_response.csv` records load R/X at the declared
+load plane, matching-input R/X and reflection at the source-side reference
+impedance, wave powers, accepted load power, selected control, and limit
+status.
+
+This is appropriate only when the envelope changes slowly relative to the RF
+period and each measured point can be treated as locally stationary. No state
+is propagated between rows; there is no interpolation, hysteresis, stored
+plasma energy, sheath evolution, or self-consistent power-to-plasma feedback.
+Those require an explicitly qualified dynamic or co-simulation model.
+
+## Externally prescribed transient resistance
+
+The advanced `case_yaml.v1` `from_yaml` boundary also accepts a CSV-backed
+behavioral resistor `R(t)`. This is useful when a chamber or plasma model has
+already supplied a resistance trajectory and the engineering question is the
+resulting circuit transient. It uses ngspice's behavioral-resistor `time`
+expression, supports linear or zero-order-hold interpolation, and can repeat
+an explicitly closed period.
+
+This is not another public RF-load model and it is not derived from the
+quasi-static complex-impedance table. The resistance stays strictly positive,
+the solver maximum step cannot exceed the shortest input interval, and the
+input file is archived and fingerprinted. With `observe: true`, its terminal
+voltage and current are saved in the canonical transient table. There is no
+power-to-plasma feedback, state update, hysteresis, or inferred reactance.
+Time-varying capacitance and inductance remain outside the supported boundary
+until their charge/flux laws and external energy exchange are defined.
+
 ## Effective CCP R-L-C
 
 The implemented one-port is:
@@ -231,6 +272,12 @@ at this layer means checking source power = accepted load-port power + network
 loss, subject to sign convention and numerical tolerance. It does not validate
 a microscopic energy balance inside the discharge.
 
+For AC results, `forward_power_W` and `reflected_power_W` are traveling-wave
+powers calculated from the source-terminal voltage/current and configured real
+reference impedance. Their difference equals the net source real power.
+`reflected_power_fraction` is `|Gamma|^2`. These remain small-signal electrical
+quantities and are not generator calibration or directional-coupler readings.
+
 ## Main risks and controls
 
 | risk | consequence | control |
@@ -251,6 +298,9 @@ Implemented now:
 - three explicit RF load models;
 - AC-only execution;
 - exact one-point AC execution resolved from each scenario;
+- time-ordered quasi-static R+jX snapshots with a concise selected response table;
+- externally prescribed, positive `R(t)` for advanced transient circuits, with
+  linear/hold interpolation, optional explicit repetition, and archived input;
 - complete enumeration of every declared discrete equipment-control state;
 - requested-frequency interpolation of simulated AC phasors, without extrapolation; measured load rows are never interpolated;
 - effective upstream component ESR/DCR and electrical stress/loss metrics;

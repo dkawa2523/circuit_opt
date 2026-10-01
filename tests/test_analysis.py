@@ -1,4 +1,4 @@
-"""pcd.analysis — asking for an analysis, and reading the answer back.
+"""Electrical measurements over canonical AC and transient results.
 
 The impedance tests check against closed-form values rather than a golden file:
 a series R-C has an exactly known Z(f), so a sign or scaling error cannot hide.
@@ -10,109 +10,27 @@ import numpy as np
 import pytest
 
 from pcd.analysis import (
-    AC_LOAD_VOLTAGE,
     DEFAULT_Z0,
-    LOAD_CURRENT,
-    AcSweep,
     ac_component_metrics,
     ac_power_flow,
-    ac_sweep,
     at_frequency,
     component_loss_balance,
-    control_lines,
+    frequency_sweep_metrics,
+    half_power_bandwidth,
     harmonic_spectrum,
     input_impedance,
-    mean_over_time,
     power_flow,
-    read_ac,
     rf_port_metrics,
     transient_component_metrics,
-    transient_requested,
 )
-from pcd.component_models import ComponentObservation
 from pcd.core import UnsettledMeasurementError
+from pcd.ngspice_io import read_frequency_response
+from pcd.probes import ComponentObservation
+from pcd.records import load_waveform
+from pcd.signals import time_average
+from pcd.simulation import AC_LOAD_VOLTAGE_COLUMN, LOAD_CURRENT_COLUMN, SimulationResult
 
-# --- requesting an analysis -------------------------------------------------
-
-
-def test_a_transient_only_case_asks_for_no_sweep():
-    assert ac_sweep({"tran": {"step_s": 1e-9, "stop_s": 1e-6}}) is None
-
-
-def test_an_ac_sweep_is_read_from_the_case():
-    sweep = ac_sweep({"ac": {"sweep": "lin", "points": 50, "start_Hz": 1e6, "stop_Hz": 2e7}})
-    assert sweep is not None
-    assert sweep == AcSweep(sweep="lin", points=50, start_hz=1e6, stop_hz=2e7)
-    assert sweep.command() == "ac lin 50 1e+06 2e+07"
-
-
-@pytest.mark.parametrize("reference", ["rf_frequency_Hz", "$rf_frequency_Hz"])
-def test_a_parameterized_ac_point_is_resolved_for_each_scenario(reference):
-    sweep = ac_sweep({"ac": {"frequency_Hz": reference}}, {"rf_frequency_Hz": 27.12e6})
-    assert sweep is not None
-    assert sweep == AcSweep(sweep="lin", points=1, start_hz=27.12e6, stop_hz=27.12e6)
-    assert sweep.command() == "ac lin 1 2.712e+07 2.712e+07"
-
-
-def test_the_control_block_runs_only_a_transient_by_default():
-    lines = control_lines({"tran": {"step_s": 1e-9, "stop_s": 1e-6}}, "out", "Vsrc", "src", [])
-    assert "tran 1e-09 1e-06" in lines
-    assert "wrdata waveform.csv time v(out) i(Vsrc)" in lines
-    assert not any(line.startswith("ac ") for line in lines)
-
-
-def test_requesting_a_sweep_adds_it_to_the_same_run():
-    """One solver invocation produces both files; there is no second run."""
-
-    solver = {"tran": {"step_s": 1e-9, "stop_s": 1e-6}, "ac": {"points": 10}}
-    lines = control_lines(solver, "out", "Vsrc", "src", [])
-    assert any(line.startswith("tran ") for line in lines)
-    assert any(line.startswith("ac dec 10") for line in lines)
-    assert "set numdgt=15" in lines
-    # Impedance needs the source node voltage and the source current together.
-    assert "wrdata ac.csv v(src) i(Vsrc) v(out)" in lines
-
-
-def test_an_ac_only_case_does_not_run_or_write_a_transient():
-    solver = {"ac": {"sweep": "lin", "points": 3, "start_Hz": 1e6, "stop_Hz": 2e6}}
-    lines = control_lines(solver, "out", "Vsrc", "src", [])
-    assert transient_requested(solver) is False
-    assert not any(line.startswith("tran ") for line in lines)
-    assert not any("waveform.csv" in line for line in lines)
-    assert "wrdata ac.csv v(src) i(Vsrc) v(out)" in lines
-
-
-def test_a_scenario_frequency_generates_one_exact_ac_point():
-    lines = control_lines(
-        {"ac": {"frequency_Hz": "rf_frequency_Hz"}},
-        "out",
-        "Vsrc",
-        "src",
-        [],
-        {"rf_frequency_Hz": 6.78e6},
-    )
-    assert "ac lin 1 6.78e+06 6.78e+06" in lines
-
-
-def test_extra_probes_are_saved_alongside_the_standard_vectors():
-    lines = control_lines({}, "out", "Vsrc", "src", ["i(L1)", "v(mid)"])
-    assert "wrdata waveform.csv time v(out) i(Vsrc) i(L1) v(mid)" in lines
-    assert lines[0].startswith(".save v(out) i(Vsrc) i(L1) v(mid)")
-
-
-def test_ac_probes_are_written_after_the_standard_source_and_load_vectors():
-    lines = control_lines(
-        {"ac": {"frequency_Hz": 1e6}},
-        "v(load)",
-        "Vsrc",
-        "src",
-        [],
-        ac_probes=["i(Vobserve_L1)"],
-    )
-    assert "wrdata ac.csv v(src) i(Vsrc) v(load) i(Vobserve_L1)" in lines
-
-
-# --- reading the answer back ------------------------------------------------
+# --- canonical AC input -----------------------------------------------------
 
 
 def _write_ac(tmp_path, frequencies, voltage, current):
@@ -126,7 +44,7 @@ def _write_ac(tmp_path, frequencies, voltage, current):
 
 def test_an_ac_file_parses_into_real_and_imaginary_columns(tmp_path):
     path = _write_ac(tmp_path, [1e6, 2e6], [1 + 0j, 0.5 - 0.5j], [-0.01 + 0j, -0.02 + 0.01j])
-    ac = read_ac(path)
+    ac = read_frequency_response(path)
     assert list(ac.columns) == ["frequency_Hz", "voltage_re", "voltage_im", "current_re", "current_im"]
     assert ac["frequency_Hz"].to_list() == [1e6, 2e6]
     # Real columns stay real: a complex dtype would upcast a whole row on .iloc.
@@ -135,10 +53,10 @@ def test_an_ac_file_parses_into_real_and_imaginary_columns(tmp_path):
 
 def test_a_canonical_ac_csv_round_trips_through_the_same_reader(tmp_path):
     path = tmp_path / "canonical.csv"
-    expected = read_ac(_write_ac(tmp_path, [1e6], [1 + 2j], [-0.1 + 0.2j]))
+    expected = read_frequency_response(_write_ac(tmp_path, [1e6], [1 + 2j], [-0.1 + 0.2j]))
     expected.to_csv(path, index=False)
 
-    actual = read_ac(path)
+    actual = read_frequency_response(path)
     assert list(actual.columns) == list(expected.columns)
     assert actual.iloc[0].to_dict() == expected.iloc[0].to_dict()
 
@@ -149,14 +67,14 @@ def test_a_canonical_ac_csv_must_contain_the_standard_phasors(tmp_path):
     path = tmp_path / "incomplete.csv"
     pd.DataFrame({"frequency_Hz": [1e6]}).to_csv(path, index=False)
     with pytest.raises(ValueError, match="missing columns"):
-        read_ac(path)
+        read_frequency_response(path)
 
 
 def test_a_short_ac_file_is_rejected(tmp_path):
     path = tmp_path / "bad.csv"
     np.savetxt(path, np.array([[1e6, 1.0, 0.0]]))
     with pytest.raises(ValueError, match="needs 6 columns"):
-        read_ac(path)
+        read_frequency_response(path)
 
 
 def test_named_ac_probes_support_power_stress_and_loss_closure(tmp_path):
@@ -177,16 +95,16 @@ def test_named_ac_probes_support_power_stress_and_loss_closure(tmp_path):
     np.savetxt(path, np.asarray([row]))
 
     component = ComponentObservation("L1", "src", "load", series_r)
-    response = read_ac(
+    response = read_frequency_response(
         path,
         [
-            AC_LOAD_VOLTAGE,
+            AC_LOAD_VOLTAGE_COLUMN,
             component.voltage_column,
             component.current_column,
-            LOAD_CURRENT,
+            LOAD_CURRENT_COLUMN,
         ],
     ).iloc[0]
-    power = ac_power_flow(response, LOAD_CURRENT)
+    power = ac_power_flow(response, LOAD_CURRENT_COLUMN)
     stress = ac_component_metrics(response, (component,))
     metrics = {**power, **stress}
     balance = component_loss_balance(metrics)
@@ -210,14 +128,14 @@ def test_impedance_matches_the_closed_form_for_a_series_rc(tmp_path, frequency):
     # ngspice reports current into the source's + terminal, hence the sign.
     path = _write_ac(tmp_path, [frequency], [1 + 0j], [-(1 / z_true)])
 
-    row = input_impedance(read_ac(path)).iloc[0]
+    row = input_impedance(read_frequency_response(path)).iloc[0]
     assert row["resistance_ohm"] == pytest.approx(z_true.real, rel=1e-9)
     assert row["reactance_ohm"] == pytest.approx(z_true.imag, rel=1e-9)
 
 
 def test_a_perfect_match_has_no_reflection(tmp_path):
     path = _write_ac(tmp_path, [1e7], [1 + 0j], [-(1 / DEFAULT_Z0)])
-    row = input_impedance(read_ac(path)).iloc[0]
+    row = input_impedance(read_frequency_response(path)).iloc[0]
     assert row["resistance_ohm"] == pytest.approx(50.0)
     assert row["reflection_magnitude"] == pytest.approx(0.0, abs=1e-12)
     assert row["vswr"] == pytest.approx(1.0)
@@ -227,7 +145,7 @@ def test_a_near_open_reflects_almost_everything(tmp_path):
     """Vanishing current: |gamma| approaches 1 and VSWR blows up."""
 
     path = _write_ac(tmp_path, [1e7], [1 + 0j], [-1e-18 + 0j])
-    row = input_impedance(read_ac(path)).iloc[0]
+    row = input_impedance(read_frequency_response(path)).iloc[0]
     assert row["reflection_magnitude"] == pytest.approx(1.0, abs=1e-9)
     assert row["vswr"] > 1e6
 
@@ -236,36 +154,53 @@ def test_a_non_physical_reflection_reports_infinite_vswr(tmp_path):
     """|gamma| >= 1 has no finite standing-wave ratio; say so rather than divide."""
 
     path = _write_ac(tmp_path, [1e7], [1 + 0j], [0j])  # exactly zero current
-    row = input_impedance(read_ac(path)).iloc[0]
+    row = input_impedance(read_frequency_response(path)).iloc[0]
     assert not np.isfinite(row["vswr"])
 
 
 def test_the_reference_impedance_is_configurable(tmp_path):
     path = _write_ac(tmp_path, [1e7], [1 + 0j], [-(1 / 75.0)])
-    assert input_impedance(read_ac(path), z0=75.0).iloc[0]["reflection_magnitude"] == pytest.approx(0.0, abs=1e-12)
-    assert input_impedance(read_ac(path), z0=50.0).iloc[0]["reflection_magnitude"] > 0.1
+    assert input_impedance(read_frequency_response(path), z0=75.0).iloc[0]["reflection_magnitude"] == pytest.approx(
+        0.0, abs=1e-12
+    )
+    assert input_impedance(read_frequency_response(path), z0=50.0).iloc[0]["reflection_magnitude"] > 0.1
+
+
+def test_ac_power_flow_separates_forward_and_reflected_power(tmp_path):
+    voltage = 10.0 + 0j
+    impedance = 100.0 + 0j
+    path = _write_ac(tmp_path, [1e6], [voltage], [-(voltage / impedance)])
+
+    power = ac_power_flow(read_frequency_response(path).iloc[0], reference_impedance_ohm=50.0)
+
+    assert power["forward_power_W"] == pytest.approx(0.5625)
+    assert power["reflected_power_W"] == pytest.approx(0.0625)
+    assert power["source_real_power_W"] == pytest.approx(0.5)
+    assert power["forward_power_W"] - power["reflected_power_W"] == pytest.approx(power["source_real_power_W"])
+    with pytest.raises(ValueError, match="reference_impedance_ohm"):
+        ac_power_flow(read_frequency_response(path).iloc[0], reference_impedance_ohm=0.0)
 
 
 def test_reflection_in_decibels_is_negative_for_a_good_match(tmp_path):
     path = _write_ac(tmp_path, [1e7], [1 + 0j], [-(1 / 55.0)])
-    row = input_impedance(read_ac(path)).iloc[0]
+    row = input_impedance(read_frequency_response(path)).iloc[0]
     assert row["reflection_db"] < -20.0
 
 
 def test_an_exact_fundamental_row_is_selected(tmp_path):
     freqs = [1e6, 1.3e7, 1.356e7, 2e7]
     path = _write_ac(tmp_path, freqs, [1 + 0j] * 4, [-0.02 + 0j] * 4)
-    assert at_frequency(read_ac(path), 13.56e6)["frequency_Hz"] == pytest.approx(1.356e7)
+    assert at_frequency(read_frequency_response(path), 13.56e6)["frequency_Hz"] == pytest.approx(1.356e7)
 
 
 def test_a_frequency_between_points_is_interpolated_without_extrapolation(tmp_path):
     path = _write_ac(tmp_path, [1e6, 3e6], [1 + 0j, 3 + 2j], [-0.01 + 0j, -0.03 - 0.02j])
-    row = at_frequency(read_ac(path), 2e6)
+    row = at_frequency(read_frequency_response(path), 2e6)
     assert row["frequency_Hz"] == pytest.approx(2e6)
     assert row["voltage_re"] == pytest.approx(2.0)
     assert row["voltage_im"] == pytest.approx(1.0)
     with pytest.raises(ValueError, match="outside the simulated sweep"):
-        at_frequency(read_ac(path), 4e6)
+        at_frequency(read_frequency_response(path), 4e6)
 
 
 def test_selecting_from_an_empty_sweep_is_an_error():
@@ -273,6 +208,92 @@ def test_selecting_from_an_empty_sweep_is_an_error():
 
     with pytest.raises(ValueError, match="frequency response is empty"):
         at_frequency(pd.DataFrame(columns=["frequency_Hz"]), 1e6)
+
+
+def test_half_power_bandwidth_recovers_a_known_resonance():
+    frequency = np.linspace(8e6, 12e6, 401)
+    response = 1.0 / (1.0 + ((frequency - 10e6) / 0.5e6) ** 2)
+
+    result = half_power_bandwidth(frequency, response)
+
+    assert result is not None
+    assert result["resonant_frequency_Hz"] == pytest.approx(10e6)
+    assert result["lower_frequency_Hz"] == pytest.approx(9.5e6)
+    assert result["upper_frequency_Hz"] == pytest.approx(10.5e6)
+    assert result["bandwidth_Hz"] == pytest.approx(1e6)
+    assert result["fractional_bandwidth"] == pytest.approx(0.1)
+    assert result["loaded_quality_factor"] == pytest.approx(10.0)
+
+
+def test_half_power_bandwidth_is_absent_when_the_sweep_does_not_bracket_it():
+    frequency = np.linspace(9.8e6, 10.2e6, 41)
+    response = 1.0 / (1.0 + ((frequency - 10e6) / 0.5e6) ** 2)
+
+    assert half_power_bandwidth(np.array([9e6, 10e6]), np.array([0.5, 1.0])) is None
+    assert half_power_bandwidth(frequency, response) is None
+
+
+def test_frequency_sweep_uses_saved_load_power_when_available():
+    import pandas as pd
+
+    frequency = np.linspace(8e6, 12e6, 401)
+    load_power = 1.0 / (1.0 + ((frequency - 10e6) / 0.5e6) ** 2)
+    ac = pd.DataFrame(
+        {
+            "frequency_Hz": frequency,
+            "voltage_re": np.ones_like(frequency),
+            "voltage_im": np.zeros_like(frequency),
+            "current_re": np.full_like(frequency, -1.0 / DEFAULT_Z0),
+            "current_im": np.zeros_like(frequency),
+            f"{AC_LOAD_VOLTAGE_COLUMN}_re": np.ones_like(frequency),
+            f"{AC_LOAD_VOLTAGE_COLUMN}_im": np.zeros_like(frequency),
+            f"{LOAD_CURRENT_COLUMN}_re": 2.0 * load_power,
+            f"{LOAD_CURRENT_COLUMN}_im": np.zeros_like(frequency),
+        }
+    )
+
+    result = frequency_sweep_metrics(ac, load_current_column=LOAD_CURRENT_COLUMN)
+
+    assert result is not None
+    assert result["sample_count"] == 401
+    assert result["sampled_best_match_frequency_Hz"] == pytest.approx(8e6)
+    resonance = result["half_power_resonance"]
+    assert resonance is not None
+    assert resonance["basis"] == "load_real_power_W"
+    assert resonance["resonant_frequency_Hz"] == pytest.approx(10e6)
+    assert resonance["loaded_quality_factor"] == pytest.approx(10.0)
+
+
+def test_frequency_sweep_uses_accepted_power_when_load_probes_are_absent():
+    import pandas as pd
+
+    frequency = np.linspace(8e6, 12e6, 401)
+    accepted_power = 1.0 / (1.0 + ((frequency - 10e6) / 0.5e6) ** 2)
+    reflection = np.sqrt(1.0 - accepted_power)
+    impedance = DEFAULT_Z0 * (1.0 + reflection) / (1.0 - reflection)
+    ac = pd.DataFrame(
+        {
+            "frequency_Hz": frequency,
+            "voltage_re": np.ones_like(frequency),
+            "voltage_im": np.zeros_like(frequency),
+            "current_re": -1.0 / impedance,
+            "current_im": np.zeros_like(frequency),
+        }
+    )
+
+    result = frequency_sweep_metrics(ac)
+
+    assert result is not None
+    assert result["sampled_best_match_frequency_Hz"] == pytest.approx(10e6)
+    resonance = result["half_power_resonance"]
+    assert resonance is not None
+    assert resonance["basis"] == "accepted_power_fraction"
+    assert resonance["bandwidth_Hz"] == pytest.approx(1e6)
+
+
+def test_half_power_bandwidth_rejects_a_non_monotonic_frequency_axis():
+    with pytest.raises(ValueError, match="strictly increasing"):
+        half_power_bandwidth(np.array([1e6, 2e6, 1.5e6]), np.array([0.5, 1.0, 0.5]))
 
 
 # --- where the power goes ---------------------------------------------------
@@ -387,6 +408,38 @@ def test_rf_port_periodic_window_and_harmonic_count_are_configurable():
     assert set(metrics["voltage_harmonic_amplitude_V"]) == {"h1", "h2", "h3", "h4", "h5"}
 
 
+def test_saved_simulation_result_reproduces_rf_metrics(tmp_path):
+    """Analysis consumes the canonical artifact, not solver-owned state."""
+
+    frame = _sine_waveform(100.0, 2.0, load_current=1.5)
+    result = SimulationResult(
+        time_s=frame["time_s"].to_numpy(float),
+        voltage_V=frame["voltage_V"].to_numpy(float),
+        current_A=frame["current_A"].to_numpy(float),
+        probes={
+            "source_voltage_V": frame["source_voltage_V"].to_numpy(float),
+            "i(Vload)": frame["i(Vload)"].to_numpy(float),
+        },
+    )
+    in_memory = rf_port_metrics(result.as_frame(), 1e6, "i(Vload)")
+
+    result.as_frame().to_csv(tmp_path / "waveform.csv", index=False)
+    restored = load_waveform(
+        {
+            "run_dir": str(tmp_path),
+            "artifacts": {"waveform": "waveform.csv"},
+        }
+    )
+    persisted = rf_port_metrics(restored, 1e6, "i(Vload)")
+
+    assert persisted.keys() == in_memory.keys()
+    for name, expected in in_memory.items():
+        if isinstance(expected, bool):
+            assert persisted[name] is expected
+        else:
+            assert persisted[name] == pytest.approx(expected)
+
+
 def test_rf_port_metrics_require_every_used_signal_to_be_periodic():
     frame = _sine_waveform(100.0, 2.0, load_current=1.5)
     frame["i(Vload)"] *= 1.0 + 0.2 * frame["time_s"] * 1e6
@@ -411,7 +464,7 @@ def test_total_reflection_gives_infinite_vswr_without_a_numpy_warning(tmp_path):
     path = _write_ac(tmp_path, [1e7], [1 + 0j], [0j])
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        row = input_impedance(read_ac(path)).iloc[0]
+        row = input_impedance(read_frequency_response(path)).iloc[0]
     assert np.isinf(row["vswr"])
     assert row["reflection_magnitude"] == pytest.approx(1.0)
 
@@ -432,7 +485,7 @@ def test_power_is_averaged_over_time_not_over_samples():
     t = np.concatenate([dense, sparse])
     signal = np.sin(2 * np.pi * 1e6 * t)
 
-    assert mean_over_time(signal, t) == pytest.approx(0.0, abs=1e-3)
+    assert time_average(signal, t) == pytest.approx(0.0, abs=1e-3)
     assert float(signal.mean()) > 0.5, "an unweighted mean should be badly wrong here"
 
     # v and i in antiphase is ngspice's convention for a source delivering
@@ -449,10 +502,10 @@ def test_power_is_averaged_over_time_not_over_samples():
 
 
 def test_a_single_sample_has_no_time_span_to_average_over():
-    assert mean_over_time(np.array([5.0]), np.array([0.0])) == 5.0
-    assert mean_over_time(np.array([]), np.array([])) == 0.0
+    assert time_average(np.array([5.0]), np.array([0.0])) == 5.0
+    assert time_average(np.array([]), np.array([])) == 0.0
     # A record with no elapsed time falls back to the plain mean.
-    assert mean_over_time(np.array([2.0, 4.0]), np.array([1e-9, 1e-9])) == 3.0
+    assert time_average(np.array([2.0, 4.0]), np.array([1e-9, 1e-9])) == 3.0
 
 
 # --- harmonic content -------------------------------------------------------

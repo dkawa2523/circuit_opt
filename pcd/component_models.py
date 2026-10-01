@@ -10,37 +10,11 @@ frequency-dependent vendor model.
 from __future__ import annotations
 
 import math
-import re
-from dataclasses import dataclass
 from typing import Any
 
 from .case import Case
+from .probes import ComponentObservation, component_id
 from .spice import resolve_value
-
-
-def component_id(reference: str) -> str:
-    """A stable identifier safe for generated SPICE names and metric keys."""
-
-    safe = re.sub(r"[^A-Za-z0-9_]+", "_", str(reference)).strip("_")
-    if not safe:
-        raise ValueError("component reference must contain a letter, digit, or underscore")
-    return safe
-
-
-def meter_reference(reference: str) -> str:
-    return f"Vobserve_{component_id(reference)}"
-
-
-def meter_node(reference: str) -> str:
-    return f"observe_{component_id(reference)}_meter"
-
-
-def core_node(reference: str) -> str:
-    return f"observe_{component_id(reference)}_core"
-
-
-def loss_reference(reference: str) -> str:
-    return f"Rloss_{component_id(reference)}"
 
 
 def series_resistance_ohm(item: dict[str, Any], params: dict[str, Any] | None = None) -> float | None:
@@ -56,36 +30,6 @@ def series_resistance_ohm(item: dict[str, Any], params: dict[str, Any] | None = 
     if not math.isfinite(resistance) or resistance < 0:
         raise ValueError(f"series_resistance_ohm for {item.get('ref', '?')} must be finite and non-negative")
     return resistance
-
-
-@dataclass(frozen=True)
-class ComponentObservation:
-    """How one declared component is probed and reported."""
-
-    reference: str
-    p: str
-    n: str
-    series_resistance_ohm: float | None = None
-
-    @property
-    def metric_id(self) -> str:
-        return component_id(self.reference)
-
-    @property
-    def voltage_column(self) -> str:
-        return f"component_{self.metric_id}_voltage_V"
-
-    @property
-    def current_column(self) -> str:
-        return f"component_{self.metric_id}_current_A"
-
-    @property
-    def voltage_vector(self) -> str:
-        return f"v({self.p},{self.n})" if self.n != "0" else f"v({self.p})"
-
-    @property
-    def current_vector(self) -> str:
-        return f"i({meter_reference(self.reference)})"
 
 
 def observed_components(case: Case, params: dict[str, Any] | None = None) -> tuple[ComponentObservation, ...]:

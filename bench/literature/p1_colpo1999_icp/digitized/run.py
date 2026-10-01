@@ -13,9 +13,10 @@ from typing import Any
 
 import yaml
 
-from pcd.analysis import at_frequency, input_impedance, read_ac
+from pcd.analysis import at_frequency, input_impedance
 from pcd.artifacts import write_json
 from pcd.case import Case
+from pcd.ngspice_io import read_frequency_response
 from pcd.sim_core import simulate_case
 
 HERE = Path(__file__).resolve().parent
@@ -80,7 +81,7 @@ def _replay_case(row: dict[str, str], run_root: Path, relative_tolerance: float)
     record = simulate_case(case, run_root=run_root, run_id=f"replay_{scenario_id}")
     if record.status != "ok" or record.frequency_response_file is None:
         return {"scenario_id": scenario_id, "passed": False, "error": record.warnings}
-    response = input_impedance(read_ac(record.run_dir / record.frequency_response_file))
+    response = input_impedance(read_frequency_response(record.run_dir / record.frequency_response_file))
     point = at_frequency(response, frequency)
     actual = complex(float(point["resistance_ohm"]), float(point["reactance_ohm"]))
     expected = complex(resistance, reactance)
