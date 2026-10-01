@@ -53,7 +53,8 @@ from pcd.figures import (
     configure_publication_style as _configure_style,
 )
 from pcd.ngspice_io import read_frequency_response
-from pcd.results import selected_evaluation, study_artifact_path
+from pcd.results import selected_evaluation as _current_selected_evaluation
+from pcd.results import study_artifact_path
 from pcd.simulation import AC_LOAD_VOLTAGE_COLUMN
 from pcd.simulation_input import build_probe_plan
 
@@ -110,6 +111,15 @@ def _read_json(path: Path) -> dict[str, Any]:
     return value
 
 
+def _selected_evaluation(scenario: dict[str, Any]) -> dict[str, Any]:
+    """Read archived v1 evidence or the current explicit-trial shape."""
+
+    selected = scenario.get("selected")
+    if isinstance(selected, dict):
+        return dict(selected)
+    return _current_selected_evaluation(scenario)
+
+
 def _repository_path(path: str | Path) -> str:
     """Return a portable repository-relative path for committed provenance."""
 
@@ -138,6 +148,12 @@ def _candidate_for_case(run_root: Path, case_id: str) -> tuple[dict[str, Any], P
         path = study_artifact_path(study_root, "best_candidate")
         if path is not None and path.is_file():
             return _read_json(path), path
+        candidate_directory = study_artifact_path(study_root, "candidate_directory")
+        candidate_id = ((study.get("best") or {}).get("candidate") or {}).get("candidate_id")
+        if candidate_directory is not None and isinstance(candidate_id, str):
+            path = candidate_directory / f"{candidate_id}.json"
+            if path.is_file():
+                return _read_json(path), path
     raise FileNotFoundError(f"candidate artifact not found for {case_id} under {run_root}")
 
 
@@ -192,13 +208,15 @@ def _scenario_scalar_from_candidate(candidate: dict[str, Any], key: str, scale: 
 def _candidate_roots(candidate_path: Path) -> tuple[Path, Path]:
     """Return the study root and the generation containing a candidate."""
 
-    generation_root = candidate_path.parent
+    generation_root = (
+        candidate_path.parent.parent if candidate_path.parent.name == "candidates" else candidate_path.parent
+    )
     study_root = generation_root.parent.parent if generation_root.parent.name == "generations" else generation_root
     return study_root, generation_root
 
 
 def _candidate_artifact(candidate_path: Path, item: dict[str, Any], key: str) -> Path:
-    raw = str(selected_evaluation(item)["raw"]["artifacts"][key])
+    raw = str(_selected_evaluation(item)["raw"]["artifacts"][key])
     relative = Path(*PureWindowsPath(raw).parts)
     study_root, _generation_root = _candidate_roots(candidate_path)
     path = study_root / relative
@@ -223,7 +241,7 @@ def _extract_b5(candidate: dict[str, Any], candidate_path: Path) -> dict[str, An
     extra_columns = [AC_LOAD_VOLTAGE_COLUMN, *ac_columns]
     rows = []
     for item in candidate["scenarios"]:
-        selected = selected_evaluation(item)
+        selected = _selected_evaluation(item)
         ac_path = _candidate_artifact(candidate_path, item, "frequency_response")
         response = read_frequency_response(ac_path, extra_columns)
         if len(response) != 1:
@@ -287,7 +305,7 @@ def _extract_b5(candidate: dict[str, Any], candidate_path: Path) -> dict[str, An
     constraint_names = {name: f"max_{name}" for name in metric_names}
     limit_sets: dict[str, set[float]] = {name: set() for name in metric_names}
     for item in candidate["scenarios"]:
-        constraints = {row["name"]: row for row in selected_evaluation(item)["constraints"]}
+        constraints = {row["name"]: row for row in _selected_evaluation(item)["constraints"]}
         for metric_name, constraint_name in constraint_names.items():
             limit_sets[metric_name].add(float(constraints[constraint_name]["limit"]))
     if any(len(items) != 1 for items in limit_sets.values()):
@@ -301,7 +319,7 @@ def _extract_b5(candidate: dict[str, Any], candidate_path: Path) -> dict[str, An
 def _extract_b8(candidate: dict[str, Any]) -> list[dict[str, Any]]:
     rows = []
     for item in candidate["scenarios"]:
-        selected = selected_evaluation(item)
+        selected = _selected_evaluation(item)
         values = item["scenario"]["values"]
         rows.append(
             {
@@ -364,7 +382,7 @@ def build_figure_data(run_root: Path) -> dict[str, Any]:
     b8_candidate, b8_path = _candidate_for_case(run_root, "benchmark_component_value_corner_stress")
     reference_circuit, reference_case_hashes = _reference_circuit_data(run_root)
     b8_reference_impedance = float(
-        selected_evaluation(b8_candidate["scenarios"][0])["metrics"]["reference_impedance_ohm"]
+        _selected_evaluation(b8_candidate["scenarios"][0])["metrics"]["reference_impedance_ohm"]
     )
     if not math.isclose(
         b8_reference_impedance,
@@ -1399,7 +1417,7 @@ def figure_b5_port_waveforms(data: dict[str, Any]) -> plt.Figure:
     _title(
         fig,
         "B5 source and electrode-terminal steady-state fundamental",
-        "Reconstructed from one 13.56 MHz ngspice AC phasor per drive condition; these curves are not transient or harmonic results.",
+        "13.56 MHz curves reconstructed from archived ngspice AC phasors; not transient results.",
     )
     _footer(
         fig,

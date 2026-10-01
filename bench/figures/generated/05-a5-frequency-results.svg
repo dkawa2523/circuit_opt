@@ -296,13 +296,13 @@ z
    </g>
   </g>
   <g id="text_18">
-   <text style="font-weight: 700; font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="5.22" y="13.542281" transform="rotate(-0 5.22 13.542281)">A5 effective-ICP frequency conformance</text>
+   <text style="font-weight: 700; font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="10.44" y="13.542281" transform="rotate(-0 10.44 13.542281)">A5 effective-ICP frequency conformance</text>
   </g>
   <g id="text_19">
-   <text style="font-size: 7.7px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #68737d" x="5.22" y="33.498797" transform="rotate(-0 5.22 33.498797)">Fixed L-match designed at 13.56 MHz; three synthetic terminal-model conditions are evaluated independently.</text>
+   <text style="font-size: 7.7px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #68737d" x="10.44" y="33.498797" transform="rotate(-0 10.44 33.498797)">Fixed L-match designed at 13.56 MHz; three synthetic terminal-model conditions are evaluated independently.</text>
   </g>
   <g id="text_20">
-   <text style="font-size: 6.6px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #68737d" x="5.22" y="339.867253" transform="rotate(-0 5.22 339.867253)">Markers: real ngspice results. No line is drawn because the benchmark does not claim a continuous qualified bandwidth.</text>
+   <text style="font-size: 6.6px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #68737d" x="10.44" y="339.867253" transform="rotate(-0 10.44 339.867253)">Markers: real ngspice results. No line is drawn because the benchmark does not claim a continuous qualified bandwidth.</text>
   </g>
  </g>
  <defs>

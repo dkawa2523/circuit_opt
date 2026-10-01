@@ -2,7 +2,7 @@
 
 ## Dynamic-impedance etch CCP with dual RF and DC superposition
 
-This five-page study extends the earlier minimal CCP example without turning
+This six-page study extends the earlier minimal CCP example without turning
 PCD into a plasma-chemistry solver. The explicit circuit contains a 60 MHz
 upper source, 2 MHz wafer-bias source, pulsed negative DC bias tee, matching
 and feed parasitics, chamber/ESC stray capacitance, wall leakage, two lossy
@@ -19,10 +19,14 @@ sheaths, and a bulk `R-L` path. The prescribed `R_p(t)`, `L_p(t)`,
    independent charge/flux MNA integration with ngspice for wafer voltage,
    reflected voltage, bulk current, sheath charge, and inductor flux.
 4. [Dynamic branch impedance](etch_ccp_dcs/04-dynamic-branch-impedance.svg)
-   shows the frozen-time main-plasma-branch impedance at 2 MHz and 60 MHz.
+   shows the frozen-time main-plasma-branch impedance and 50-ohm Smith charts
+   at 2 MHz and 60 MHz.
 5. [Inverse identification](etch_ccp_dcs/05-inverse-identification.svg) ranks
    all 81 bounded candidates using only wafer voltage, recovers the four true
    on-state values, and checks upper reflection without fitting it.
+6. [Literature basis and scope](etch_ccp_dcs/06-literature-basis-and-scope.svg)
+   separates published apparatus/model evidence from benchmark-specific
+   assumptions and reports transparent order-of-magnitude checks.
 
 [`etch_ccp_dcs/figure_data.json`](etch_ccp_dcs/figure_data.json) records every
 source hash, forward error, candidate, selected value, and held-out error. The
@@ -30,6 +34,8 @@ full literature boundary, equations, results, and reproduction commands are in
 [`docs/etch-ccp-dcs-dynamic-impedance-study-ja.md`](../../docs/etch-ccp-dcs-dynamic-impedance-study-ja.md).
 The combined publication artifact is
 [`output/pdf/etch-ccp-dcs-dynamic-impedance-study.pdf`](../../output/pdf/etch-ccp-dcs-dynamic-impedance-study.pdf).
+Its page-by-page Japanese reading guide is
+[`output/pdf/etch-ccp-dcs-dynamic-impedance-study-guide-ja.md`](../../output/pdf/etch-ccp-dcs-dynamic-impedance-study-guide-ja.md).
 
 ## Dual-frequency CCP with rectangular lower bias
 
@@ -59,6 +65,8 @@ problem statement, literature boundary, results, and reproduction commands are
 in [`docs/dual-frequency-ccp-pulsed-bias-study-ja.md`](../../docs/dual-frequency-ccp-pulsed-bias-study-ja.md),
 and the combined artifact is
 [`output/pdf/dual-frequency-ccp-pulsed-bias-study.pdf`](../../output/pdf/dual-frequency-ccp-pulsed-bias-study.pdf).
+The page-by-page Japanese guide is
+[`output/pdf/dual-frequency-ccp-pulsed-bias-study-guide-ja.md`](../../output/pdf/dual-frequency-ccp-pulsed-bias-study-guide-ja.md).
 
 ## Direct calculation evidence
 
@@ -89,6 +97,8 @@ The vector SVG files are publication masters, the PNG files are 300 dpi, and
 contains the four fixed-size pages.  [`evidence/figure_data.json`](evidence/figure_data.json)
 records every source path and SHA-256 hash plus the independently calculated
 comparison errors.
+The page-by-page Japanese guide is
+[`output/pdf/calculation-evidence-pack-guide-ja.md`](../../output/pdf/calculation-evidence-pack-guide-ja.md).
 
 One compact reproduction uses the core conformance result plus three focused
 public-CLI runs:
@@ -284,3 +294,6 @@ artifact hashes plus renderer versions and page geometry. The result figures
 contain only observed ngspice points, exact phasor reconstructions, and declared
 acceptance boundaries; no spline, fitted trend, or probabilistic interpretation
 is added.
+
+The page-by-page Japanese guide for the eleven-page pack is
+[`output/pdf/benchmark-figure-pack-guide-ja.md`](../../output/pdf/benchmark-figure-pack-guide-ja.md).

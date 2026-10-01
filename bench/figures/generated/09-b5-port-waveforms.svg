@@ -280,17 +280,17 @@ L 253.056522 76.032
    </g>
    <g id="legend_1">
     <g id="line2d_17">
-     <path d="M 157.623115 139.63392
-L 165.023115 139.63392
-L 172.423115 139.63392
+     <path d="M 156.143115 140.74392
+L 164.283115 140.74392
+L 172.423115 140.74392
 " style="fill: none; stroke-dasharray: 5.75,3.45; stroke-dashoffset: 0; stroke: #20262d; stroke-width: 1.15"/>
     </g>
     <g id="text_8">
-     <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="178.343115" y="142.22392" transform="rotate(-0 178.343115 142.22392)">source input</text>
+     <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="178.343115" y="143.33392" transform="rotate(-0 178.343115 143.33392)">source input</text>
     </g>
     <g id="line2d_18">
-     <path d="M 157.623115 150.734498
-L 165.023115 150.734498
+     <path d="M 156.143115 150.734498
+L 164.283115 150.734498
 L 172.423115 150.734498
 " style="fill: none; stroke: #2a6f97; stroke-width: 1.45; stroke-linecap: square"/>
     </g>
@@ -545,17 +545,17 @@ L 514.17 76.032
    </g>
    <g id="legend_2">
     <g id="line2d_35">
-     <path d="M 424.088875 139.63392
-L 431.488875 139.63392
-L 438.888875 139.63392
+     <path d="M 422.608875 140.74392
+L 430.748875 140.74392
+L 438.888875 140.74392
 " style="fill: none; stroke-dasharray: 5.75,3.45; stroke-dashoffset: 0; stroke: #20262d; stroke-width: 1.15"/>
     </g>
     <g id="text_17">
-     <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="444.808875" y="142.22392" transform="rotate(-0 444.808875 142.22392)">source delivered</text>
+     <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="444.808875" y="143.33392" transform="rotate(-0 444.808875 143.33392)">source delivered</text>
     </g>
     <g id="line2d_36">
-     <path d="M 424.088875 150.734498
-L 431.488875 150.734498
+     <path d="M 422.608875 150.734498
+L 430.748875 150.734498
 L 438.888875 150.734498
 " style="fill: none; stroke: #2a6f97; stroke-width: 1.45; stroke-linecap: square"/>
     </g>
@@ -1184,14 +1184,14 @@ L 514.17 211.485767
    </g>
   </g>
   <g id="text_45">
-   <text style="font-weight: 700; font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="5.22" y="13.542281" transform="rotate(-0 5.22 13.542281)">B5 source and electrode-terminal steady-state fundamental</text>
+   <text style="font-weight: 700; font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="10.44" y="13.542281" transform="rotate(-0 10.44 13.542281)">B5 source and electrode-terminal steady-state fundamental</text>
   </g>
   <g id="text_46">
-   <text style="font-size: 7.7px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #68737d" x="5.22" y="33.498797" transform="rotate(-0 5.22 33.498797)">Reconstructed from one 13.56 MHz ngspice AC phasor per drive condition; these curves are not transient or harmonic results.</text>
+   <text style="font-size: 7.7px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #68737d" x="10.44" y="33.498797" transform="rotate(-0 10.44 33.498797)">13.56 MHz curves reconstructed from archived ngspice AC phasors; not transient results.</text>
   </g>
   <g id="text_47">
-   <text style="font-size: 6.6px; font-family: 'DejaVu Sans'; fill: #68737d" transform="translate(5.22 331.284804)">Input = ideal-source node voltage and delivered current.</text>
-   <text style="font-size: 6.6px; font-family: 'DejaVu Sans'; fill: #68737d" transform="translate(5.22 339.206609)">Output = declared electrode_terminal voltage and load current; AC magnitudes are peak values.</text>
+   <text style="font-size: 6.6px; font-family: 'DejaVu Sans'; fill: #68737d" transform="translate(10.44 331.284804)">Input = ideal-source node voltage and delivered current.</text>
+   <text style="font-size: 6.6px; font-family: 'DejaVu Sans'; fill: #68737d" transform="translate(10.44 339.206609)">Output = declared electrode_terminal voltage and load current; AC magnitudes are peak values.</text>
   </g>
  </g>
  <defs>

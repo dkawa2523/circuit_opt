@@ -987,13 +987,13 @@ z
    </g>
   </g>
   <g id="text_32">
-   <text style="font-weight: 700; font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="5.22" y="13.542281" transform="rotate(-0 5.22 13.542281)">RF analysis boundary and matching topologies</text>
+   <text style="font-weight: 700; font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="10.44" y="13.542281" transform="rotate(-0 10.44 13.542281)">RF analysis boundary and matching topologies</text>
   </g>
   <g id="text_33">
-   <text style="font-size: 7.7px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #68737d" x="5.22" y="33.498797" transform="rotate(-0 5.22 33.498797)">Connections used by the public circuit builders; the chamber enters only as a declared electrical one-port.</text>
+   <text style="font-size: 7.7px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #68737d" x="10.44" y="33.498797" transform="rotate(-0 10.44 33.498797)">Connections used by the public circuit builders; the chamber enters only as a declared electrical one-port.</text>
   </g>
   <g id="text_34">
-   <text style="font-size: 6.6px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #68737d" x="5.22" y="339.867253" transform="rotate(-0 5.22 339.867253)">Source: pcd.sim_methods circuit builders. A1-A3 are topology-conformance fixtures, not a topology ranking.</text>
+   <text style="font-size: 6.6px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #68737d" x="10.44" y="339.867253" transform="rotate(-0 10.44 339.867253)">Source: pcd.sim_methods circuit builders. A1-A3 are topology-conformance fixtures, not a topology ranking.</text>
   </g>
  </g>
  <defs>

@@ -673,16 +673,16 @@ L 248.63087 202.984058
    </g>
    <g id="legend_1">
     <g id="PathCollection_3">
-     <path d="M 153.344307 157.043624
-C 154.243655 157.043624 155.106288 156.686309 155.742223 156.050375
-C 156.378158 155.41444 156.735472 154.551806 156.735472 153.652459
-C 156.735472 152.753111 156.378158 151.890478 155.742223 151.254543
-C 155.106288 150.618608 154.243655 150.261294 153.344307 150.261294
-C 152.44496 150.261294 151.582326 150.618608 150.946391 151.254543
-C 150.310457 151.890478 149.953142 152.753111 149.953142 153.652459
-C 149.953142 154.551806 150.310457 155.41444 150.946391 156.050375
-C 151.582326 156.686309 152.44496 157.043624 153.344307 157.043624
-L 153.344307 157.043624
+     <path d="M 152.604307 157.043624
+C 153.503655 157.043624 154.366288 156.686309 155.002223 156.050375
+C 155.638158 155.41444 155.995472 154.551806 155.995472 153.652459
+C 155.995472 152.753111 155.638158 151.890478 155.002223 151.254543
+C 154.366288 150.618608 153.503655 150.261294 152.604307 150.261294
+C 151.70496 150.261294 150.842326 150.618608 150.206391 151.254543
+C 149.570457 151.890478 149.213142 152.753111 149.213142 153.652459
+C 149.213142 154.551806 149.570457 155.41444 150.206391 156.050375
+C 150.842326 156.686309 151.70496 157.043624 152.604307 157.043624
+L 152.604307 157.043624
 z
 " style="fill: none; stroke: #c66a12; stroke-width: 1.5"/>
     </g>
@@ -691,11 +691,11 @@ z
     </g>
     <g id="PathCollection_4">
      <g>
-      <use xlink:href="#ma629bcb0c2" x="153.344307" y="164.753037" style="fill: #2a6f97; stroke: #2a6f97; stroke-width: 1.4"/>
+      <use xlink:href="#ma629bcb0c2" x="152.604307" y="163.643037" style="fill: #2a6f97; stroke: #2a6f97; stroke-width: 1.4"/>
      </g>
     </g>
     <g id="text_28">
-     <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="166.664307" y="166.695537" transform="rotate(-0 166.664307 166.695537)">ngspice</text>
+     <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="166.664307" y="165.585537" transform="rotate(-0 166.664307 165.585537)">ngspice</text>
     </g>
    </g>
   </g>
@@ -1159,13 +1159,13 @@ L 514.17 304.128
    </g>
   </g>
   <g id="text_59">
-   <text style="font-weight: 700; font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="5.22" y="13.542281" transform="rotate(-0 5.22 13.542281)">Effective plasma-load circuits propagate correctly through ngspice</text>
+   <text style="font-weight: 700; font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="10.44" y="13.542281" transform="rotate(-0 10.44 13.542281)">Effective plasma-load circuits propagate correctly through ngspice</text>
   </g>
   <g id="text_60">
-   <text style="font-size: 7.7px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #68737d" x="5.22" y="33.498797" transform="rotate(-0 5.22 33.498797)">Each declared load feeds the fixed benchmark L-match; points compare whole-network input Z, not plasma-state physics.</text>
+   <text style="font-size: 7.7px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #68737d" x="10.44" y="33.498797" transform="rotate(-0 10.44 33.498797)">Each declared load feeds the fixed benchmark L-match; points compare whole-network input Z, not plasma-state physics.</text>
   </g>
   <g id="text_61">
-   <text style="font-size: 6.6px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #68737d" x="5.22" y="339.867253" transform="rotate(-0 5.22 339.867253)">Open circles: independent load + L-match equations. Crosses: ngspice extraction. Max |Z-component error|: CCP 4.58e-13 ohm; ICP 4.76e-10 ohm.</text>
+   <text style="font-size: 6.6px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #68737d" x="10.44" y="339.867253" transform="rotate(-0 10.44 339.867253)">Open circles: independent load + L-match equations. Crosses: ngspice extraction. Max |Z-component error|: CCP 4.58e-13 ohm; ICP 4.76e-10 ohm.</text>
   </g>
  </g>
  <defs>

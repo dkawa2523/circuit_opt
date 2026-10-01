@@ -935,9 +935,10 @@ search、公開回路計算経路は変更しない。
 - 2026-10-01の回路検証として、60 MHz上部RF、2 MHz下部RF、負DC pulse、matching/feed/choke/blocking、
   electrode/ESC stray、wall loss、時間変化する `Rp/Lp/Cs,u/Cs,w` を持つcase-local etch-CCP benchmarkを追加した。
   C/Lは `q=C(t)v` と `phi=L(t)i` を明示するraw ngspice elementに限定し、汎用plasma modelの責務や段階3の
-  完成境界は変更していない。独立charge/flux MNAとngspice 46のwafer電圧RMSEは0.287151 V、反射電圧RMSEは
-  0.364325 Vで、電流・charge・fluxも直接一致した。wafer電圧だけを使う3^4完全列挙は81/81完走し、
-  `15 ohm / 160 nH / 520 pF / 720 pF` の真値を回収、未使用反射波もhold-out一致した。
+  完成境界は変更していない。文献・桁確認に基づき`Lp`を35→16 nHへ改訂後、独立charge/flux MNAとngspice 46の
+  wafer電圧RMSEは0.0657924 V、反射電圧RMSEは0.154504 Vで、電流・charge・fluxも直接一致した。
+  wafer電圧だけを使う3^4完全列挙は81/81完走し、`15 ohm / 16 nH / 520 pF / 720 pF` の真値を回収、
+  未使用反射波もhold-out一致した。図には50 ohm Smith chartと、文献根拠・benchmark固有仮定の分離も追加した。
 - 同benchmarkの初期試行で、ngspiceがtime-step abort後に部分CSVとreturn code 0を残す挙動を確認した。
   solver adapterへ要求`stop_s`到達の一回の検査を追加し、部分波形を`incomplete_transient`として失敗させた。
   これは診断層の追加ではなく、simulation成功契約の偽陽性を除く一般修正である。

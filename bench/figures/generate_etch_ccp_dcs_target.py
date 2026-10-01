@@ -120,7 +120,7 @@ def dc_source(time_s: float) -> float:
 
 
 RP = _between(35.0, 15.0)
-LP = _between(350.0e-9, 160.0e-9)
+LP = _between(35.0e-9, 16.0e-9)
 CSU = _between(260.0e-12, 520.0e-12)
 CSW = _between(360.0e-12, 720.0e-12)
 

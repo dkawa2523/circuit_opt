@@ -42,7 +42,8 @@ etch rateを自己整合に解くplasma solverではない。
 blocking capacitor、electrode/ESC stray capacitance、wall leakageを明示した。
 
 今回の `Rp(t)`, `Lp(t)`, `Cs,u(t)`, `Cs,w(t)` は、外部plasma calculationまたは測定同定で与えられる
-有効端子parameterである。値から密度・sheath厚さを逆算してprocess physicsを主張しない。
+有効端子parameterである。後述の平行平板・一様bulk近似による逆算は桁の妥当性確認に限り、密度やsheath厚さの
+計測値、あるいはprocess physicsの検証結果とは扱わない。
 
 ## 3. 問題設定
 
@@ -101,7 +102,7 @@ s = 0                         2.40 <= τ <= 2.50 µs
 | 素子 | off | on | 電気的意味 |
 |---|---:|---:|---|
 | `Rp(t)` | 35 Ω | 15 Ω | density上昇に伴う有効bulk resistance低下 |
-| `Lp(t)` | 350 nH | 160 nH | electron inertia相当inductance低下 |
+| `Lp(t)` | 35 nH | 16 nH | electron inertia相当inductance低下 |
 | `Cs,u(t)` | 260 pF | 520 pF | upper sheath薄化相当 |
 | `Cs,w(t)` | 360 pF | 720 pF | wafer sheath薄化相当 |
 | upper sheath loss | 1.5 kΩ | fixed | 有限conductive loss |
@@ -121,6 +122,20 @@ vp   = vp,L + Rp(t) ip
 `L='expression'` をcase-local raw elementとして使う。汎用PCDのplasma modelへ、物理則を伴わない動的C/L optionを
 追加してはいない。
 
+### 3.4 数値スケールの妥当性と限界
+
+300 mm円板の全面積と18 mmの一様bulkを仮定した桁確認では、設定値は次の範囲に対応する。
+
+| 確認量 | 単純換算 | 解釈上の注意 |
+|---|---:|---|
+| sheath厚さ `ds = ε0 A / Cs` | 0.87–2.41 mm | 平行平板近似。edge、非一様性、誘電体を無視 |
+| electron density `ne = me l / (e² A Lp)` | 2.58e14–5.65e14 m^-3 | 一様bulk・全面積導通の近似 |
+| collision scale `νm ≈ Rp/Lp` | 9.38e8–1.00e9 s^-1 | 有効R/Lの比であり、衝突周波数の測定値ではない |
+
+したがって、300 mm級CCPの回路端子モデルとして桁外れではないが、装置校正済みのparameterではない。
+60/2 MHz構成、上部負DC、CCPのsheath-C/bulk-RL表現は文献に基づき、400 kHz pulse、理想電圧源振幅、
+matcher/feed/stray値、時間profileは既知真値benchmark用の明示的な仮定である。この区別はPDF 6ページにも記載した。
+
 ## 4. 順問題の独立検証
 
 reference targetはngspice出力から作らず、同じ回路のmodified nodal equationを独立に実装した。
@@ -137,11 +152,11 @@ plasma-inductor fluxも直接比較した。
 
 | 波形 | RMSE | target RMS正規化RMSE | peak-to-peak正規化RMSE |
 |---|---:|---:|---:|
-| wafer voltage | 0.287151 V | 8.13188e-4 | 2.64821e-4 |
-| upper reflected voltage | 0.364325 V | 8.78371e-3 | 1.65293e-3 |
-| bulk current | 0.0140259 A | 5.90386e-3 | 1.46195e-3 |
-| upper-sheath charge | 4.19572e-11 C | 2.54953e-4 | 9.82362e-5 |
-| plasma flux | 2.75524e-9 Wb | 6.38556e-3 | 1.74149e-3 |
+| wafer voltage | 0.0657924 V | 1.87231e-4 | 6.25756e-5 |
+| upper reflected voltage | 0.154504 V | 2.45190e-3 | 6.55509e-4 |
+| bulk current | 0.00251420 A | 1.60585e-3 | 4.06541e-4 |
+| upper-sheath charge | 8.85867e-12 C | 5.38622e-5 | 2.09899e-5 |
+| plasma flux | 5.52968e-11 Wb | 1.66730e-3 | 3.63615e-4 |
 
 target RMS正規化は `RMSE / RMS(target)` で、PCDのwaveform objectiveと同じ定義である。RF carrierを含むため、
 transition近傍の最大瞬時誤差だけでなく全周期RMSEを主判定に使う。
@@ -156,10 +171,17 @@ Zs,w(ω,t) = 1 / (1/Rs,w + jωCs,w(t))
 Zmain(ω,t) = Zs,u + Rp(t) + jωLp(t) + Zs,w
 ```
 
-として2 MHzと60 MHzで図示した。2 MHzではsheathのcapacitive reactanceが支配的で、60 MHzでは
-`ωLp` の寄与が大きくなり、このbenchmark値ではmain branchの虚部が正になる。この図は周波数ごとのRF loadingを
-理解するためのfrozen-time表示であり、pulse transitionを含む実波形計算そのものは前節のcharge/flux state equationで
-行う。
+として2 MHzと60 MHzで図示した。さらに `Z0=50 Ω` に対する
+`Γ=(Zmain-Z0)/(Zmain+Z0)` をSmith chartへ写像し、距離 `|Γ|` と電力反射比 `|Γ|²` を読めるようにした。
+
+| 周波数 | pulse-off `Zmain` | pulse-on `Zmain` | off/on `|Γ|²` | 読み方 |
+|---|---:|---:|---:|---|
+| 2 MHz | 119.1-j511.8 Ω | 36.5-j261.4 Ω | 0.918 / 0.904 | 強い容量性で外周に近く、matcherなしでは大反射 |
+| 60 MHz | 35.1-j4.4 Ω | 15.0-j2.8 Ω | 0.033 / 0.291 | 虚部は小さいが、on時は実部が50 Ωから離れるため反射増加 |
+
+Smith chart中心は `50+j0 Ω`、外周は全反射、下半面は容量性を表す。灰丸はpulse-off、橙四角はpulse-onである。
+ここで示すのはmatcherを除外したplasma main branchのfrozen-state loadであり、source planeで測定したS11ではない。
+pulse transitionを含む実波形計算自体は前節のcharge/flux state equationで行う。
 
 ## 6. 逆問題
 
@@ -168,7 +190,7 @@ Zmain(ω,t) = Zs,u + Rp(t) + jωLp(t) + Zs,w
 | 未知量 | 候補 |
 |---|---|
 | `Rp,on` | 12, 15, 18 Ω |
-| `Lp,on` | 130, 160, 190 nH |
+| `Lp,on` | 13, 16, 19 nH |
 | `Cs,u,on` | 440, 520, 600 pF |
 | `Cs,w,on` | 620, 720, 820 pF |
 
@@ -178,10 +200,10 @@ Zmain(ω,t) = Zs,u + Rp(t) + jωLp(t) + Zs,w
 結果は次の通りである。
 
 - 81/81 transientが要求終了時刻まで完走、solver failure 0。
-- selected candidateは `Rp=15 Ω`, `Lp=160 nH`, `Cs,u=520 pF`, `Cs,w=720 pF` で真値と一致。
-- objective normalized RMSEは `8.13188e-4`。
-- second-best lossは `2.14343e-3` で、selectedとの分離を確認。
-- 未使用のupper reflected voltageもRMSE `0.364325 V`、normalized RMSE `8.78371e-3`。
+- selected candidateは `Rp=15 Ω`, `Lp=16 nH`, `Cs,u=520 pF`, `Cs,w=720 pF` で真値と一致。
+- objective normalized RMSEは `1.87231e-4`。
+- second-best lossは `1.36547e-3` で、bestの7.29倍に分離。
+- 未使用のupper reflected voltageもRMSE `0.154504 V`、normalized RMSE `2.45190e-3`。
 - 4本のparameter profile RMSEはすべて0。
 
 これは「wafer波形から任意の4関数を一意に推定できる」という主張ではない。既知の共通envelopeと狭い3水準候補を
@@ -193,8 +215,9 @@ Zmain(ω,t) = Zs,u + Rp(t) + jωLp(t) + Zs,w
 1. [装置と上下対応した詳細等価回路](../bench/figures/etch_ccp_dcs/01-apparatus-and-equivalent-circuit.svg)
 2. [入力波形と4つの時間変化素子](../bench/figures/etch_ccp_dcs/02-inputs-and-dynamic-elements.svg)
 3. [独立MNAとngspiceの順問題比較](../bench/figures/etch_ccp_dcs/03-forward-conformance.svg)
-4. [2 MHz / 60 MHz動的branch impedance](../bench/figures/etch_ccp_dcs/04-dynamic-branch-impedance.svg)
+4. [2 MHz / 60 MHz動的branch impedanceとSmith chart](../bench/figures/etch_ccp_dcs/04-dynamic-branch-impedance.svg)
 5. [wafer電圧同定、loss履歴、hold-out反射波](../bench/figures/etch_ccp_dcs/05-inverse-identification.svg)
+6. [文献根拠、benchmark固有仮定、物理スケール確認](../bench/figures/etch_ccp_dcs/06-literature-basis-and-scope.svg)
 
 結合PDFは `output/pdf/etch-ccp-dcs-dynamic-impedance-study.pdf`、全source path、SHA-256、solver version、誤差、
 全81候補は `bench/figures/etch_ccp_dcs/figure_data.json` に保存している。図生成器は保存済みartifactを読むだけで、
@@ -211,11 +234,11 @@ uv run --frozen python -m pcd validate-case `
 
 uv run --frozen python -m pcd sim-run `
   bench/figures/cases/etch_ccp_dcs_forward.yaml `
-  --run-root runs/etch_ccp_dcs_forward_v6_20261001 --json
+  --run-root runs/etch_ccp_dcs_forward_v7_20261001 --json
 
 uv run --frozen python -m pcd run `
   bench/figures/cases/etch_ccp_dcs_inverse.yaml `
-  --output runs/etch_ccp_dcs_inverse_v2_20261001 --json
+  --output runs/etch_ccp_dcs_inverse_v3_20261001 --json
 
 uv run --frozen python bench/figures/generate_etch_ccp_dcs_evidence.py
 ```

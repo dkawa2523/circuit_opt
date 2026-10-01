@@ -36,6 +36,11 @@ def configure_publication_style() -> None:
             "xtick.labelsize": 7.4,
             "ytick.labelsize": 7.4,
             "legend.fontsize": 7.4,
+            "legend.frameon": False,
+            "legend.handlelength": 2.2,
+            "legend.labelspacing": 0.35,
+            "lines.linewidth": 1.15,
+            "lines.markersize": 4.5,
             "axes.edgecolor": INK,
             "axes.labelcolor": INK,
             "xtick.color": INK,
@@ -82,14 +87,14 @@ def add_panel_title(axis: Any, label: str, title: str) -> None:
 def add_figure_title(figure: Any, title: str, subtitle: str) -> None:
     """Add the pack's shared title and evidence-context subtitle."""
 
-    figure.text(0.01, 0.985, title, ha="left", va="top", fontsize=11.0, fontweight="bold")
-    figure.text(0.01, 0.92, subtitle, ha="left", va="top", fontsize=7.7, color=MUTED)
+    figure.text(0.02, 0.985, title, ha="left", va="top", fontsize=11.0, fontweight="bold")
+    figure.text(0.02, 0.92, subtitle, ha="left", va="top", fontsize=7.7, color=MUTED)
 
 
 def add_figure_footer(figure: Any, text: str) -> None:
     """Add a concise source or scope note inside the fixed canvas."""
 
-    figure.text(0.01, 0.012, text, ha="left", va="bottom", fontsize=6.6, color=MUTED)
+    figure.text(0.02, 0.012, text, ha="left", va="bottom", fontsize=6.6, color=MUTED)
 
 
 def assert_text_inside_canvas(figure: Any, tolerance_px: float = 1.5) -> None:

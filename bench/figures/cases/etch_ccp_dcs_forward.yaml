@@ -15,7 +15,7 @@ circuit:
   output_node: wafer
   variables:
     Rp_on_ohm: {choices: [15.0], default: 15.0}
-    Lp_on_H: {choices: [1.6e-7], default: 1.6e-7}
+    Lp_on_H: {choices: [1.6e-8], default: 1.6e-8}
     Csu_on_F: {choices: [5.2e-10], default: 5.2e-10}
     Csw_on_F: {choices: [7.2e-10], default: 7.2e-10}
   components:
@@ -35,7 +35,7 @@ circuit:
     - {raw: "Csheath_u upper bulk_top Q = '(2.6e-10+(Csu_on_F-2.6e-10)*pwl((time-floor(time/2.5e-6)*2.5e-6),0,0,2.5e-7,0,5.5e-7,1,2e-6,1,2.4e-6,0,2.5e-6,0))*v(upper,bulk_top)'"}
     - {ref: Rsheath_u, n1: upper, n2: bulk_top, value: 1500.0}
     - {raw: "Vbulk_probe bulk_top bulk_probe 0"}
-    - {raw: "Lplasma bulk_probe bulk_mid L = '3.5e-7+(Lp_on_H-3.5e-7)*pwl((time-floor(time/2.5e-6)*2.5e-6),0,0,2.5e-7,0,5.5e-7,1,2e-6,1,2.4e-6,0,2.5e-6,0)'"}
+    - {raw: "Lplasma bulk_probe bulk_mid L = '3.5e-8+(Lp_on_H-3.5e-8)*pwl((time-floor(time/2.5e-6)*2.5e-6),0,0,2.5e-7,0,5.5e-7,1,2e-6,1,2.4e-6,0,2.5e-6,0)'"}
     - {raw: "Rplasma bulk_mid bulk_bottom R = '35+(Rp_on_ohm-35)*pwl((time-floor(time/2.5e-6)*2.5e-6),0,0,2.5e-7,0,5.5e-7,1,2e-6,1,2.4e-6,0,2.5e-6,0)'"}
     - {ref: Rwall, n1: bulk_bottom, n2: 0, value: 5000.0}
     - {raw: "Csheath_w bulk_bottom wafer Q = '(3.6e-10+(Csw_on_F-3.6e-10)*pwl((time-floor(time/2.5e-6)*2.5e-6),0,0,2.5e-7,0,5.5e-7,1,2e-6,1,2.4e-6,0,2.5e-6,0))*v(bulk_bottom,wafer)'"}

@@ -271,7 +271,7 @@ L 386.940583 99.049631
    </g>
    <g id="line2d_21">
     <path d="M 262.121942 179.577786
-" clip-path="url(#p1acd25e915)" style="fill: none; stroke: #20262d; stroke-width: 1.5; stroke-linecap: square"/>
+" clip-path="url(#p1acd25e915)" style="fill: none; stroke: #20262d; stroke-width: 1.15; stroke-linecap: square"/>
     <defs>
      <path id="m7209c24867" d="M -4.5 0
 L 4.5 0
@@ -388,32 +388,32 @@ z
    <g id="legend_1">
     <g id="PathCollection_4">
      <g>
-      <use xlink:href="#m0af049f20a" x="264.701833" y="279.923766" style="fill: #2a6f97; stroke: #2a6f97; stroke-width: 1.35"/>
+      <use xlink:href="#m0af049f20a" x="261.001833" y="279.923766" style="fill: #2a6f97; stroke: #2a6f97; stroke-width: 1.35"/>
      </g>
     </g>
     <g id="text_19">
-     <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="278.021833" y="281.866266" transform="rotate(-0 278.021833 281.866266)">D1</text>
+     <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="275.061833" y="281.866266" transform="rotate(-0 275.061833 281.866266)">D1</text>
     </g>
     <g id="PathCollection_5">
-     <path d="M 310.628083 284.395902
-C 311.814107 284.395902 312.951714 283.924689 313.79036 283.086043
-C 314.629006 282.247397 315.100218 281.10979 315.100218 279.923766
-C 315.100218 278.737741 314.629006 277.600134 313.79036 276.761488
-C 312.951714 275.922842 311.814107 275.45163 310.628083 275.45163
-C 309.442058 275.45163 308.304451 275.922842 307.465805 276.761488
-C 306.627159 277.600134 306.155947 278.737741 306.155947 279.923766
-C 306.155947 281.10979 306.627159 282.247397 307.465805 283.086043
-C 308.304451 283.924689 309.442058 284.395902 310.628083 284.395902
-L 310.628083 284.395902
+     <path d="M 308.408083 284.395902
+C 309.594107 284.395902 310.731714 283.924689 311.57036 283.086043
+C 312.409006 282.247397 312.880218 281.10979 312.880218 279.923766
+C 312.880218 278.737741 312.409006 277.600134 311.57036 276.761488
+C 310.731714 275.922842 309.594107 275.45163 308.408083 275.45163
+C 307.222058 275.45163 306.084451 275.922842 305.245805 276.761488
+C 304.407159 277.600134 303.935947 278.737741 303.935947 279.923766
+C 303.935947 281.10979 304.407159 282.247397 305.245805 283.086043
+C 306.084451 283.924689 307.222058 284.395902 308.408083 284.395902
+L 308.408083 284.395902
 z
 " style="fill: none; stroke: #2a6f97; stroke-width: 1.35"/>
     </g>
     <g id="text_20">
-     <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="323.948083" y="281.866266" transform="rotate(-0 323.948083 281.866266)">D2</text>
+     <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="322.468083" y="281.866266" transform="rotate(-0 322.468083 281.866266)">D2</text>
     </g>
     <g id="PathCollection_6">
      <g>
-      <use xlink:href="#mfbb31f1bff" x="356.554333" y="279.923766" style="fill: #c66a12; stroke: #c66a12; stroke-width: 1.35"/>
+      <use xlink:href="#mfbb31f1bff" x="355.814333" y="279.923766" style="fill: #c66a12; stroke: #c66a12; stroke-width: 1.35"/>
      </g>
     </g>
     <g id="text_21">
@@ -422,14 +422,14 @@ z
    </g>
   </g>
   <g id="text_22">
-   <text style="font-weight: 700; font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="5.22" y="13.542281" transform="rotate(-0 5.22 13.542281)">D1-D3 reference-plane benchmark results</text>
+   <text style="font-weight: 700; font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="10.44" y="13.542281" transform="rotate(-0 10.44 13.542281)">D1-D3 reference-plane benchmark results</text>
   </g>
   <g id="text_23">
-   <text style="font-size: 7.7px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #68737d" x="5.22" y="33.498797" transform="rotate(-0 5.22 33.498797)">D1/D2 overlap; duplicate fixture D3 fails the 10% reflected-power limit.</text>
+   <text style="font-size: 7.7px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #68737d" x="10.44" y="33.498797" transform="rotate(-0 10.44 33.498797)">D1/D2 overlap; duplicate fixture D3 fails the 10% reflected-power limit.</text>
   </g>
   <g id="text_24">
    <!-- Source evaluation plane; the blue circle is the exact $Z_0=50\,\Omega$, $|\Gamma|\leq\sqrt{0.1}$ region. -->
-   <g style="fill: #68737d" transform="translate(5.22 339.7368)">
+   <g style="fill: #68737d" transform="translate(10.44 339.7368)">
     <text>
      <tspan x="0" y="-0.182125" style="font-size: 6.6px; font-family: 'DejaVu Sans'; fill: #68737d">S</tspan>
      <tspan x="4.185486" y="-0.182125" style="font-size: 6.6px; font-family: 'DejaVu Sans'; fill: #68737d">o</tspan>

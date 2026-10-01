@@ -4575,7 +4575,7 @@ L 514.17 286.848
   </g>
   <g id="text_66">
    <!-- Inverse problem A: wafer voltage alone recovers bounded $R_p(t)$ -->
-   <g style="fill: #20262d" transform="translate(5.22 13.544)">
+   <g style="fill: #20262d" transform="translate(10.44 13.544)">
     <text>
      <tspan x="0" y="-0.640625" style="font-weight: 700; font-size: 11px; font-family: 'DejaVu Sans'; fill: #20262d">I</tspan>
      <tspan x="4.092773" y="-0.640625" style="font-weight: 700; font-size: 11px; font-family: 'DejaVu Sans'; fill: #20262d">n</tspan>
@@ -4642,39 +4642,39 @@ L 514.17 286.848
    </g>
   </g>
   <g id="text_67">
-   <text style="font-size: 7.7px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #68737d" x="5.22" y="33.498797" transform="rotate(-0 5.22 33.498797)">Only the named objective waveform is ranked; the other output is retained as a held-out circuit check.</text>
+   <text style="font-size: 7.7px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #68737d" x="10.44" y="33.498797" transform="rotate(-0 10.44 33.498797)">Only the named objective waveform is ranked; the other output is retained as a held-out circuit check.</text>
   </g>
   <g id="text_68">
-   <text style="font-size: 6.6px; font-family: 'DejaVu Sans'; fill: #68737d" transform="translate(5.22 331.284804)">Selected values: off=70, edge=24, plateau=30, recovery=65 ohm.</text>
-   <text style="font-size: 6.6px; font-family: 'DejaVu Sans'; fill: #68737d" transform="translate(5.22 339.206609)">Objective nRMSE=1.717e-04; held-out nRMSE=3.989e-04; profile RMSE=2.63e-11 ohm; 81/81 solves succeeded.</text>
+   <text style="font-size: 6.6px; font-family: 'DejaVu Sans'; fill: #68737d" transform="translate(10.44 331.284804)">Selected values: off=70, edge=24, plateau=30, recovery=65 ohm.</text>
+   <text style="font-size: 6.6px; font-family: 'DejaVu Sans'; fill: #68737d" transform="translate(10.44 339.206609)">Objective nRMSE=1.717e-04; held-out nRMSE=3.989e-04; profile RMSE=2.63e-11 ohm; 81/81 solves succeeded.</text>
   </g>
   <g id="legend_1">
    <g id="line2d_138">
-    <path d="M 93.543422 71.900844
-L 100.943422 71.900844
-L 108.343422 71.900844
+    <path d="M 91.323422 71.900844
+L 99.463422 71.900844
+L 107.603422 71.900844
 " style="fill: none; stroke-dasharray: 6.8,3.4; stroke-dashoffset: 0; stroke: #c66a12; stroke-width: 1.7"/>
    </g>
    <g id="text_69">
-    <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="114.263422" y="74.490844" transform="rotate(-0 114.263422 74.490844)">independent truth/target</text>
+    <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="113.523422" y="74.490844" transform="rotate(-0 113.523422 74.490844)">independent truth/target</text>
    </g>
    <g id="line2d_139">
-    <path d="M 221.411953 71.900844
+    <path d="M 220.671953 71.900844
 L 228.811953 71.900844
-L 236.211953 71.900844
+L 236.951953 71.900844
 " style="fill: none; stroke: #68737d; stroke-width: 0.75; stroke-linecap: square"/>
    </g>
    <g id="text_70">
-    <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="242.131953" y="74.490844" transform="rotate(-0 242.131953 74.490844)">first grid candidate</text>
+    <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="242.871953" y="74.490844" transform="rotate(-0 242.871953 74.490844)">first grid candidate</text>
    </g>
    <g id="line2d_140">
-    <path d="M 327.322141 71.900844
-L 334.722141 71.900844
-L 342.122141 71.900844
+    <path d="M 328.062141 71.900844
+L 336.202141 71.900844
+L 344.342141 71.900844
 " style="fill: none; stroke: #2a6f97; stroke-width: 0.9; stroke-linecap: square"/>
    </g>
    <g id="text_71">
-    <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="348.042141" y="74.490844" transform="rotate(-0 348.042141 74.490844)">selected ngspice candidate</text>
+    <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="350.262141" y="74.490844" transform="rotate(-0 350.262141 74.490844)">selected ngspice candidate</text>
    </g>
   </g>
  </g>

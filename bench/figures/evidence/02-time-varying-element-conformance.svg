@@ -414,7 +414,7 @@ z
    <g id="legend_1">
     <g id="PathCollection_2">
      <g>
-      <use xlink:href="#m9467e47c83" x="437.070094" y="65.636344" style="fill: #20262d; stroke: #20262d"/>
+      <use xlink:href="#m9467e47c83" x="436.330094" y="65.636344" style="fill: #20262d; stroke: #20262d"/>
      </g>
     </g>
     <g id="text_20">
@@ -666,8 +666,8 @@ L 247.155652 304.128
    </g>
    <g id="legend_2">
     <g id="line2d_38">
-     <path d="M 159.291058 215.077987
-L 166.691058 215.077987
+     <path d="M 157.811058 215.077987
+L 165.951058 215.077987
 L 174.091058 215.077987
 " style="fill: none; stroke-dasharray: 8,4; stroke-dashoffset: 0; stroke: #c66a12; stroke-width: 2"/>
     </g>
@@ -675,13 +675,13 @@ L 174.091058 215.077987
      <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="180.011058" y="217.667987" transform="rotate(-0 180.011058 217.667987)">divider equation</text>
     </g>
     <g id="line2d_39">
-     <path d="M 159.291058 226.178565
-L 166.691058 226.178565
-L 174.091058 226.178565
+     <path d="M 157.811058 225.068565
+L 165.951058 225.068565
+L 174.091058 225.068565
 " style="fill: none; stroke: #2a6f97; stroke-linecap: square"/>
     </g>
     <g id="text_35">
-     <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="180.011058" y="228.768565" transform="rotate(-0 180.011058 228.768565)">ngspice</text>
+     <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="180.011058" y="227.658565" transform="rotate(-0 180.011058 227.658565)">ngspice</text>
     </g>
    </g>
   </g>
@@ -929,8 +929,8 @@ L 514.17 304.128
    </g>
    <g id="legend_3">
     <g id="line2d_54">
-     <path d="M 426.305406 215.077987
-L 433.705406 215.077987
+     <path d="M 424.825406 215.077987
+L 432.965406 215.077987
 L 441.105406 215.077987
 " style="fill: none; stroke-dasharray: 8,4; stroke-dashoffset: 0; stroke: #c66a12; stroke-width: 2"/>
     </g>
@@ -938,24 +938,24 @@ L 441.105406 215.077987
      <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="447.025406" y="217.667987" transform="rotate(-0 447.025406 217.667987)">divider equation</text>
     </g>
     <g id="line2d_55">
-     <path d="M 426.305406 226.178565
-L 433.705406 226.178565
-L 441.105406 226.178565
+     <path d="M 424.825406 225.068565
+L 432.965406 225.068565
+L 441.105406 225.068565
 " style="fill: none; stroke: #2a6f97; stroke-linecap: square"/>
     </g>
     <g id="text_50">
-     <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="447.025406" y="228.768565" transform="rotate(-0 447.025406 228.768565)">ngspice</text>
+     <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="447.025406" y="227.658565" transform="rotate(-0 447.025406 227.658565)">ngspice</text>
     </g>
    </g>
   </g>
   <g id="text_51">
-   <text style="font-weight: 700; font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="5.22" y="13.542281" transform="rotate(-0 5.22 13.542281)">A prescribed component trajectory is used during the transient solve</text>
+   <text style="font-weight: 700; font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="10.44" y="13.542281" transform="rotate(-0 10.44 13.542281)">A prescribed component trajectory is used during the transient solve</text>
   </g>
   <g id="text_52">
-   <text style="font-size: 7.7px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #68737d" x="5.22" y="33.498797" transform="rotate(-0 5.22 33.498797)">The independent divider equation is evaluated at every saved time point; no fitted surrogate is used.</text>
+   <text style="font-size: 7.7px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #68737d" x="10.44" y="33.498797" transform="rotate(-0 10.44 33.498797)">The independent divider equation is evaluated at every saved time point; no fitted surrogate is used.</text>
   </g>
   <g id="text_53">
-   <text style="font-size: 6.6px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #68737d" x="5.22" y="339.867253" transform="rotate(-0 5.22 339.867253)">ngspice-46; 258 saved samples; max voltage error=4.00e-15 V; max current error=8.33e-17 A.</text>
+   <text style="font-size: 6.6px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #68737d" x="10.44" y="339.867253" transform="rotate(-0 10.44 339.867253)">ngspice-46; 258 saved samples; max voltage error=4.00e-15 V; max current error=8.33e-17 A.</text>
   </g>
  </g>
  <defs>

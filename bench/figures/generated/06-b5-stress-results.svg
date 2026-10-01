@@ -648,14 +648,14 @@ z
    </g>
   </g>
   <g id="text_38">
-   <text style="font-weight: 700; font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="5.22" y="13.542281" transform="rotate(-0 5.22 13.542281)">B5 high-drive component and source stress</text>
+   <text style="font-weight: 700; font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="10.44" y="13.542281" transform="rotate(-0 10.44 13.542281)">B5 high-drive component and source stress</text>
   </g>
   <g id="text_39">
-   <text style="font-size: 7.7px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #68737d" x="5.22" y="33.498797" transform="rotate(-0 5.22 33.498797)">The linear circuit remains matched at both amplitudes; declared L1 and source-terminal limits reject the high-drive scenario.</text>
+   <text style="font-size: 7.7px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #68737d" x="10.44" y="33.498797" transform="rotate(-0 10.44 33.498797)">The linear circuit remains matched at both amplitudes; declared L1 and source-terminal limits reject the high-drive scenario.</text>
   </g>
   <g id="text_40">
-   <text style="font-size: 6.6px; font-family: 'DejaVu Sans'; fill: #68737d" transform="translate(5.22 331.284804)">Blue circle = 25 Vpk; orange square = 100 Vpk. Utilization = calculated value / limit.</text>
-   <text style="font-size: 6.6px; font-family: 'DejaVu Sans'; fill: #68737d" transform="translate(5.22 339.206609)">Effective ESR/DCR loss is not a temperature or lifetime prediction.</text>
+   <text style="font-size: 6.6px; font-family: 'DejaVu Sans'; fill: #68737d" transform="translate(10.44 331.284804)">Blue circle = 25 Vpk; orange square = 100 Vpk. Utilization = calculated value / limit.</text>
+   <text style="font-size: 6.6px; font-family: 'DejaVu Sans'; fill: #68737d" transform="translate(10.44 339.206609)">Effective ESR/DCR loss is not a temperature or lifetime prediction.</text>
   </g>
  </g>
  <defs>

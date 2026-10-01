@@ -712,14 +712,14 @@ z
    </g>
   </g>
   <g id="text_25">
-   <text style="font-weight: 700; font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="5.22" y="13.542281" transform="rotate(-0 5.22 13.542281)">Electrical load models used by the core benchmarks</text>
+   <text style="font-weight: 700; font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="10.44" y="13.542281" transform="rotate(-0 10.44 13.542281)">Electrical load models used by the core benchmarks</text>
   </g>
   <g id="text_26">
-   <text style="font-size: 7.7px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #68737d" x="5.22" y="33.498797" transform="rotate(-0 5.22 33.498797)">Each load is a named-reference-plane one-port; geometry, plasma state and species-power partition remain outside scope.</text>
+   <text style="font-size: 7.7px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #68737d" x="10.44" y="33.498797" transform="rotate(-0 10.44 33.498797)">Each load is a named-reference-plane one-port; geometry, plasma state and species-power partition remain outside scope.</text>
   </g>
   <g id="text_27">
-   <text style="font-size: 6.6px; font-family: 'DejaVu Sans'; fill: #68737d" transform="translate(5.22 331.284804)">Scope: A4 checks the series CCP terminal form; A5 checks the identifiable ICP reduction.</text>
-   <text style="font-size: 6.6px; font-family: 'DejaVu Sans'; fill: #68737d" transform="translate(5.22 339.206609)">ICP transformer lineage: Lee et al. (2020), DOI 10.1063/1.5133862.</text>
+   <text style="font-size: 6.6px; font-family: 'DejaVu Sans'; fill: #68737d" transform="translate(10.44 331.284804)">Scope: A4 checks the series CCP terminal form; A5 checks the identifiable ICP reduction.</text>
+   <text style="font-size: 6.6px; font-family: 'DejaVu Sans'; fill: #68737d" transform="translate(10.44 339.206609)">ICP transformer lineage: Lee et al. (2020), DOI 10.1063/1.5133862.</text>
   </g>
  </g>
  <defs>

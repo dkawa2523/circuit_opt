@@ -25,7 +25,7 @@ flux, and reflected voltage; an 81-point exact grid then identifies four
 bounded on-state values from wafer voltage alone. This is evidence for explicit
 circuit modeling, not a new generic plasma-physics feature. See the
 [problem statement and results](docs/etch-ccp-dcs-dynamic-impedance-study-ja.md)
-and the [five evidence figures](bench/figures/README.md#dynamic-impedance-etch-ccp-with-dual-rf-and-dc-superposition).
+and the [six evidence figures](bench/figures/README.md#dynamic-impedance-etch-ccp-with-dual-rf-and-dc-superposition).
 
 A worked dual-frequency CCP example combines a 40 MHz upper excitation, an
 800 kHz rectangular lower bias, fixed effective sheaths, and a prescribed

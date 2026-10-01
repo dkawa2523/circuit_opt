@@ -2428,13 +2428,13 @@
   "sources": {
     "forward_case": {
       "path": "bench/figures/cases/dual_frequency_ccp_forward.yaml",
-      "sha256": "a7bcdd876b74abbc5fcb0c2926a55305abdd09f8d311a48514a5c9b6a5b7d05d",
-      "bytes": 2431
+      "sha256": "2c7180b9e633fcf6ab678f6e0d69ceec3700cf3b7556c2430e9e774aa51ef684",
+      "bytes": 2430
     },
     "wafer_case": {
       "path": "bench/figures/cases/dual_frequency_ccp_inverse_wafer.yaml",
-      "sha256": "db05ae114fa8b541c7a05cd4b10d06e04fba74725c5c4e529bbc52460d40d972",
-      "bytes": 2489
+      "sha256": "3ff7efc972d13af09a8cb79073897c7f034c4c0c7996017a8d2167a21171475c",
+      "bytes": 2488
     },
     "reflection_case": {
       "path": "bench/figures/cases/dual_frequency_ccp_inverse_reflection.yaml",

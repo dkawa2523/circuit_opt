@@ -844,11 +844,11 @@ L 416.105 128.384989
    </g>
   </g>
   <g id="text_32">
-   <text style="font-weight: 700; font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="5.22" y="13.542281" transform="rotate(-0 5.22 13.542281)">Dual-frequency CCP: apparatus and circuit use the same vertical order</text>
+   <text style="font-weight: 700; font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="10.44" y="13.542281" transform="rotate(-0 10.44 13.542281)">Dual-frequency CCP: apparatus and circuit use the same vertical order</text>
   </g>
   <g id="text_33">
    <!-- Labels [1]-[5] map hardware to nodes and elements; $V_W$ and $V_-$ are distinct outputs. -->
-   <g style="fill: #68737d" transform="translate(5.22 33.5)">
+   <g style="fill: #68737d" transform="translate(10.44 33.5)">
     <text>
      <tspan x="0" y="-0.15625" style="font-size: 7.7px; font-family: 'DejaVu Sans'; fill: #68737d">L</tspan>
      <tspan x="4.282928" y="-0.15625" style="font-size: 7.7px; font-family: 'DejaVu Sans'; fill: #68737d">a</tspan>
@@ -936,8 +936,8 @@ L 416.105 128.384989
    </g>
   </g>
   <g id="text_34">
-   <text style="font-size: 6.6px; font-family: 'DejaVu Sans'; fill: #68737d" transform="translate(5.22 331.284804)">Outputs: V_W = wafer/chuck to chamber ground; V- = reflected wave at P_HF.</text>
-   <text style="font-size: 6.6px; font-family: 'DejaVu Sans'; fill: #68737d" transform="translate(5.22 339.206609)">Z0 = 50 ohm and current is positive into the chamber; diagram not to scale.</text>
+   <text style="font-size: 6.6px; font-family: 'DejaVu Sans'; fill: #68737d" transform="translate(10.44 331.284804)">Outputs: V_W = wafer/chuck to chamber ground; V- = reflected wave at P_HF.</text>
+   <text style="font-size: 6.6px; font-family: 'DejaVu Sans'; fill: #68737d" transform="translate(10.44 339.206609)">Z0 = 50 ohm and current is positive into the chamber; diagram not to scale.</text>
   </g>
  </g>
  <defs>

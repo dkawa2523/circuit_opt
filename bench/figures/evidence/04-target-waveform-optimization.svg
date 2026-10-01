@@ -510,26 +510,26 @@ L 514.17 154.038857
    </g>
    <g id="legend_1">
     <g id="line2d_29">
-     <path d="M 385.45625 120.809967
-L 392.85625 120.809967
-L 400.25625 120.809967
+     <path d="M 383.97625 123.029967
+L 392.11625 123.029967
+L 400.25625 123.029967
 " style="fill: none; stroke: #68737d; stroke-linecap: square"/>
     </g>
     <g id="text_22">
-     <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="406.17625" y="123.399967" transform="rotate(-0 406.17625 123.399967)">first grid point</text>
+     <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="406.17625" y="125.619967" transform="rotate(-0 406.17625 125.619967)">first grid point</text>
     </g>
     <g id="line2d_30">
-     <path d="M 385.45625 131.910545
-L 392.85625 131.910545
-L 400.25625 131.910545
+     <path d="M 383.97625 133.020545
+L 392.11625 133.020545
+L 400.25625 133.020545
 " style="fill: none; stroke-dasharray: 8,4; stroke-dashoffset: 0; stroke: #c66a12; stroke-width: 2"/>
     </g>
     <g id="text_23">
-     <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="406.17625" y="134.500545" transform="rotate(-0 406.17625 134.500545)">target</text>
+     <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="406.17625" y="135.610545" transform="rotate(-0 406.17625 135.610545)">target</text>
     </g>
     <g id="line2d_31">
-     <path d="M 385.45625 143.011123
-L 392.85625 143.011123
+     <path d="M 383.97625 143.011123
+L 392.11625 143.011123
 L 400.25625 143.011123
 " style="fill: none; stroke: #2a6f97; stroke-width: 1.1; stroke-linecap: square"/>
     </g>
@@ -1156,13 +1156,13 @@ L 514.17 205.385143
    </g>
   </g>
   <g id="text_62">
-   <text style="font-weight: 700; font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="5.22" y="13.542281" transform="rotate(-0 5.22 13.542281)">Element optimization recovers the RC time constant behind the target waveform</text>
+   <text style="font-weight: 700; font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="10.44" y="13.542281" transform="rotate(-0 10.44 13.542281)">Element optimization recovers the RC time constant behind the target waveform</text>
   </g>
   <g id="text_63">
-   <text style="font-size: 7.7px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #68737d" x="5.22" y="33.498797" transform="rotate(-0 5.22 33.498797)">A finite 3 x 3 component grid is solved exhaustively; the selected waveform is an ngspice result, not a surrogate prediction.</text>
+   <text style="font-size: 7.7px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #68737d" x="10.44" y="33.498797" transform="rotate(-0 10.44 33.498797)">A finite 3 x 3 component grid is solved exhaustively; the selected waveform is an ngspice result, not a surrogate prediction.</text>
   </g>
   <g id="text_64">
-   <text style="font-size: 6.6px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #68737d" x="5.22" y="339.867253" transform="rotate(-0 5.22 339.867253)">Selected R1=1 kOhm, C1=300 pF, tau=300 ns; nRMSE=0.0010; 9/9 ngspice evaluations succeeded.</text>
+   <text style="font-size: 6.6px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #68737d" x="10.44" y="339.867253" transform="rotate(-0 10.44 339.867253)">Selected R1=1 kOhm, C1=300 pF, tau=300 ns; nRMSE=0.0010; 9/9 ngspice evaluations succeeded.</text>
   </g>
  </g>
  <defs>

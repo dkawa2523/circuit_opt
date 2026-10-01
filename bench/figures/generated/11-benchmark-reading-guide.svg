@@ -493,60 +493,60 @@ z
    <g id="legend_1">
     <g id="line2d_23">
      <defs>
-      <path id="md272be287d" d="M 0 3
-C 0.795609 3 1.55874 2.683901 2.12132 2.12132
-C 2.683901 1.55874 3 0.795609 3 0
-C 3 -0.795609 2.683901 -1.55874 2.12132 -2.12132
-C 1.55874 -2.683901 0.795609 -3 0 -3
-C -0.795609 -3 -1.55874 -2.683901 -2.12132 -2.12132
-C -2.683901 -1.55874 -3 -0.795609 -3 0
-C -3 0.795609 -2.683901 1.55874 -2.12132 2.12132
-C -1.55874 2.683901 -0.795609 3 0 3
+      <path id="m43c1c54bf7" d="M 0 2.25
+C 0.596707 2.25 1.169055 2.012926 1.59099 1.59099
+C 2.012926 1.169055 2.25 0.596707 2.25 0
+C 2.25 -0.596707 2.012926 -1.169055 1.59099 -1.59099
+C 1.169055 -2.012926 0.596707 -2.25 0 -2.25
+C -0.596707 -2.25 -1.169055 -2.012926 -1.59099 -1.59099
+C -2.012926 -1.169055 -2.25 -0.596707 -2.25 0
+C -2.25 0.596707 -2.012926 1.169055 -1.59099 1.59099
+C -1.169055 2.012926 -0.596707 2.25 0 2.25
 z
 " style="stroke: #2a6f97"/>
      </defs>
      <g>
-      <use xlink:href="#md272be287d" x="469.0352" y="237.430266" style="fill: #2a6f97; stroke: #2a6f97"/>
+      <use xlink:href="#m43c1c54bf7" x="469.7752" y="237.985266" style="fill: #2a6f97; stroke: #2a6f97"/>
      </g>
     </g>
     <g id="text_29">
-     <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="482.3552" y="240.020266" transform="rotate(-0 482.3552 240.020266)">yes</text>
+     <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="483.8352" y="240.575266" transform="rotate(-0 483.8352 240.575266)">yes</text>
     </g>
     <g id="line2d_24">
      <defs>
-      <path id="mca1c047747" d="M -1.5 3
-L 0 1.5
-L 1.5 3
-L 3 1.5
-L 1.5 0
-L 3 -1.5
-L 1.5 -3
-L 0 -1.5
-L -1.5 -3
-L -3 -1.5
-L -1.5 0
-L -3 1.5
+      <path id="m0c59bec6d9" d="M -1.125 2.25
+L 0 1.125
+L 1.125 2.25
+L 2.25 1.125
+L 1.125 0
+L 2.25 -1.125
+L 1.125 -2.25
+L 0 -1.125
+L -1.125 -2.25
+L -2.25 -1.125
+L -1.125 0
+L -2.25 1.125
 z
 " style="stroke: #c66a12; stroke-linejoin: miter"/>
      </defs>
      <g>
-      <use xlink:href="#mca1c047747" x="469.0352" y="248.530844" style="fill: #c66a12; stroke: #c66a12; stroke-linejoin: miter"/>
+      <use xlink:href="#m0c59bec6d9" x="469.7752" y="247.975844" style="fill: #c66a12; stroke: #c66a12; stroke-linejoin: miter"/>
      </g>
     </g>
     <g id="text_30">
-     <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="482.3552" y="251.120844" transform="rotate(-0 482.3552 251.120844)">no</text>
+     <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="483.8352" y="250.565844" transform="rotate(-0 483.8352 250.565844)">no</text>
     </g>
    </g>
   </g>
   <g id="text_31">
-   <text style="font-weight: 700; font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="5.22" y="13.542281" transform="rotate(-0 5.22 13.542281)">How to read the core benchmark results</text>
+   <text style="font-weight: 700; font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="10.44" y="13.542281" transform="rotate(-0 10.44 13.542281)">How to read the core benchmark results</text>
   </g>
   <g id="text_32">
-   <text style="font-size: 7.7px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #68737d" x="5.22" y="33.498797" transform="rotate(-0 5.22 33.498797)">Benchmark pass = declared expectation reproduced; candidate feasible = every required engineering constraint satisfied.</text>
+   <text style="font-size: 7.7px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #68737d" x="10.44" y="33.498797" transform="rotate(-0 10.44 33.498797)">Benchmark pass = declared expectation reproduced; candidate feasible = every required engineering constraint satisfied.</text>
   </g>
   <g id="text_33">
-   <text style="font-size: 6.6px; font-family: 'DejaVu Sans'; fill: #68737d" transform="translate(5.22 331.284804)">Frozen run: all 16 benchmark expectations reproduced.</text>
-   <text style="font-size: 6.6px; font-family: 'DejaVu Sans'; fill: #68737d" transform="translate(5.22 339.206609)">Engineering outcome: 6 candidate configurations feasible; 10 intentionally or diagnostically infeasible.</text>
+   <text style="font-size: 6.6px; font-family: 'DejaVu Sans'; fill: #68737d" transform="translate(10.44 331.284804)">Frozen run: all 16 benchmark expectations reproduced.</text>
+   <text style="font-size: 6.6px; font-family: 'DejaVu Sans'; fill: #68737d" transform="translate(10.44 339.206609)">Engineering outcome: 6 candidate configurations feasible; 10 intentionally or diagnostically infeasible.</text>
   </g>
  </g>
  <defs>

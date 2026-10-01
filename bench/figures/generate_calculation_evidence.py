@@ -461,7 +461,8 @@ def figure_netlist_workflow(sources: dict[str, Any], data: dict[str, Any]) -> pl
     flow = fig.add_subplot(grid[0, :])
     schematic = fig.add_subplot(grid[1, 0])
     wave = fig.add_subplot(grid[1, 1])
-    add_panel_title(flow, "(a)", "Public calculation path")
+    flow.text(0.0, 1.055, "(a)", transform=flow.transAxes, ha="left", va="bottom", fontweight="bold")
+    flow.text(0.07, 1.055, "Public calculation path", transform=flow.transAxes, ha="left", va="bottom")
     flow.set_axis_off()
     labels = [
         "Authored .cir\nR1 src out 1k\nC1 out 0 100n",
@@ -503,7 +504,7 @@ def figure_netlist_workflow(sources: dict[str, Any], data: dict[str, Any]) -> pl
     wave.set_xticks(np.linspace(math.ceil(float(x_ms[0]) * 2.0) / 2.0, math.floor(float(x_ms[-1]) * 2.0) / 2.0, 5))
     wave.set_xlabel("Time (ms)")
     wave.set_ylabel("Voltage (V)")
-    wave.legend(loc="upper right", frameon=False)
+    wave.legend(loc="upper left", bbox_to_anchor=(1.02, 1.0), frameon=False)
     _format_axes(wave)
     add_figure_title(
         fig,
@@ -516,6 +517,8 @@ def figure_netlist_workflow(sources: dict[str, Any], data: dict[str, Any]) -> pl
         f"phase={comparison['expected_phase_deg']:.2f} deg; max |error|={1e6 * comparison['max_abs_error_V']:.2f} uV.",
     )
     fig.subplots_adjust(left=0.065, right=0.985, top=0.84, bottom=0.12, hspace=0.48, wspace=0.28)
+    wave_position = wave.get_position()
+    wave.set_position((wave_position.x0, wave_position.y0, wave_position.width * 0.64, wave_position.height))
     return fig
 
 

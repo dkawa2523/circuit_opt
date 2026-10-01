@@ -17,9 +17,42 @@
     "reference_impedance_ohm": 50.0,
     "truth": {
       "Rp_on_ohm": 15.0,
-      "Lp_on_H": 1.6e-07,
+      "Lp_on_H": 1.6e-08,
       "Csu_on_F": 5.2e-10,
       "Csw_on_F": 7.2e-10
+    },
+    "basis": {
+      "literature_grounded": [
+        "300 mm, 20 mm gap, upper 60 MHz and lower 2 MHz apparatus class: Kim et al., JJAP 54 01AE07 (2015)",
+        "negative DC on the upper 60 MHz electrode: Yamaguchi et al., J. Phys. D 45 025203 (2012)",
+        "series sheath-C / bulk-L-R interpretation: Kim, Lee, and Hong, Electronics 14 2022 (2025)",
+        "sub-microsecond transient impedance observability: Lee et al., Rev. Sci. Instrum. 86 083505 (2015)",
+        "explicit generator, matcher, and stray coupling: Schmidt et al., Plasma Sources Sci. Technol. 27 105017 (2018)"
+      ],
+      "benchmark_specific": [
+        "the 60 MHz / 2 MHz / pulsed-DC combination is a synthesis, not one published reactor",
+        "400 kHz DC-pulse envelope and ideal source amplitudes are engineering test inputs",
+        "matching, feedthrough, stray, and leakage values are plausible but not fitted to a production tool",
+        "R/L/C time profiles and the 3x3x3x3 identification grid are synthetic known-truth evidence"
+      ],
+      "scale_checks": {
+        "electrode_diameter_m": 0.3,
+        "electrode_area_m2": 0.07068583470577035,
+        "assumed_bulk_length_m": 0.018,
+        "sheath_thickness_range_mm_from_C_parallel_plate": [
+          0.8692578558186488,
+          2.407175600728566
+        ],
+        "electron_density_range_m-3_from_L_uniform_bulk": [
+          258190511968973.2,
+          564791744932128.9
+        ],
+        "collision_frequency_s-1_from_R_over_L": [
+          937500000.0,
+          999999999.9999999
+        ],
+        "interpretation": "order-of-magnitude consistency check only; geometry and plasma are not self-consistently solved"
+      }
     },
     "external_elements": {
       "upper_match_C_F": 1.2e-10,
@@ -47,34 +80,34 @@
     "independent_step_s": 1.25e-10,
     "ngspice_max_step_s": 2.5e-10,
     "wafer_voltage": {
-      "rmse_V": 0.2871510213090002,
-      "normalized_rmse": 0.0008131880424421443,
-      "span_normalized_rmse": 0.0002648212891824004,
-      "max_abs_error_V": 1.4332214395536482
+      "rmse_V": 0.06579237778920052,
+      "normalized_rmse": 0.00018723055093251584,
+      "span_normalized_rmse": 6.257556708361142e-05,
+      "max_abs_error_V": 0.14170245226410572
     },
     "upper_reflected_voltage": {
-      "rmse_V": 0.3643248158598147,
-      "normalized_rmse": 0.0087837076612168,
-      "span_normalized_rmse": 0.0016529312470446712,
-      "max_abs_error_V": 1.9889033284738036
+      "rmse_V": 0.15450422735957944,
+      "normalized_rmse": 0.002451900977838719,
+      "span_normalized_rmse": 0.0006555088594017784,
+      "max_abs_error_V": 0.23928004593248176
     },
     "bulk_current": {
-      "rmse_A": 0.014025884924735419,
-      "normalized_rmse": 0.0059038563074383195,
-      "span_normalized_rmse": 0.0014619462460502615,
-      "max_abs_error_A": 0.07548198027511344
+      "rmse_A": 0.0025141992011942344,
+      "normalized_rmse": 0.001605849658384013,
+      "span_normalized_rmse": 0.000406541192313969,
+      "max_abs_error_A": 0.0072755700391099465
     },
     "upper_sheath_charge": {
-      "rmse_C": 4.195723761400776e-11,
-      "normalized_rmse": 0.0002549528893076269,
-      "span_normalized_rmse": 9.823617363661671e-05,
-      "max_abs_error_C": 2.554948789152028e-10
+      "rmse_C": 8.858673886913928e-12,
+      "normalized_rmse": 5.386224251668138e-05,
+      "span_normalized_rmse": 2.098992268001848e-05,
+      "max_abs_error_C": 2.5830041449947603e-11
     },
     "plasma_flux": {
-      "rmse_Wb": 2.7552379490067756e-09,
-      "normalized_rmse": 0.006385559371224692,
-      "span_normalized_rmse": 0.0017414949873760972,
-      "max_abs_error_Wb": 1.207711684441811e-08
+      "rmse_Wb": 5.529675950917868e-11,
+      "normalized_rmse": 0.0016672969207081818,
+      "span_normalized_rmse": 0.00036361488264033105,
+      "max_abs_error_Wb": 1.6207033271659396e-10
     }
   },
   "inverse": {
@@ -83,33 +116,33 @@
     "selected_candidate_id": "trial_0040",
     "initial_values": {
       "Rp_on_ohm": 12.0,
-      "Lp_on_H": 1.3e-07,
+      "Lp_on_H": 1.3e-08,
       "Csu_on_F": 4.4e-10,
       "Csw_on_F": 6.2e-10
     },
     "selected_values": {
       "Rp_on_ohm": 15.0,
-      "Lp_on_H": 1.6e-07,
+      "Lp_on_H": 1.6e-08,
       "Csu_on_F": 5.2e-10,
       "Csw_on_F": 7.2e-10
     },
     "truth_values": {
       "Rp_on_ohm": 15.0,
-      "Lp_on_H": 1.6e-07,
+      "Lp_on_H": 1.6e-08,
       "Csu_on_F": 5.2e-10,
       "Csw_on_F": 7.2e-10
     },
     "objective_error": {
-      "rmse_V": 0.2871510213090002,
-      "normalized_rmse": 0.0008131880424421443,
-      "span_normalized_rmse": 0.0002648212891824004,
-      "max_abs_error_V": 1.4332214395536482
+      "rmse_V": 0.06579237778920052,
+      "normalized_rmse": 0.00018723055093251584,
+      "span_normalized_rmse": 6.257556708361142e-05,
+      "max_abs_error_V": 0.14170245226410572
     },
     "held_out_error": {
-      "rmse_V": 0.3643248158598147,
-      "normalized_rmse": 0.0087837076612168,
-      "span_normalized_rmse": 0.0016529312470446712,
-      "max_abs_error_V": 1.9889033284738036
+      "rmse_V": 0.15450422735957944,
+      "normalized_rmse": 0.002451900977838719,
+      "span_normalized_rmse": 0.0006555088594017784,
+      "max_abs_error_V": 0.23928004593248176
     },
     "profile_rmse": {
       "Rp_ohm": 0.0,
@@ -117,9 +150,9 @@
       "Csu_F": 0.0,
       "Csw_F": 0.0
     },
-    "initial_loss": 0.055996033018160904,
-    "selected_loss": 0.0008131880424421418,
-    "second_best_loss": 0.0021434329264892133,
+    "initial_loss": 0.0135128706298237,
+    "selected_loss": 0.00018723055093251522,
+    "second_best_loss": 0.0013654739813452723,
     "n_candidates": 81,
     "n_evaluations": 81,
     "n_failed_evaluations": 0,
@@ -129,13 +162,13 @@
       {
         "trial": 0,
         "candidate_id": "trial_0000",
-        "loss": 0.055996033018160904,
-        "rmse_V": 19.773185574800728,
+        "loss": 0.0135128706298237,
+        "rmse_V": 4.748391141648654,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 12.0,
-          "Lp_on_H": 1.3e-07,
+          "Lp_on_H": 1.3e-08,
           "Csu_on_F": 4.4e-10,
           "Csw_on_F": 6.2e-10
         }
@@ -143,13 +176,13 @@
       {
         "trial": 1,
         "candidate_id": "trial_0001",
-        "loss": 0.05274034447720855,
-        "rmse_V": 18.623544605178388,
+        "loss": 0.007917539814798747,
+        "rmse_V": 2.7822049770287336,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 12.0,
-          "Lp_on_H": 1.3e-07,
+          "Lp_on_H": 1.3e-08,
           "Csu_on_F": 4.4e-10,
           "Csw_on_F": 7.2e-10
         }
@@ -157,13 +190,13 @@
       {
         "trial": 2,
         "candidate_id": "trial_0002",
-        "loss": 0.0506954219478246,
-        "rmse_V": 17.901446440715812,
+        "loss": 0.005012368740720855,
+        "rmse_V": 1.7613346548723712,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 12.0,
-          "Lp_on_H": 1.3e-07,
+          "Lp_on_H": 1.3e-08,
           "Csu_on_F": 4.4e-10,
           "Csw_on_F": 8.2e-10
         }
@@ -171,13 +204,13 @@
       {
         "trial": 3,
         "candidate_id": "trial_0003",
-        "loss": 0.05147226267086241,
-        "rmse_V": 18.175762583320186,
+        "loss": 0.007683126678655508,
+        "rmse_V": 2.6998327491253606,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 12.0,
-          "Lp_on_H": 1.3e-07,
+          "Lp_on_H": 1.3e-08,
           "Csu_on_F": 5.2e-10,
           "Csw_on_F": 6.2e-10
         }
@@ -185,13 +218,13 @@
       {
         "trial": 4,
         "candidate_id": "trial_0004",
-        "loss": 0.04879181792331727,
-        "rmse_V": 17.22925032951427,
+        "loss": 0.00390823245739795,
+        "rmse_V": 1.373343746757553,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 12.0,
-          "Lp_on_H": 1.3e-07,
+          "Lp_on_H": 1.3e-08,
           "Csu_on_F": 5.2e-10,
           "Csw_on_F": 7.2e-10
         }
@@ -199,13 +232,13 @@
       {
         "trial": 5,
         "candidate_id": "trial_0005",
-        "loss": 0.04750211632643663,
-        "rmse_V": 16.773833978806586,
+        "loss": 0.007591716524178871,
+        "rmse_V": 2.667711434590193,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 12.0,
-          "Lp_on_H": 1.3e-07,
+          "Lp_on_H": 1.3e-08,
           "Csu_on_F": 5.2e-10,
           "Csw_on_F": 8.2e-10
         }
@@ -213,13 +246,13 @@
       {
         "trial": 6,
         "candidate_id": "trial_0006",
-        "loss": 0.0484830303408793,
-        "rmse_V": 17.120211995160123,
+        "loss": 0.004186770000209416,
+        "rmse_V": 1.4712211879863237,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 12.0,
-          "Lp_on_H": 1.3e-07,
+          "Lp_on_H": 1.3e-08,
           "Csu_on_F": 6e-10,
           "Csw_on_F": 6.2e-10
         }
@@ -227,13 +260,13 @@
       {
         "trial": 7,
         "candidate_id": "trial_0007",
-        "loss": 0.046645352392282756,
-        "rmse_V": 16.47129554258689,
+        "loss": 0.007761917096480419,
+        "rmse_V": 2.7275195177103333,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 12.0,
-          "Lp_on_H": 1.3e-07,
+          "Lp_on_H": 1.3e-08,
           "Csu_on_F": 6e-10,
           "Csw_on_F": 7.2e-10
         }
@@ -241,13 +274,13 @@
       {
         "trial": 8,
         "candidate_id": "trial_0008",
-        "loss": 0.04635574601184595,
-        "rmse_V": 16.369030428517718,
+        "loss": 0.013926224927901527,
+        "rmse_V": 4.893642875430758,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 12.0,
-          "Lp_on_H": 1.3e-07,
+          "Lp_on_H": 1.3e-08,
           "Csu_on_F": 6e-10,
           "Csw_on_F": 8.2e-10
         }
@@ -255,13 +288,13 @@
       {
         "trial": 9,
         "candidate_id": "trial_0009",
-        "loss": 0.018537585397626517,
-        "rmse_V": 6.545947925580816,
+        "loss": 0.013259319625178194,
+        "rmse_V": 4.659293911504408,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 12.0,
-          "Lp_on_H": 1.6e-07,
+          "Lp_on_H": 1.6e-08,
           "Csu_on_F": 4.4e-10,
           "Csw_on_F": 6.2e-10
         }
@@ -269,13 +302,13 @@
       {
         "trial": 10,
         "candidate_id": "trial_0010",
-        "loss": 0.014318409875873689,
-        "rmse_V": 5.05608273214438,
+        "loss": 0.0076031737897832435,
+        "rmse_V": 2.6717374909325993,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 12.0,
-          "Lp_on_H": 1.6e-07,
+          "Lp_on_H": 1.6e-08,
           "Csu_on_F": 4.4e-10,
           "Csw_on_F": 7.2e-10
         }
@@ -283,13 +316,13 @@
       {
         "trial": 11,
         "candidate_id": "trial_0011",
-        "loss": 0.012673087998118806,
-        "rmse_V": 4.475090596351912,
+        "loss": 0.0046661327652742016,
+        "rmse_V": 1.6396681427174762,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 12.0,
-          "Lp_on_H": 1.6e-07,
+          "Lp_on_H": 1.6e-08,
           "Csu_on_F": 4.4e-10,
           "Csw_on_F": 8.2e-10
         }
@@ -297,13 +330,13 @@
       {
         "trial": 12,
         "candidate_id": "trial_0012",
-        "loss": 0.013955249228640224,
-        "rmse_V": 4.927844310881875,
+        "loss": 0.007432691695579116,
+        "rmse_V": 2.6118304816741857,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 12.0,
-          "Lp_on_H": 1.6e-07,
+          "Lp_on_H": 1.6e-08,
           "Csu_on_F": 5.2e-10,
           "Csw_on_F": 6.2e-10
         }
@@ -311,13 +344,13 @@
       {
         "trial": 13,
         "candidate_id": "trial_0013",
-        "loss": 0.012234686444026267,
-        "rmse_V": 4.320283285581497,
+        "loss": 0.003683791871916579,
+        "rmse_V": 1.294475849837557,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 12.0,
-          "Lp_on_H": 1.6e-07,
+          "Lp_on_H": 1.6e-08,
           "Csu_on_F": 5.2e-10,
           "Csw_on_F": 7.2e-10
         }
@@ -325,13 +358,13 @@
       {
         "trial": 14,
         "candidate_id": "trial_0014",
-        "loss": 0.014064579907158557,
-        "rmse_V": 4.966450899221102,
+        "loss": 0.007589183983200577,
+        "rmse_V": 2.666821505612359,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 12.0,
-          "Lp_on_H": 1.6e-07,
+          "Lp_on_H": 1.6e-08,
           "Csu_on_F": 5.2e-10,
           "Csw_on_F": 8.2e-10
         }
@@ -339,13 +372,13 @@
       {
         "trial": 15,
         "candidate_id": "trial_0015",
-        "loss": 0.012327960203712018,
-        "rmse_V": 4.353219893053808,
+        "loss": 0.004017092131533515,
+        "rmse_V": 1.4115967816979773,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 12.0,
-          "Lp_on_H": 1.6e-07,
+          "Lp_on_H": 1.6e-08,
           "Csu_on_F": 6e-10,
           "Csw_on_F": 6.2e-10
         }
@@ -353,13 +386,13 @@
       {
         "trial": 16,
         "candidate_id": "trial_0016",
-        "loss": 0.014329646870221271,
-        "rmse_V": 5.060050712777324,
+        "loss": 0.007814949604554287,
+        "rmse_V": 2.7461550170395124,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 12.0,
-          "Lp_on_H": 1.6e-07,
+          "Lp_on_H": 1.6e-08,
           "Csu_on_F": 6e-10,
           "Csw_on_F": 7.2e-10
         }
@@ -367,13 +400,13 @@
       {
         "trial": 17,
         "candidate_id": "trial_0017",
-        "loss": 0.0187961907936719,
-        "rmse_V": 6.637266046008951,
+        "loss": 0.014019276479095899,
+        "rmse_V": 4.926340972934396,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 12.0,
-          "Lp_on_H": 1.6e-07,
+          "Lp_on_H": 1.6e-08,
           "Csu_on_F": 6e-10,
           "Csw_on_F": 8.2e-10
         }
@@ -381,13 +414,13 @@
       {
         "trial": 18,
         "candidate_id": "trial_0018",
-        "loss": 0.03980956757438977,
-        "rmse_V": 14.057459517635515,
+        "loss": 0.013137134067586188,
+        "rmse_V": 4.616358192277822,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 12.0,
-          "Lp_on_H": 1.9e-07,
+          "Lp_on_H": 1.9e-08,
           "Csu_on_F": 4.4e-10,
           "Csw_on_F": 6.2e-10
         }
@@ -395,13 +428,13 @@
       {
         "trial": 19,
         "candidate_id": "trial_0019",
-        "loss": 0.040083950960406844,
-        "rmse_V": 14.154349124236722,
+        "loss": 0.007529663682523824,
+        "rmse_V": 2.6459062111331844,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 12.0,
-          "Lp_on_H": 1.9e-07,
+          "Lp_on_H": 1.9e-08,
           "Csu_on_F": 4.4e-10,
           "Csw_on_F": 7.2e-10
         }
@@ -409,13 +442,13 @@
       {
         "trial": 20,
         "candidate_id": "trial_0020",
-        "loss": 0.04096119631822949,
-        "rmse_V": 14.464119911914377,
+        "loss": 0.004727582262211358,
+        "rmse_V": 1.6612613522514423,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 12.0,
-          "Lp_on_H": 1.9e-07,
+          "Lp_on_H": 1.9e-08,
           "Csu_on_F": 4.4e-10,
           "Csw_on_F": 8.2e-10
         }
@@ -423,13 +456,13 @@
       {
         "trial": 21,
         "candidate_id": "trial_0021",
-        "loss": 0.04099345182036161,
-        "rmse_V": 14.475509897866774,
+        "loss": 0.007439297103944411,
+        "rmse_V": 2.614151606728067,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 12.0,
-          "Lp_on_H": 1.9e-07,
+          "Lp_on_H": 1.9e-08,
           "Csu_on_F": 5.2e-10,
           "Csw_on_F": 6.2e-10
         }
@@ -437,13 +470,13 @@
       {
         "trial": 22,
         "candidate_id": "trial_0022",
-        "loss": 0.04220857361371856,
-        "rmse_V": 14.904590806298968,
+        "loss": 0.003996264440862449,
+        "rmse_V": 1.4042779798983647,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 12.0,
-          "Lp_on_H": 1.9e-07,
+          "Lp_on_H": 1.9e-08,
           "Csu_on_F": 5.2e-10,
           "Csw_on_F": 7.2e-10
         }
@@ -451,13 +484,13 @@
       {
         "trial": 23,
         "candidate_id": "trial_0023",
-        "loss": 0.043979244578852425,
-        "rmse_V": 15.529845912748174,
+        "loss": 0.007863538311003202,
+        "rmse_V": 2.763228974868798,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 12.0,
-          "Lp_on_H": 1.9e-07,
+          "Lp_on_H": 1.9e-08,
           "Csu_on_F": 5.2e-10,
           "Csw_on_F": 8.2e-10
         }
@@ -465,13 +498,13 @@
       {
         "trial": 24,
         "candidate_id": "trial_0024",
-        "loss": 0.04246267392016563,
-        "rmse_V": 14.99431810023713,
+        "loss": 0.0043452316141522436,
+        "rmse_V": 1.5269042285888732,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 12.0,
-          "Lp_on_H": 1.9e-07,
+          "Lp_on_H": 1.9e-08,
           "Csu_on_F": 6e-10,
           "Csw_on_F": 6.2e-10
         }
@@ -479,13 +512,13 @@
       {
         "trial": 25,
         "candidate_id": "trial_0025",
-        "loss": 0.0446304068704043,
-        "rmse_V": 15.759782787490565,
+        "loss": 0.008140522565540612,
+        "rmse_V": 2.8605605942301793,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 12.0,
-          "Lp_on_H": 1.9e-07,
+          "Lp_on_H": 1.9e-08,
           "Csu_on_F": 6e-10,
           "Csw_on_F": 7.2e-10
         }
@@ -493,13 +526,13 @@
       {
         "trial": 26,
         "candidate_id": "trial_0026",
-        "loss": 0.04728818164636034,
-        "rmse_V": 16.698289875018695,
+        "loss": 0.014272112192916173,
+        "rmse_V": 5.0151868515552485,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 12.0,
-          "Lp_on_H": 1.9e-07,
+          "Lp_on_H": 1.9e-08,
           "Csu_on_F": 6e-10,
           "Csw_on_F": 8.2e-10
         }
@@ -507,13 +540,13 @@
       {
         "trial": 27,
         "candidate_id": "trial_0027",
-        "loss": 0.050003423482371134,
-        "rmse_V": 17.65708959367897,
+        "loss": 0.013327280857642418,
+        "rmse_V": 4.68317532967594,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 15.0,
-          "Lp_on_H": 1.3e-07,
+          "Lp_on_H": 1.3e-08,
           "Csu_on_F": 4.4e-10,
           "Csw_on_F": 6.2e-10
         }
@@ -521,13 +554,13 @@
       {
         "trial": 28,
         "candidate_id": "trial_0028",
-        "loss": 0.046681513289955616,
-        "rmse_V": 16.484064592494494,
+        "loss": 0.0073339425245474805,
+        "rmse_V": 2.5771302538826997,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 15.0,
-          "Lp_on_H": 1.3e-07,
+          "Lp_on_H": 1.3e-08,
           "Csu_on_F": 4.4e-10,
           "Csw_on_F": 7.2e-10
         }
@@ -535,13 +568,13 @@
       {
         "trial": 29,
         "candidate_id": "trial_0029",
-        "loss": 0.04462514359197356,
-        "rmse_V": 15.7579242311691,
+        "loss": 0.003504549038567525,
+        "rmse_V": 1.2314903373291939,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 15.0,
-          "Lp_on_H": 1.3e-07,
+          "Lp_on_H": 1.3e-08,
           "Csu_on_F": 4.4e-10,
           "Csw_on_F": 8.2e-10
         }
@@ -549,13 +582,13 @@
       {
         "trial": 30,
         "candidate_id": "trial_0030",
-        "loss": 0.04548065904752006,
-        "rmse_V": 16.060021807601785,
+        "loss": 0.007106250725594547,
+        "rmse_V": 2.4971198881512353,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 15.0,
-          "Lp_on_H": 1.3e-07,
+          "Lp_on_H": 1.3e-08,
           "Csu_on_F": 5.2e-10,
           "Csw_on_F": 6.2e-10
         }
@@ -563,13 +596,13 @@
       {
         "trial": 31,
         "candidate_id": "trial_0031",
-        "loss": 0.04279336365132231,
-        "rmse_V": 15.111090469089069,
+        "loss": 0.0014381270007662583,
+        "rmse_V": 0.505354465240917,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 15.0,
-          "Lp_on_H": 1.3e-07,
+          "Lp_on_H": 1.3e-08,
           "Csu_on_F": 5.2e-10,
           "Csw_on_F": 7.2e-10
         }
@@ -577,13 +610,13 @@
       {
         "trial": 32,
         "candidate_id": "trial_0032",
-        "loss": 0.041586738525228865,
-        "rmse_V": 14.685009883528215,
+        "loss": 0.006303036154902377,
+        "rmse_V": 2.214872166197903,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 15.0,
-          "Lp_on_H": 1.3e-07,
+          "Lp_on_H": 1.3e-08,
           "Csu_on_F": 5.2e-10,
           "Csw_on_F": 8.2e-10
         }
@@ -591,13 +624,13 @@
       {
         "trial": 33,
         "candidate_id": "trial_0033",
-        "loss": 0.042520931011215575,
-        "rmse_V": 15.014889705229312,
+        "loss": 0.002302328789526154,
+        "rmse_V": 0.8090329530144619,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 15.0,
-          "Lp_on_H": 1.3e-07,
+          "Lp_on_H": 1.3e-08,
           "Csu_on_F": 6e-10,
           "Csw_on_F": 6.2e-10
         }
@@ -605,13 +638,13 @@
       {
         "trial": 34,
         "candidate_id": "trial_0034",
-        "loss": 0.04078267256011871,
-        "rmse_V": 14.401080028401728,
+        "loss": 0.006522064731597279,
+        "rmse_V": 2.291838295885445,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 15.0,
-          "Lp_on_H": 1.3e-07,
+          "Lp_on_H": 1.3e-08,
           "Csu_on_F": 6e-10,
           "Csw_on_F": 7.2e-10
         }
@@ -619,13 +652,13 @@
       {
         "trial": 35,
         "candidate_id": "trial_0035",
-        "loss": 0.04070811001637515,
-        "rmse_V": 14.374750680858618,
+        "loss": 0.01306545252839241,
+        "rmse_V": 4.591169467020862,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 15.0,
-          "Lp_on_H": 1.3e-07,
+          "Lp_on_H": 1.3e-08,
           "Csu_on_F": 6e-10,
           "Csw_on_F": 8.2e-10
         }
@@ -633,13 +666,13 @@
       {
         "trial": 36,
         "candidate_id": "trial_0036",
-        "loss": 0.013961201470347047,
-        "rmse_V": 4.929946152271548,
+        "loss": 0.013067785475807487,
+        "rmse_V": 4.591989259287298,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 15.0,
-          "Lp_on_H": 1.6e-07,
+          "Lp_on_H": 1.6e-08,
           "Csu_on_F": 4.4e-10,
           "Csw_on_F": 6.2e-10
         }
@@ -647,13 +680,13 @@
       {
         "trial": 37,
         "candidate_id": "trial_0037",
-        "loss": 0.007534605545685577,
-        "rmse_V": 2.6606019329877295,
+        "loss": 0.006982120050559814,
+        "rmse_V": 2.4535006592036193,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 15.0,
-          "Lp_on_H": 1.6e-07,
+          "Lp_on_H": 1.6e-08,
           "Csu_on_F": 4.4e-10,
           "Csw_on_F": 7.2e-10
         }
@@ -661,13 +694,13 @@
       {
         "trial": 38,
         "candidate_id": "trial_0038",
-        "loss": 0.0032251075806361113,
-        "rmse_V": 1.1388422938805687,
+        "loss": 0.0029484255543968697,
+        "rmse_V": 1.0360698453968162,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 15.0,
-          "Lp_on_H": 1.6e-07,
+          "Lp_on_H": 1.6e-08,
           "Csu_on_F": 4.4e-10,
           "Csw_on_F": 8.2e-10
         }
@@ -675,13 +708,13 @@
       {
         "trial": 39,
         "candidate_id": "trial_0039",
-        "loss": 0.007013490486396152,
-        "rmse_V": 2.476587026613715,
+        "loss": 0.006818892560751919,
+        "rmse_V": 2.396142900966318,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 15.0,
-          "Lp_on_H": 1.6e-07,
+          "Lp_on_H": 1.6e-08,
           "Csu_on_F": 5.2e-10,
           "Csw_on_F": 6.2e-10
         }
@@ -689,13 +722,13 @@
       {
         "trial": 40,
         "candidate_id": "trial_0040",
-        "loss": 0.0008131880424421418,
-        "rmse_V": 0.28715102130900017,
+        "loss": 0.00018723055093251522,
+        "rmse_V": 0.0657923777892005,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 15.0,
-          "Lp_on_H": 1.6e-07,
+          "Lp_on_H": 1.6e-08,
           "Csu_on_F": 5.2e-10,
           "Csw_on_F": 7.2e-10
         }
@@ -703,13 +736,13 @@
       {
         "trial": 41,
         "candidate_id": "trial_0041",
-        "loss": 0.006614969025171973,
-        "rmse_V": 2.3358620790844724,
+        "loss": 0.0062663149948975925,
+        "rmse_V": 2.2019684364387397,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 15.0,
-          "Lp_on_H": 1.6e-07,
+          "Lp_on_H": 1.6e-08,
           "Csu_on_F": 5.2e-10,
           "Csw_on_F": 8.2e-10
         }
@@ -717,13 +750,13 @@
       {
         "trial": 42,
         "candidate_id": "trial_0042",
-        "loss": 0.0021434329264892133,
-        "rmse_V": 0.7568839208460307,
+        "loss": 0.0018872904731265289,
+        "rmse_V": 0.6631894591318845,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 15.0,
-          "Lp_on_H": 1.6e-07,
+          "Lp_on_H": 1.6e-08,
           "Csu_on_F": 6e-10,
           "Csw_on_F": 6.2e-10
         }
@@ -731,13 +764,13 @@
       {
         "trial": 43,
         "candidate_id": "trial_0043",
-        "loss": 0.007176318297188697,
-        "rmse_V": 2.5340843946593288,
+        "loss": 0.006548999686272667,
+        "rmse_V": 2.3013031759753235,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 15.0,
-          "Lp_on_H": 1.6e-07,
+          "Lp_on_H": 1.6e-08,
           "Csu_on_F": 6e-10,
           "Csw_on_F": 7.2e-10
         }
@@ -745,13 +778,13 @@
       {
         "trial": 44,
         "candidate_id": "trial_0044",
-        "loss": 0.013858081483503117,
-        "rmse_V": 4.893532668557895,
+        "loss": 0.013142569025402657,
+        "rmse_V": 4.618268023745756,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 15.0,
-          "Lp_on_H": 1.6e-07,
+          "Lp_on_H": 1.6e-08,
           "Csu_on_F": 6e-10,
           "Csw_on_F": 8.2e-10
         }
@@ -759,13 +792,13 @@
       {
         "trial": 45,
         "candidate_id": "trial_0045",
-        "loss": 0.03596235940597562,
-        "rmse_V": 12.698942548508965,
+        "loss": 0.012934271553052717,
+        "rmse_V": 4.545072779032075,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 15.0,
-          "Lp_on_H": 1.9e-07,
+          "Lp_on_H": 1.9e-08,
           "Csu_on_F": 4.4e-10,
           "Csw_on_F": 6.2e-10
         }
@@ -773,13 +806,13 @@
       {
         "trial": 46,
         "candidate_id": "trial_0046",
-        "loss": 0.0360092845677432,
-        "rmse_V": 12.715512649670544,
+        "loss": 0.006875639660068079,
+        "rmse_V": 2.416083698972066,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 15.0,
-          "Lp_on_H": 1.9e-07,
+          "Lp_on_H": 1.9e-08,
           "Csu_on_F": 4.4e-10,
           "Csw_on_F": 7.2e-10
         }
@@ -787,13 +820,13 @@
       {
         "trial": 47,
         "candidate_id": "trial_0047",
-        "loss": 0.03678222882873544,
-        "rmse_V": 12.988452882894205,
+        "loss": 0.002968244596949265,
+        "rmse_V": 1.0430342106060893,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 15.0,
-          "Lp_on_H": 1.9e-07,
+          "Lp_on_H": 1.9e-08,
           "Csu_on_F": 4.4e-10,
           "Csw_on_F": 8.2e-10
         }
@@ -801,13 +834,13 @@
       {
         "trial": 48,
         "candidate_id": "trial_0048",
-        "loss": 0.036926252028831055,
-        "rmse_V": 13.03931001167766,
+        "loss": 0.006794243923701897,
+        "rmse_V": 2.387481427543808,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 15.0,
-          "Lp_on_H": 1.9e-07,
+          "Lp_on_H": 1.9e-08,
           "Csu_on_F": 5.2e-10,
           "Csw_on_F": 6.2e-10
         }
@@ -815,13 +848,13 @@
       {
         "trial": 49,
         "candidate_id": "trial_0049",
-        "loss": 0.03802272437595342,
-        "rmse_V": 13.42649371074892,
+        "loss": 0.0013654739813452723,
+        "rmse_V": 0.47982436410376583,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 15.0,
-          "Lp_on_H": 1.9e-07,
+          "Lp_on_H": 1.9e-08,
           "Csu_on_F": 5.2e-10,
           "Csw_on_F": 7.2e-10
         }
@@ -829,13 +862,13 @@
       {
         "trial": 50,
         "candidate_id": "trial_0050",
-        "loss": 0.03978836978405249,
-        "rmse_V": 14.0499742044888,
+        "loss": 0.006543925994944562,
+        "rmse_V": 2.2995202927066374,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 15.0,
-          "Lp_on_H": 1.9e-07,
+          "Lp_on_H": 1.9e-08,
           "Csu_on_F": 5.2e-10,
           "Csw_on_F": 8.2e-10
         }
@@ -843,13 +876,13 @@
       {
         "trial": 51,
         "candidate_id": "trial_0051",
-        "loss": 0.03829985369815447,
-        "rmse_V": 13.524352955783701,
+        "loss": 0.0023904765914489253,
+        "rmse_V": 0.8400078844906872,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 15.0,
-          "Lp_on_H": 1.9e-07,
+          "Lp_on_H": 1.9e-08,
           "Csu_on_F": 6e-10,
           "Csw_on_F": 6.2e-10
         }
@@ -857,13 +890,13 @@
       {
         "trial": 52,
         "candidate_id": "trial_0052",
-        "loss": 0.040451708188764576,
-        "rmse_V": 14.284210679258546,
+        "loss": 0.0068803916097070076,
+        "rmse_V": 2.4177535229635163,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 15.0,
-          "Lp_on_H": 1.9e-07,
+          "Lp_on_H": 1.9e-08,
           "Csu_on_F": 6e-10,
           "Csw_on_F": 7.2e-10
         }
@@ -871,13 +904,13 @@
       {
         "trial": 53,
         "candidate_id": "trial_0053",
-        "loss": 0.04318500329294774,
-        "rmse_V": 15.249385324901382,
+        "loss": 0.013379454262565276,
+        "rmse_V": 4.701508942166729,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 15.0,
-          "Lp_on_H": 1.9e-07,
+          "Lp_on_H": 1.9e-08,
           "Csu_on_F": 6e-10,
           "Csw_on_F": 8.2e-10
         }
@@ -885,13 +918,13 @@
       {
         "trial": 54,
         "candidate_id": "trial_0054",
-        "loss": 0.047403283993347464,
-        "rmse_V": 16.738934541156624,
+        "loss": 0.01408340618874687,
+        "rmse_V": 4.948876002948751,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 18.0,
-          "Lp_on_H": 1.3e-07,
+          "Lp_on_H": 1.3e-08,
           "Csu_on_F": 4.4e-10,
           "Csw_on_F": 6.2e-10
         }
@@ -899,13 +932,13 @@
       {
         "trial": 55,
         "candidate_id": "trial_0055",
-        "loss": 0.04418683789454866,
-        "rmse_V": 15.60315076907645,
+        "loss": 0.008430414433173439,
+        "rmse_V": 2.962427918650916,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 18.0,
-          "Lp_on_H": 1.3e-07,
+          "Lp_on_H": 1.3e-08,
           "Csu_on_F": 4.4e-10,
           "Csw_on_F": 7.2e-10
         }
@@ -913,13 +946,13 @@
       {
         "trial": 56,
         "candidate_id": "trial_0056",
-        "loss": 0.04223204842802747,
-        "rmse_V": 14.912880176717646,
+        "loss": 0.005099643675441613,
+        "rmse_V": 1.7920028628548685,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 18.0,
-          "Lp_on_H": 1.3e-07,
+          "Lp_on_H": 1.3e-08,
           "Csu_on_F": 4.4e-10,
           "Csw_on_F": 8.2e-10
         }
@@ -927,13 +960,13 @@
       {
         "trial": 57,
         "candidate_id": "trial_0057",
-        "loss": 0.04312007393618747,
-        "rmse_V": 15.226457625361364,
+        "loss": 0.008270800476770904,
+        "rmse_V": 2.906339947602593,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 18.0,
-          "Lp_on_H": 1.3e-07,
+          "Lp_on_H": 1.3e-08,
           "Csu_on_F": 5.2e-10,
           "Csw_on_F": 6.2e-10
         }
@@ -941,13 +974,13 @@
       {
         "trial": 58,
         "candidate_id": "trial_0058",
-        "loss": 0.04058342495110108,
-        "rmse_V": 14.330722188103234,
+        "loss": 0.003975415052950772,
+        "rmse_V": 1.3969515537391364,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 18.0,
-          "Lp_on_H": 1.3e-07,
+          "Lp_on_H": 1.3e-08,
           "Csu_on_F": 5.2e-10,
           "Csw_on_F": 7.2e-10
         }
@@ -955,13 +988,13 @@
       {
         "trial": 59,
         "candidate_id": "trial_0059",
-        "loss": 0.039527450319811884,
-        "rmse_V": 13.957838945820853,
+        "loss": 0.0070118423501584395,
+        "rmse_V": 2.4639450057817665,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 18.0,
-          "Lp_on_H": 1.3e-07,
+          "Lp_on_H": 1.3e-08,
           "Csu_on_F": 5.2e-10,
           "Csw_on_F": 8.2e-10
         }
@@ -969,13 +1002,13 @@
       {
         "trial": 60,
         "candidate_id": "trial_0060",
-        "loss": 0.04036467967621846,
-        "rmse_V": 14.253479378555241,
+        "loss": 0.004481193136976164,
+        "rmse_V": 1.5746807897850776,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 18.0,
-          "Lp_on_H": 1.3e-07,
+          "Lp_on_H": 1.3e-08,
           "Csu_on_F": 6e-10,
           "Csw_on_F": 6.2e-10
         }
@@ -983,13 +1016,13 @@
       {
         "trial": 61,
         "candidate_id": "trial_0061",
-        "loss": 0.03882900311447223,
-        "rmse_V": 13.711204935141868,
+        "loss": 0.00723605778617152,
+        "rmse_V": 2.542733785705081,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 18.0,
-          "Lp_on_H": 1.3e-07,
+          "Lp_on_H": 1.3e-08,
           "Csu_on_F": 6e-10,
           "Csw_on_F": 7.2e-10
         }
@@ -997,13 +1030,13 @@
       {
         "trial": 62,
         "candidate_id": "trial_0062",
-        "loss": 0.03895168691983755,
-        "rmse_V": 13.75452674777321,
+        "loss": 0.013244887584341593,
+        "rmse_V": 4.654222526101429,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 18.0,
-          "Lp_on_H": 1.3e-07,
+          "Lp_on_H": 1.3e-08,
           "Csu_on_F": 6e-10,
           "Csw_on_F": 8.2e-10
         }
@@ -1011,13 +1044,13 @@
       {
         "trial": 63,
         "candidate_id": "trial_0063",
-        "loss": 0.017651714595541976,
-        "rmse_V": 6.233131341605409,
+        "loss": 0.013864856198386703,
+        "rmse_V": 4.872078047380137,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 18.0,
-          "Lp_on_H": 1.6e-07,
+          "Lp_on_H": 1.6e-08,
           "Csu_on_F": 4.4e-10,
           "Csw_on_F": 6.2e-10
         }
@@ -1025,13 +1058,13 @@
       {
         "trial": 64,
         "candidate_id": "trial_0064",
-        "loss": 0.013095186912789256,
-        "rmse_V": 4.624141157987124,
+        "loss": 0.00816693731671591,
+        "rmse_V": 2.869842676026538,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 18.0,
-          "Lp_on_H": 1.6e-07,
+          "Lp_on_H": 1.6e-08,
           "Csu_on_F": 4.4e-10,
           "Csw_on_F": 7.2e-10
         }
@@ -1039,13 +1072,13 @@
       {
         "trial": 65,
         "candidate_id": "trial_0065",
-        "loss": 0.01102540302741625,
-        "rmse_V": 3.8932640108160173,
+        "loss": 0.004797513297576747,
+        "rmse_V": 1.6858349545563778,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 18.0,
-          "Lp_on_H": 1.6e-07,
+          "Lp_on_H": 1.6e-08,
           "Csu_on_F": 4.4e-10,
           "Csw_on_F": 8.2e-10
         }
@@ -1053,13 +1086,13 @@
       {
         "trial": 66,
         "candidate_id": "trial_0066",
-        "loss": 0.012847788885899011,
-        "rmse_V": 4.536780557014662,
+        "loss": 0.008063547877518782,
+        "rmse_V": 2.833511868852218,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 18.0,
-          "Lp_on_H": 1.6e-07,
+          "Lp_on_H": 1.6e-08,
           "Csu_on_F": 5.2e-10,
           "Csw_on_F": 6.2e-10
         }
@@ -1067,13 +1100,13 @@
       {
         "trial": 67,
         "candidate_id": "trial_0067",
-        "loss": 0.010546211777820084,
-        "rmse_V": 3.7240531400921464,
+        "loss": 0.003780752825798521,
+        "rmse_V": 1.3285477023040988,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 18.0,
-          "Lp_on_H": 1.6e-07,
+          "Lp_on_H": 1.6e-08,
           "Csu_on_F": 5.2e-10,
           "Csw_on_F": 7.2e-10
         }
@@ -1081,13 +1114,13 @@
       {
         "trial": 68,
         "candidate_id": "trial_0068",
-        "loss": 0.012170064964863071,
-        "rmse_V": 4.297464303043974,
+        "loss": 0.0070107084631514105,
+        "rmse_V": 2.4635465605389086,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 18.0,
-          "Lp_on_H": 1.6e-07,
+          "Lp_on_H": 1.6e-08,
           "Csu_on_F": 5.2e-10,
           "Csw_on_F": 8.2e-10
         }
@@ -1095,13 +1128,13 @@
       {
         "trial": 69,
         "candidate_id": "trial_0069",
-        "loss": 0.010783655786835426,
-        "rmse_V": 3.8078988020225606,
+        "loss": 0.004341770020941332,
+        "rmse_V": 1.5256878328289372,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 18.0,
-          "Lp_on_H": 1.6e-07,
+          "Lp_on_H": 1.6e-08,
           "Csu_on_F": 6e-10,
           "Csw_on_F": 6.2e-10
         }
@@ -1109,13 +1142,13 @@
       {
         "trial": 70,
         "candidate_id": "trial_0070",
-        "loss": 0.012460976970861962,
-        "rmse_V": 4.400190456496452,
+        "loss": 0.007288073335090894,
+        "rmse_V": 2.5610119279653665,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 18.0,
-          "Lp_on_H": 1.6e-07,
+          "Lp_on_H": 1.6e-08,
           "Csu_on_F": 6e-10,
           "Csw_on_F": 7.2e-10
         }
@@ -1123,13 +1156,13 @@
       {
         "trial": 71,
         "candidate_id": "trial_0071",
-        "loss": 0.016955868887326073,
-        "rmse_V": 5.987415965383682,
+        "loss": 0.013332806718157189,
+        "rmse_V": 4.685117104139496,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 18.0,
-          "Lp_on_H": 1.6e-07,
+          "Lp_on_H": 1.6e-08,
           "Csu_on_F": 6e-10,
           "Csw_on_F": 8.2e-10
         }
@@ -1137,13 +1170,13 @@
       {
         "trial": 72,
         "candidate_id": "trial_0072",
-        "loss": 0.03527985477673871,
-        "rmse_V": 12.457938142264952,
+        "loss": 0.013760595987577178,
+        "rmse_V": 4.83544125309738,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 18.0,
-          "Lp_on_H": 1.9e-07,
+          "Lp_on_H": 1.9e-08,
           "Csu_on_F": 4.4e-10,
           "Csw_on_F": 6.2e-10
         }
@@ -1151,13 +1184,13 @@
       {
         "trial": 73,
         "candidate_id": "trial_0073",
-        "loss": 0.03505057115504703,
-        "rmse_V": 12.376974056835873,
+        "loss": 0.008106703239740005,
+        "rmse_V": 2.848676562224892,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 18.0,
-          "Lp_on_H": 1.9e-07,
+          "Lp_on_H": 1.9e-08,
           "Csu_on_F": 4.4e-10,
           "Csw_on_F": 7.2e-10
         }
@@ -1165,13 +1198,13 @@
       {
         "trial": 74,
         "candidate_id": "trial_0074",
-        "loss": 0.035624890877247684,
-        "rmse_V": 12.579776466832639,
+        "loss": 0.00485267978735168,
+        "rmse_V": 1.7052203300653388,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 18.0,
-          "Lp_on_H": 1.9e-07,
+          "Lp_on_H": 1.9e-08,
           "Csu_on_F": 4.4e-10,
           "Csw_on_F": 8.2e-10
         }
@@ -1179,13 +1212,13 @@
       {
         "trial": 75,
         "candidate_id": "trial_0075",
-        "loss": 0.03588432405426002,
-        "rmse_V": 12.671386891300768,
+        "loss": 0.00806983291298288,
+        "rmse_V": 2.8357204156177582,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 18.0,
-          "Lp_on_H": 1.9e-07,
+          "Lp_on_H": 1.9e-08,
           "Csu_on_F": 5.2e-10,
           "Csw_on_F": 6.2e-10
         }
@@ -1193,13 +1226,13 @@
       {
         "trial": 76,
         "candidate_id": "trial_0076",
-        "loss": 0.03673862496622201,
-        "rmse_V": 12.97305559100075,
+        "loss": 0.0040554676941447565,
+        "rmse_V": 1.4250818646644956,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 18.0,
-          "Lp_on_H": 1.9e-07,
+          "Lp_on_H": 1.9e-08,
           "Csu_on_F": 5.2e-10,
           "Csw_on_F": 7.2e-10
         }
@@ -1207,13 +1240,13 @@
       {
         "trial": 77,
         "candidate_id": "trial_0077",
-        "loss": 0.0383516892391342,
-        "rmse_V": 13.542656998336682,
+        "loss": 0.007275643728465544,
+        "rmse_V": 2.5566441932618513,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 18.0,
-          "Lp_on_H": 1.9e-07,
+          "Lp_on_H": 1.9e-08,
           "Csu_on_F": 5.2e-10,
           "Csw_on_F": 8.2e-10
         }
@@ -1221,13 +1254,13 @@
       {
         "trial": 78,
         "candidate_id": "trial_0078",
-        "loss": 0.03701506293545107,
-        "rmse_V": 13.07067070712361,
+        "loss": 0.004616169759268423,
+        "rmse_V": 1.6221112592374876,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 18.0,
-          "Lp_on_H": 1.9e-07,
+          "Lp_on_H": 1.9e-08,
           "Csu_on_F": 6e-10,
           "Csw_on_F": 6.2e-10
         }
@@ -1235,13 +1268,13 @@
       {
         "trial": 79,
         "candidate_id": "trial_0079",
-        "loss": 0.03897224714943512,
-        "rmse_V": 13.761786926992716,
+        "loss": 0.007598938307153959,
+        "rmse_V": 2.6702491522406624,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 18.0,
-          "Lp_on_H": 1.9e-07,
+          "Lp_on_H": 1.9e-08,
           "Csu_on_F": 6e-10,
           "Csw_on_F": 7.2e-10
         }
@@ -1249,13 +1282,13 @@
       {
         "trial": 80,
         "candidate_id": "trial_0080",
-        "loss": 0.0416000493441621,
-        "rmse_V": 14.689710168150771,
+        "loss": 0.013568994515678733,
+        "rmse_V": 4.768112943901446,
         "status": "ok",
         "from_cache": false,
         "values": {
           "Rp_on_ohm": 18.0,
-          "Lp_on_H": 1.9e-07,
+          "Lp_on_H": 1.9e-08,
           "Csu_on_F": 6e-10,
           "Csw_on_F": 8.2e-10
         }
@@ -1275,107 +1308,107 @@
   "sources": {
     "forward_case": {
       "path": "bench/figures/cases/etch_ccp_dcs_forward.yaml",
-      "sha256": "2303982c9864bae844f7eb7b0675aa40a1c68f9b11aaf37bc59a406f3d5429d2",
+      "sha256": "2010612eb95e863fb09a431da560d4d6558b396682618440d2d71e47226e1959",
       "bytes": 3725
     },
     "inverse_case": {
       "path": "bench/figures/cases/etch_ccp_dcs_inverse.yaml",
-      "sha256": "86ab237cac47ffe3869baf74b165f2577545bbb5a25adfc295556474c383de7c",
+      "sha256": "2ded471d6aa8b08954587a07ebd3fe51213a6fbbbe7c1511be4a5c077df10d3c",
       "bytes": 3613
     },
     "target_observables": {
       "path": "bench/figures/cases/etch_ccp_dcs_target_observables.csv",
-      "sha256": "0b610b51161fde6d0c78a04dfa8afca1607639dad33c68f4df6ea011783b0848",
-      "bytes": 580762
+      "sha256": "2f79161768f62065406c98edde44c878f0c662410613326340e49f3adb7bf867",
+      "bytes": 581124
     },
     "target_wafer": {
       "path": "bench/figures/cases/etch_ccp_dcs_target_wafer.csv",
-      "sha256": "e2704bb2c01bef688f56aef1a79ba32d5cf9c4e433fa51cb8d587fdbef4c1554",
-      "bytes": 61003
+      "sha256": "68f5d5bc483dbdabd0d5d6e6013be8fcf577e41b2d2d72e07e43da41c8a1ced8",
+      "bytes": 61031
     },
     "target_reflection": {
       "path": "bench/figures/cases/etch_ccp_dcs_target_reflection.csv",
-      "sha256": "1b8fca97e962cd37d09fcd39a36fdd8bf1e1b282ea96d235c92962e39ef4fa7a",
-      "bytes": 60857
+      "sha256": "35bf75ac546da11ea4a676ad9f83a12bac2ac58246f5193a4ad5ccdb1dd6dd2f",
+      "bytes": 60734
     },
     "target_generator": {
       "path": "bench/figures/generate_etch_ccp_dcs_target.py",
-      "sha256": "5bf3fbc2e1f15325691529af8884c02ad011c28d001c9102a004b1305d619f0b",
-      "bytes": 13648
+      "sha256": "c66e0ab38c162cf7098798da8ac75f5a35044d052c92f1180490a5c820c27a64",
+      "bytes": 13646
     },
     "evidence_generator": {
       "path": "bench/figures/generate_etch_ccp_dcs_evidence.py",
-      "sha256": "732ded00e442585e78e0a6df676ad1cc96fde7d29e124828220a2b888ea9bced",
-      "bytes": 43211
+      "sha256": "0c9cfb4bcb84c9316e7feea79f9af023bc7bf2c2a5351ee805314bb387a3c7c1",
+      "bytes": 61519
     },
     "forward_summary": {
-      "path": "runs/etch_ccp_dcs_forward_v6_20261001/sim_20261001_092834_44412663/summary.json",
-      "sha256": "bbaba875cae05a73a641da0aa0f37d2fe7ec0910e30763e227b6788e913c7486",
+      "path": "runs/etch_ccp_dcs_forward_v7_20261001/sim_20261001_165042_cb915537/summary.json",
+      "sha256": "d1d751ff8f28b79f0a00753379a149a7a81614717da2e5e5038c1a3b7b082fa8",
       "bytes": 476
     },
     "forward_manifest": {
-      "path": "runs/etch_ccp_dcs_forward_v6_20261001/sim_20261001_092834_44412663/debug/manifest.json",
-      "sha256": "249fe472dd526d0fd51e4a3763aefcee765b5fe19ba050e2c640e41f848dfc8b",
+      "path": "runs/etch_ccp_dcs_forward_v7_20261001/sim_20261001_165042_cb915537/debug/manifest.json",
+      "sha256": "6420d3b5e861da9521246a0ed1156a2265862e2ab49c530490df9a3793c75898",
       "bytes": 2025
     },
     "forward_netlist": {
-      "path": "runs/etch_ccp_dcs_forward_v6_20261001/sim_20261001_092834_44412663/debug/netlist.cir",
-      "sha256": "b02305d6f91ac92dc69a1e66783426afc473a1e30078c89db5c03bf64bbababd",
+      "path": "runs/etch_ccp_dcs_forward_v7_20261001/sim_20261001_165042_cb915537/debug/netlist.cir",
+      "sha256": "f49c2f2c5163f483c93c388b4eaca86cff6e86e74ba8d0d10b815b22bdd38f6f",
       "bytes": 1807
     },
     "forward_solver_log": {
-      "path": "runs/etch_ccp_dcs_forward_v6_20261001/sim_20261001_092834_44412663/debug/solver.log",
-      "sha256": "4a98c052178d99f1e0afa6fe4b2649838ffb265ff2adf09ebe0a0e24f028ac50",
+      "path": "runs/etch_ccp_dcs_forward_v7_20261001/sim_20261001_165042_cb915537/debug/solver.log",
+      "sha256": "9d81baf0986ec5772954fd0ecd1186d3d81aa8d1f6cfe42d8643c4a37832f846",
       "bytes": 2778
     },
     "forward_waveform": {
-      "path": "runs/etch_ccp_dcs_forward_v6_20261001/sim_20261001_092834_44412663/data/transient.csv",
-      "sha256": "7f671b2931e363aafde752db4ce159f4c6aef032e961c0e45408f9ab22177ec6",
-      "bytes": 6484738
+      "path": "runs/etch_ccp_dcs_forward_v7_20261001/sim_20261001_165042_cb915537/data/transient.csv",
+      "sha256": "b2d1757c356d3530b0fd4e52584d0686a59cec89888b12ff292c97c208dc8a58",
+      "bytes": 6485446
     },
     "inverse_study": {
-      "path": "runs/etch_ccp_dcs_inverse_v2_20261001/etch_ccp_dcs_inverse/study_result.json",
-      "sha256": "11aa16f189b1b4552f16f587c1d0f653c8d3ca5bcc296f9548dd91987bca5622",
-      "bytes": 3233
+      "path": "runs/etch_ccp_dcs_inverse_v3_20261001/etch_ccp_dcs_inverse/study_result.json",
+      "sha256": "c767e0ec147e68a9d90881f17fcfbb417c9c3805ab8ccdebec426b9efd2c110a",
+      "bytes": 3235
     },
     "inverse_input_manifest": {
-      "path": "runs/etch_ccp_dcs_inverse_v2_20261001/etch_ccp_dcs_inverse/generations/g_9f097f99547a4b89/input_manifest.json",
-      "sha256": "60b5d7ccc7f1a720f9f5ab3fc1e4d6ed2a81ffd26aafb3fb0361292ff91ffefc",
+      "path": "runs/etch_ccp_dcs_inverse_v3_20261001/etch_ccp_dcs_inverse/generations/g_6b58ed7c7b664bdf/input_manifest.json",
+      "sha256": "08286f47618362afe43cca803b1b5d57a41173bef4faf1d62f6c9a539984659c",
       "bytes": 447
     },
     "inverse_best": {
-      "path": "runs/etch_ccp_dcs_inverse_v2_20261001/etch_ccp_dcs_inverse/generations/g_9f097f99547a4b89/best_candidate.json",
-      "sha256": "cc0fc5233201a05679ccab3f266d8a7b19190a03deb342d9b39f3c1d3c346807",
-      "bytes": 3035
+      "path": "runs/etch_ccp_dcs_inverse_v3_20261001/etch_ccp_dcs_inverse/generations/g_6b58ed7c7b664bdf/best_candidate.json",
+      "sha256": "d0f518b2c4845351667412dda3ca89539f104c4f680c64cfb3cc7fd7e69c9ee7",
+      "bytes": 3037
     },
     "inverse_history": {
-      "path": "runs/etch_ccp_dcs_inverse_v2_20261001/etch_ccp_dcs_inverse/generations/g_9f097f99547a4b89/study_history.json",
-      "sha256": "276567b3abac9359fe4ab2e339330db7a4d8338f61c59f2de13574b1104a729c",
-      "bytes": 64691
+      "path": "runs/etch_ccp_dcs_inverse_v3_20261001/etch_ccp_dcs_inverse/generations/g_6b58ed7c7b664bdf/study_history.json",
+      "sha256": "26c56e1874c9d0b5d22c796963167548c157b546ffc5ed29eb58dac637aa3830",
+      "bytes": 64802
     },
     "inverse_evaluations": {
-      "path": "runs/etch_ccp_dcs_inverse_v2_20261001/etch_ccp_dcs_inverse/generations/g_9f097f99547a4b89/evaluations.csv",
-      "sha256": "3fbeec7bfa355b77efe2a369b2e691c36478d03cf37bc6802bee49d63e9a29db",
-      "bytes": 65676
+      "path": "runs/etch_ccp_dcs_inverse_v3_20261001/etch_ccp_dcs_inverse/generations/g_6b58ed7c7b664bdf/evaluations.csv",
+      "sha256": "47093775cb4adc113ecf00cf4391d178598c3c8a26511f2fa337c955c4b03323",
+      "bytes": 65799
     },
     "inverse_initial_waveform": {
-      "path": "runs/etch_ccp_dcs_inverse_v2_20261001/etch_ccp_dcs_inverse/artifacts/e_3711bfe611e7c-ffa0d4a8bf3f74c5/data/transient.csv",
-      "sha256": "63db7f6f0910524eadd06a1c37cd9c8be555a8ec83619705190bd357508cac08",
-      "bytes": 6483471
+      "path": "runs/etch_ccp_dcs_inverse_v3_20261001/etch_ccp_dcs_inverse/artifacts/e_6c089b4aa34cc-07eed2862dda12e0/data/transient.csv",
+      "sha256": "24958ede3ade59cef3189f74af0fe7d632a0e0b5b3cc46d3738df3283f001b51",
+      "bytes": 6485519
     },
     "inverse_selected_waveform": {
-      "path": "runs/etch_ccp_dcs_inverse_v2_20261001/etch_ccp_dcs_inverse/artifacts/e_3711bfe611e7c-6c19e2a3b84af753/data/transient.csv",
-      "sha256": "7f671b2931e363aafde752db4ce159f4c6aef032e961c0e45408f9ab22177ec6",
-      "bytes": 6484738
+      "path": "runs/etch_ccp_dcs_inverse_v3_20261001/etch_ccp_dcs_inverse/artifacts/e_6c089b4aa34cc-4fe996da74b4c008/data/transient.csv",
+      "sha256": "b2d1757c356d3530b0fd4e52584d0686a59cec89888b12ff292c97c208dc8a58",
+      "bytes": 6485446
     },
     "inverse_selected_netlist": {
-      "path": "runs/etch_ccp_dcs_inverse_v2_20261001/etch_ccp_dcs_inverse/artifacts/e_3711bfe611e7c-6c19e2a3b84af753/debug/netlist.cir",
-      "sha256": "d58a042b6ea110c8955a6fef9fd6fb98f215075e5eac1042d4da91447c93871f",
+      "path": "runs/etch_ccp_dcs_inverse_v3_20261001/etch_ccp_dcs_inverse/artifacts/e_6c089b4aa34cc-4fe996da74b4c008/debug/netlist.cir",
+      "sha256": "ee30988bc9f06b5e6acc3d329ab32c19e7d5da82a745b2610d904ae2254a82a1",
       "bytes": 1807
     },
     "inverse_selected_solver_log": {
-      "path": "runs/etch_ccp_dcs_inverse_v2_20261001/etch_ccp_dcs_inverse/artifacts/e_3711bfe611e7c-6c19e2a3b84af753/debug/solver.log",
-      "sha256": "2ea1c1b09a05e3b9b2e3c96c4ca2ced063fb88d52f0ca8caa47cf7ed3c9da863",
+      "path": "runs/etch_ccp_dcs_inverse_v3_20261001/etch_ccp_dcs_inverse/artifacts/e_6c089b4aa34cc-4fe996da74b4c008/debug/solver.log",
+      "sha256": "d98ed78429fbab50e8fc7f083afd89391931331c1d91b58e373f3c84d1957307",
       "bytes": 2813
     }
   }

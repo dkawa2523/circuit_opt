@@ -239,25 +239,25 @@ L 164.14601 82.944
    <g id="legend_1">
     <g id="patch_11">
      <path d="M 48.42 95.226844
-L 63.22 95.226844
-L 63.22 90.046844
+L 64.7 95.226844
+L 64.7 90.046844
 L 48.42 90.046844
 z
 " style="fill: #dcebf3; stroke: #2a6f97; stroke-linejoin: miter"/>
     </g>
     <g id="text_16">
-     <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="69.14" y="95.226844" transform="rotate(-0 69.14 95.226844)">25 Vpk</text>
+     <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="70.62" y="95.226844" transform="rotate(-0 70.62 95.226844)">25 Vpk</text>
     </g>
     <g id="patch_12">
-     <path d="M 48.42 106.327422
-L 63.22 106.327422
-L 63.22 101.147422
-L 48.42 101.147422
+     <path d="M 48.42 105.217422
+L 64.7 105.217422
+L 64.7 100.037422
+L 48.42 100.037422
 z
 " style="fill: url(#h92389646e1); stroke: #c66a12; stroke-linejoin: miter"/>
     </g>
     <g id="text_17">
-     <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="69.14" y="106.327422" transform="rotate(-0 69.14 106.327422)">100 Vpk</text>
+     <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="70.62" y="105.217422" transform="rotate(-0 70.62 105.217422)">100 Vpk</text>
     </g>
    </g>
   </g>
@@ -674,37 +674,37 @@ L 514.17 82.944
    <g id="legend_2">
     <g id="patch_31">
      <path d="M 397.63399 93.732984
-L 410.63399 93.732984
-L 410.63399 89.182984
+L 411.93399 93.732984
+L 411.93399 89.182984
 L 397.63399 89.182984
 z
 " style="fill: #dcebf3; stroke: #2a6f97; stroke-linejoin: miter"/>
     </g>
     <g id="text_49">
-     <text style="font-size: 6.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="415.83399" y="93.732984" transform="rotate(-0 415.83399 93.732984)">accepted at load plane</text>
+     <text style="font-size: 6.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="417.13399" y="93.732984" transform="rotate(-0 417.13399 93.732984)">accepted at load plane</text>
     </g>
     <g id="patch_32">
-     <path d="M 397.63399 103.483492
-L 410.63399 103.483492
-L 410.63399 98.933492
-L 397.63399 98.933492
+     <path d="M 397.63399 102.508492
+L 411.93399 102.508492
+L 411.93399 97.958492
+L 397.63399 97.958492
 z
 " style="fill: url(#h92389646e1); stroke: #c66a12; stroke-linejoin: miter"/>
     </g>
     <g id="text_50">
-     <text style="font-size: 6.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="415.83399" y="103.483492" transform="rotate(-0 415.83399 103.483492)">network loss</text>
+     <text style="font-size: 6.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="417.13399" y="102.508492" transform="rotate(-0 417.13399 102.508492)">network loss</text>
     </g>
    </g>
   </g>
   <g id="text_51">
-   <text style="font-weight: 700; font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="5.22" y="13.542281" transform="rotate(-0 5.22 13.542281)">B5 terminal amplitudes and real-power transfer</text>
+   <text style="font-weight: 700; font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="10.44" y="13.542281" transform="rotate(-0 10.44 13.542281)">B5 terminal amplitudes and real-power transfer</text>
   </g>
   <g id="text_52">
-   <text style="font-size: 7.7px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #68737d" x="5.22" y="33.498797" transform="rotate(-0 5.22 33.498797)">Two discrete ngspice AC solutions at one fixed linear network/load; bars do not imply a continuous amplitude sweep.</text>
+   <text style="font-size: 7.7px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #68737d" x="10.44" y="33.498797" transform="rotate(-0 10.44 33.498797)">Two discrete ngspice AC solutions at one fixed linear network/load; bars do not imply a continuous amplitude sweep.</text>
   </g>
   <g id="text_53">
-   <text style="font-size: 6.6px; font-family: 'DejaVu Sans'; fill: #68737d" transform="translate(5.22 331.284804)">A 4x drive produces 4x terminal amplitudes and 16x power/loss while |Γ| and 97.60% efficiency stay constant.</text>
-   <text style="font-size: 6.6px; font-family: 'DejaVu Sans'; fill: #68737d" transform="translate(5.22 339.206609)">The high-drive condition fails declared source/L1 stress limits, not the match criterion.</text>
+   <text style="font-size: 6.6px; font-family: 'DejaVu Sans'; fill: #68737d" transform="translate(10.44 331.284804)">A 4x drive produces 4x terminal amplitudes and 16x power/loss while |Γ| and 97.60% efficiency stay constant.</text>
+   <text style="font-size: 6.6px; font-family: 'DejaVu Sans'; fill: #68737d" transform="translate(10.44 339.206609)">The high-drive condition fails declared source/L1 stress limits, not the match criterion.</text>
   </g>
  </g>
  <defs>
