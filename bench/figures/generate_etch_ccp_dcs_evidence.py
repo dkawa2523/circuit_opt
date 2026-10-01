@@ -1,8 +1,8 @@
 """Render evidence for the dynamic-impedance etch-CCP benchmark.
 
-The generator is deliberately read-only with respect to simulation.  It uses
-an archived, independently integrated charge/flux MNA target, one completed
-ngspice forward run, and one completed 3^4 exact-grid identification study.
+The generator is deliberately read-only with respect to simulation. It uses
+an archived charge/flux MNA target, one completed ngspice forward run, one
+completed 3^4 exact-grid study, and repeated Optuna studies.
 """
 
 from __future__ import annotations
@@ -22,6 +22,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.backends.backend_pdf import PdfPages
 
+from bench.figures.etch_ccp_dcs_optuna_evidence import (
+    build_optuna_evidence,
+    collect_optuna_sources,
+    figure_optuna_comparison,
+)
 from pcd.figures import (
     BLUE,
     BLUE_LIGHT,
@@ -44,8 +49,13 @@ ROOT = HERE.parents[1]
 CASES = HERE / "cases"
 DEFAULT_FORWARD_CASE = CASES / "etch_ccp_dcs_forward.yaml"
 DEFAULT_INVERSE_CASE = CASES / "etch_ccp_dcs_inverse.yaml"
+DEFAULT_CONTINUOUS_CASE = CASES / "etch_ccp_dcs_continuous_inverse.yaml"
 DEFAULT_FORWARD_ROOT = ROOT / "runs" / "etch_ccp_dcs_forward_v7_20261001"
 DEFAULT_INVERSE_ROOT = ROOT / "runs" / "etch_ccp_dcs_inverse_v3_20261001"
+DEFAULT_OPTUNAHUB_AUTO_ROOTS = tuple(
+    ROOT / "runs" / f"etch_ccp_dcs_optunahub_auto_seed{seed}_20261001" for seed in range(3)
+)
+DEFAULT_TPE_ROOTS = tuple(ROOT / "runs" / f"etch_ccp_dcs_tpe_seed{seed}_20261001" for seed in range(3))
 DEFAULT_OUTPUT = HERE / "etch_ccp_dcs"
 DEFAULT_PDF_OUTPUT = ROOT / "output" / "pdf" / "etch-ccp-dcs-dynamic-impedance-study.pdf"
 SVG_HASHSALT = "pcd-etch-ccp-dcs-v2"
@@ -127,12 +137,12 @@ def _find_study(root: Path, study_id: str) -> Path:
     return matches[0]
 
 
-def _study_sources(root: Path, study_id: str) -> dict[str, Path]:
+def _study_sources(root: Path, study_id: str, *, expected_evaluations: int = 81) -> dict[str, Path]:
     study_root = _find_study(root, study_id)
     study_path = study_root / "study_result.json"
     study = _read_json(study_path)
-    if study.get("n_evaluations") != 81 or study.get("n_failed_evaluations") != 0:
-        raise ValueError(f"{study_id} must contain 81 successful evaluations")
+    if study.get("n_evaluations") != expected_evaluations or study.get("n_failed_evaluations") != 0:
+        raise ValueError(f"{study_id} must contain {expected_evaluations} successful evaluations")
     generation = _artifact_path(study_root, str(study["artifacts"]["generation"]))
     evaluations_path = generation / "evaluations.csv"
     rows = _read_table(evaluations_path)
@@ -157,8 +167,11 @@ def _study_sources(root: Path, study_id: str) -> dict[str, Path]:
 def collect_sources(
     forward_case: Path,
     inverse_case: Path,
+    continuous_case: Path,
     forward_root: Path,
     inverse_root: Path,
+    optunahub_auto_roots: tuple[Path, ...],
+    tpe_roots: tuple[Path, ...],
 ) -> dict[str, Path]:
     simulation = _find_simulation(forward_root, "etch_ccp_dcs_forward")
     summary_path = simulation / "summary.json"
@@ -182,6 +195,7 @@ def collect_sources(
     sources.update(
         {f"inverse_{name}": path for name, path in _study_sources(inverse_root, "etch_ccp_dcs_inverse").items()}
     )
+    sources.update(collect_optuna_sources(continuous_case, optunahub_auto_roots, tpe_roots))
     return sources
 
 
@@ -304,7 +318,7 @@ def build_figure_data(sources: dict[str, Path]) -> dict[str, Any]:
         "Csw_F": float(np.sqrt(np.mean((selected_profiles["Csw_F"] - true_profiles["Csw_F"]) ** 2))),
     }
     ordered_losses = sorted(row["loss"] for row in candidates)
-    return {
+    data = {
         "schema": "etch_ccp_dcs_figure_data.v1",
         "scope": {
             "claim": "circuit-level dynamic R/L/sheath-C forward conformance and bounded four-parameter identification",
@@ -395,6 +409,8 @@ def build_figure_data(sources: dict[str, Path]) -> dict[str, Any]:
         },
         "sources": {name: _source_record(path) for name, path in sources.items()},
     }
+    data["optuna_comparison"] = build_optuna_evidence(sources)
+    return data
 
 
 def _format_axes(axis: plt.Axes, *, grid: bool = True) -> None:
@@ -1330,12 +1346,23 @@ def _export(figure: plt.Figure, output: Path, stem: str, pdf: PdfPages) -> None:
 def generate(
     forward_case: Path,
     inverse_case: Path,
+    continuous_case: Path,
     forward_root: Path,
     inverse_root: Path,
+    optunahub_auto_roots: tuple[Path, ...],
+    tpe_roots: tuple[Path, ...],
     output: Path,
     pdf_output: Path,
 ) -> dict[str, Any]:
-    sources = collect_sources(forward_case, inverse_case, forward_root, inverse_root)
+    sources = collect_sources(
+        forward_case,
+        inverse_case,
+        continuous_case,
+        forward_root,
+        inverse_root,
+        optunahub_auto_roots,
+        tpe_roots,
+    )
     data = build_figure_data(sources)
     output.mkdir(parents=True, exist_ok=True)
     pdf_output.parent.mkdir(parents=True, exist_ok=True)
@@ -1348,6 +1375,10 @@ def generate(
         ("04-dynamic-branch-impedance", figure_impedance(sources)),
         ("05-inverse-identification", figure_inverse(sources, data)),
         ("06-literature-basis-and-scope", figure_basis_and_scope(data)),
+        (
+            "07-optunahub-auto-vs-tpe",
+            figure_optuna_comparison(sources, data["optuna_comparison"]),
+        ),
     ]
     with PdfPages(
         pdf_output,
@@ -1376,16 +1407,32 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--forward-case", type=Path, default=DEFAULT_FORWARD_CASE)
     parser.add_argument("--inverse-case", type=Path, default=DEFAULT_INVERSE_CASE)
+    parser.add_argument("--continuous-case", type=Path, default=DEFAULT_CONTINUOUS_CASE)
     parser.add_argument("--forward-root", type=Path, default=DEFAULT_FORWARD_ROOT)
     parser.add_argument("--inverse-root", type=Path, default=DEFAULT_INVERSE_ROOT)
+    parser.add_argument(
+        "--optunahub-auto-roots",
+        type=Path,
+        nargs="+",
+        default=DEFAULT_OPTUNAHUB_AUTO_ROOTS,
+    )
+    parser.add_argument(
+        "--tpe-roots",
+        type=Path,
+        nargs="+",
+        default=DEFAULT_TPE_ROOTS,
+    )
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--pdf-output", type=Path, default=DEFAULT_PDF_OUTPUT)
     args = parser.parse_args(argv)
     result = generate(
         args.forward_case.resolve(),
         args.inverse_case.resolve(),
+        args.continuous_case.resolve(),
         args.forward_root.resolve(),
         args.inverse_root.resolve(),
+        tuple(path.resolve() for path in args.optunahub_auto_roots),
+        tuple(path.resolve() for path in args.tpe_roots),
         args.output.resolve(),
         args.pdf_output.resolve(),
     )

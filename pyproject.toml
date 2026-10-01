@@ -50,6 +50,17 @@ dev = [
   "radon>=6.0,<7",
 ]
 
+# Optional dependencies for the reproducible OptunaHub/TPE benchmark only.
+# They are not imported by the PCD runtime or ordinary studies.
+optuna-benchmark = [
+  "optuna>=5.0,<6",
+  "optunahub>=0.5,<0.6",
+  "cmaes>=0.12,<1",
+  "greenlet>=3.2,<4",
+  "scipy>=1.10,<2",
+  "torch>=2.3,<3",
+]
+
 # -----------------------------------------------------------------------------
 # Ruff: format + lint.  Rules are selected explicitly (never "ALL").
 # -----------------------------------------------------------------------------

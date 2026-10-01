@@ -70,7 +70,30 @@
   電子密度2.58e14～5.65e14 m^-3、`Rp/Lp`の尺度9.38e8～1.00e9 s^-1となります。
 - **解釈:** 値が回路端子モデルとして桁外れではないことは示しますが、実機校正、工程予測、密度計測との一致は示していません。
 
+## 7ページ — OptunaHub AutoSampler（GP）と標準TPEの200 trial比較
+
+- **問題設定:** 4素子の時間波形を時刻ごとに最適化するのではなく、既知の共通包絡関数を保ったまま、
+  `Rp,on`、`Lp,on`、`Cs,u,on`、`Cs,w,on`の4連続値を同定します。既知真値は初期候補として与えていません。
+- **sampler選定:** 4次元、全て数値、単一目的、200 trialという条件に対し、固定したOptunaHub AutoSamplerは
+  初回のRandomSampler後に`GPSampler`を選択します。比較対象は通常の`TPESampler`だけです。
+- **何を見るか:** (a)はtarget、最良Auto/GP、最良TPEのウェハ電圧、(b)は損失に使用していない上部反射波です。
+  (c)は3 seedそれぞれ200 trialの累積最良損失、(d)は各seedの最終損失、
+  (e)は推定値と真値の比、(f)は目的波形誤差と未使用波形誤差の関係です。
+- **比較条件:** 両samplerは同じ連続範囲、seed 0～2、各200 trialです。既知真値は初期候補に注入せず、
+  wafer電圧だけをlossに使っています。
+- **計算健全性:** 1,200/1,200 trial成功、solver failure 0です。Auto/GPの同一点再提案50件はraw-result cacheを
+  使用したため、新規ngspice solveは1,150回です。これは探索挙動として明示し、実行失敗とは扱っていません。
+- **探索性能の評価:** 最終wafer nRMSE中央値はAuto/GP`1.102e-4`、TPE`1.741e-4`で、Auto/GPが36.7%低い値です。
+  低次元・少数trialでwafer目的を下げる用途にはAutoSamplerが適しています。
+- **素子同定の評価:** 絶対相対誤差中央値はAuto/GPで`Rp 0.878%`、`Lp 1.235%`、`Cs,u 0.182%`、
+  `Cs,w 0.114%`、TPEで`Rp 0.668%`、`Lp 0.159%`、`Cs,u 0.125%`、`Cs,w 0.276%`です。
+  4parameterのうち3つはTPEの方が真値へ近く、最小wafer lossと最良parameter回収は一致しません。
+- **未使用波形の評価:** 上部反射波nRMSE中央値はAuto/GP`3.263e-3`、TPE`2.564e-3`で、TPEが21.4%低い値です。
+- **考察:** Auto/GPはfitted objectiveでは優れますが、重複提案、hold-out、parameter回収を合わせるとTPEを
+  無条件に置き換える根拠にはなりません。3 seedのcase-specific比較なので一般的優位性も主張しません。
+  次はsamplerを増やさず、同期V/I、上部反射波、複数pulse条件を加えて識別性を改善すべきです。
+
 ## 追跡可能な元データ
 
 - 詳細な問題設定、式、文献、再現手順: [`../../docs/etch-ccp-dcs-dynamic-impedance-study-ja.md`](../../docs/etch-ccp-dcs-dynamic-impedance-study-ja.md)
-- 元ファイルの全ハッシュ値、誤差、81候補の結果: [`../../bench/figures/etch_ccp_dcs/figure_data.json`](../../bench/figures/etch_ccp_dcs/figure_data.json)
+- 元ファイルの全ハッシュ値、誤差、81格子候補、Optuna 1,200 trialのloss履歴と集約評価: [`../../bench/figures/etch_ccp_dcs/figure_data.json`](../../bench/figures/etch_ccp_dcs/figure_data.json)

@@ -210,6 +210,66 @@ pulse transitionを含む実波形計算自体は前節のcharge/flux state equa
 持つsystem-identification benchmarkである。実機適用では複数recipe、同期V/I、参照面de-embedding、noise、parameter
 相関を含むidentifiability確認が必要になる。
 
+### 6.1 OptunaHub AutoSamplerと標準TPEを200 trialで評価
+
+完全格子で真値を回収できることと、連続空間を効率よく探索できることは別の課題である。そのため、共通envelopeと
+off値は固定したまま、`Rp,on`、`Lp,on`、`Cs,u,on`、`Cs,w,on`を次の連続範囲で探索した。既知真値は初期候補へ注入していない。
+
+| 変数 | 連続探索範囲 | 既知真値 |
+|---|---:|---:|
+| `Rp,on` | 12–18 Ω | 15 Ω |
+| `Lp,on` | 13–19 nH | 16 nH |
+| `Cs,u,on` | 440–600 pF | 520 pF |
+| `Cs,w,on` | 620–820 pF | 720 pF |
+
+この問題は4次元、全変数が連続、単一目的、1評価がngspice transientを伴うblack-boxである。この条件と200 trialの
+予算に対して、OptunaHubの `samplers/auto_sampler` を採用した。固定したregistry ref
+`61da9ce3093a6c92da998a127b55720f9d3b8fd7` のAutoSamplerは、数値だけの単一目的空間かつ完了trial数250未満では
+`GPSampler` を選ぶ。比較対象は通常の `TPESampler` とし、他手法の横並び比較は行わない。
+
+両samplerを同じ探索範囲、同じseed 0～2、各200 trialで実行した。lossは完全格子と同じwafer電圧のnormalized RMSEだけで、
+上部反射波は選択に使わないhold-outとした。1,200 trialはすべて評価recordを生成し、solver failureは0である。ただし
+AutoSampler/GPは既評価点を再提案し、50 trialはPCDのraw-result cacheを利用した。したがって新規ngspice solveは
+AutoSampler 550回、TPE 600回、合計1,150回である。
+
+| sampler | 最終loss最小値 | 3 seed中央値 | 最大値 |
+|---|---:|---:|---:|
+| OptunaHub AutoSampler（実効GP） | 1.07206e-4 | 1.10212e-4 | 1.74637e-4 |
+| 標準TPESampler | 1.21653e-4 | 1.74070e-4 | 2.06896e-4 |
+
+AutoSamplerのwafer目的中央値はTPEの0.633倍、すなわち36.7%低い。一方、未使用の上部反射波nRMSE中央値は
+AutoSampler `3.26337e-3`、TPE `2.56432e-3`で、TPEが21.4%低い。wafer lossだけでsamplerを選ぶ場合と、
+別出力への整合や物理parameter回収を重視する場合で評価が分かれる。
+
+#### 評価
+
+| 評価観点 | 判定 | 根拠 |
+|---|---|---|
+| 計算完全性 | 成立 | 1,200/1,200 trial成功、solver failure 0、新規ngspice solve 1,150回 |
+| AutoSampler選定 | 妥当 | 4次元数値・単一目的・200 trialなので、固定版AutoSamplerは初回以外をGPで提案 |
+| wafer目的の探索 | AutoSamplerが良好 | 最終nRMSE中央値はAuto/GP `1.102e-4`、TPE `1.741e-4` |
+| 提案の重複 | 要注意 | Auto/GPは50/600 trialがcache hit。うち41件がseed 0に集中、TPEは0件 |
+| 未使用波形への整合 | TPEが良好 | 上部反射波nRMSE中央値はAuto/GP `3.263e-3`、TPE `2.564e-3` |
+| 素子値の一意回収 | 未成立 | 低wafer lossでもsampler間でparameter回収とhold-outの順位が一致しない |
+
+既知真値に対する絶対相対誤差の3 seed中央値は、Auto/GPが `Rp 0.878%`、`Lp 1.235%`、`Cs,u 0.182%`、
+`Cs,w 0.114%`、TPEが `Rp 0.668%`、`Lp 0.159%`、`Cs,u 0.125%`、`Cs,w 0.276%` である。
+Auto/GPはwafer目的をより小さくしたが、4parameterのうち3つと未使用反射波ではTPEの方が真値へ近い。これは
+AutoSamplerが不適切という意味ではなく、現在の単一波形lossに沿ってより強く局所化した結果が、物理parameterの最良回収と
+一致しないことを示す。
+
+#### 考察
+
+AutoSampler/GPはこの低次元・少数trialの数値探索に適しており、wafer波形の最小化だけが目的なら採用候補である。
+ただしstock AutoSamplerは本問題が決定論的であることを明示的に受け取らず、同一点再提案が発生した。cacheにより不要な
+ngspice再実行は防げたが、trialを消費するため運用上は監視すべきである。200 trialを超えるとAutoSamplerの内部選択規則も
+変わり得るため、本結果を別予算へ外挿しない。
+
+3 seedの記述比較なので、AutoSamplerまたはTPEの一般的優位性や大域最適性は主張しない。本ケースの結論は、
+AutoSampler/GPがwafer目的には有効だが、素子同定全体ではTPEを無条件に置き換える根拠にならない、である。次に必要なのは
+samplerを増やすことではなく、同期V/I、上部反射波、複数pulse recipeなど独立な観測を目的関数またはhold-outへ追加して
+parameter相関を減らすことである。
+
 ## 7. 図と再現可能な証拠
 
 1. [装置と上下対応した詳細等価回路](../bench/figures/etch_ccp_dcs/01-apparatus-and-equivalent-circuit.svg)
@@ -218,10 +278,11 @@ pulse transitionを含む実波形計算自体は前節のcharge/flux state equa
 4. [2 MHz / 60 MHz動的branch impedanceとSmith chart](../bench/figures/etch_ccp_dcs/04-dynamic-branch-impedance.svg)
 5. [wafer電圧同定、loss履歴、hold-out反射波](../bench/figures/etch_ccp_dcs/05-inverse-identification.svg)
 6. [文献根拠、benchmark固有仮定、物理スケール確認](../bench/figures/etch_ccp_dcs/06-literature-basis-and-scope.svg)
+7. [OptunaHub AutoSampler（GP）と標準TPEの200 trial比較](../bench/figures/etch_ccp_dcs/07-optunahub-auto-vs-tpe.svg)
 
 結合PDFは `output/pdf/etch-ccp-dcs-dynamic-impedance-study.pdf`、全source path、SHA-256、solver version、誤差、
-全81候補は `bench/figures/etch_ccp_dcs/figure_data.json` に保存している。図生成器は保存済みartifactを読むだけで、
-simulationやsearchを再実行しない。
+全81格子候補、Optuna 1,200 trialのloss履歴と集約評価は `bench/figures/etch_ccp_dcs/figure_data.json` に保存している。
+図生成器は保存済みartifactを読むだけで、simulationやsearchを再実行しない。
 
 ## 8. 再現方法
 
@@ -240,7 +301,20 @@ uv run --frozen python -m pcd run `
   bench/figures/cases/etch_ccp_dcs_inverse.yaml `
   --output runs/etch_ccp_dcs_inverse_v3_20261001 --json
 
-uv run --frozen python bench/figures/generate_etch_ccp_dcs_evidence.py
+uv run --frozen python -m pcd validate-case `
+  bench/figures/cases/etch_ccp_dcs_continuous_inverse.yaml --strict --json
+
+$continuousCase = "bench/figures/cases/etch_ccp_dcs_continuous_inverse.yaml"
+foreach ($seed in 0..2) {
+  uv run --frozen --group optuna-benchmark python -m pcd run $continuousCase `
+    --output "runs/etch_ccp_dcs_optunahub_auto_seed${seed}_20261001" `
+    --optimizer optuna_auto --trials 200 --seed $seed --json
+  uv run --frozen --group optuna-benchmark python -m pcd run $continuousCase `
+    --output "runs/etch_ccp_dcs_tpe_seed${seed}_20261001" `
+    --optimizer optuna_tpe --trials 200 --seed $seed --json
+}
+
+uv run --frozen --group optuna-benchmark python -m bench.figures.generate_etch_ccp_dcs_evidence
 ```
 
 solver adapterは、return codeとCSV存在だけでなく、transient最終時刻が要求`stop_s`へ到達したことを確認する。

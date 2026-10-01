@@ -2,7 +2,7 @@
 
 ## Dynamic-impedance etch CCP with dual RF and DC superposition
 
-This six-page study extends the earlier minimal CCP example without turning
+This seven-page study extends the earlier minimal CCP example without turning
 PCD into a plasma-chemistry solver. The explicit circuit contains a 60 MHz
 upper source, 2 MHz wafer-bias source, pulsed negative DC bias tee, matching
 and feed parasitics, chamber/ESC stray capacitance, wall leakage, two lossy
@@ -27,9 +27,17 @@ sheaths, and a bulk `R-L` path. The prescribed `R_p(t)`, `L_p(t)`,
 6. [Literature basis and scope](etch_ccp_dcs/06-literature-basis-and-scope.svg)
    separates published apparatus/model evidence from benchmark-specific
    assumptions and reports transparent order-of-magnitude checks.
+7. [OptunaHub AutoSampler versus TPE](etch_ccp_dcs/07-optunahub-auto-vs-tpe.svg)
+   compares the pinned OptunaHub AutoSampler (which selects `GPSampler` here)
+   with standard `TPESampler`, using three matched seeds and 200 trials per
+   seed. Auto/GP has the lower fitted-wafer loss, while TPE has the lower
+   unused-reflection error and generally closer parameter recovery. Exact GP
+   reproposals and their PCD cache hits are reported rather than hidden.
 
 [`etch_ccp_dcs/figure_data.json`](etch_ccp_dcs/figure_data.json) records every
-source hash, forward error, candidate, selected value, and held-out error. The
+source hash, forward error, exact-grid candidate, Optuna selected value,
+repeated-seed loss trace, cache behavior, and held-out error without
+duplicating every raw trial row. The
 full literature boundary, equations, results, and reproduction commands are in
 [`docs/etch-ccp-dcs-dynamic-impedance-study-ja.md`](../../docs/etch-ccp-dcs-dynamic-impedance-study-ja.md).
 The combined publication artifact is

@@ -13,12 +13,18 @@ self-consistent plasma-state or process qualification.
 `pdf/dual-frequency-ccp-pulsed-bias-study-guide-ja.md` explains the purpose,
 pass interpretation, and limitation of every page.
 
-`pdf/etch-ccp-dcs-dynamic-impedance-study.pdf` is the reviewed six-page
+`pdf/etch-ccp-dcs-dynamic-impedance-study.pdf` is the reviewed seven-page
 60 MHz / 2 MHz / pulsed-negative-DC etch-CCP circuit study. It includes the
 external matching/feed/bias network, time-varying bulk resistance and
 inductance, two time-varying lossy sheath capacitances, independent forward
 conformance, dynamic impedance plots, and a complete 81-candidate bounded
-identification with an unused reflected-voltage hold-out.
+identification with an unused reflected-voltage hold-out. Its seventh page
+compares a pinned OptunaHub AutoSampler (effective `GPSampler`) with standard
+TPE at three matched seeds and 200 trials per seed. Auto/GP lowers the fitted
+wafer loss, while TPE lowers the unused-reflection error and generally recovers
+the known parameters more closely. Repeated Auto/GP proposals and cache use are
+reported explicitly, so the result supports a case-specific sampler choice but
+not a general superiority claim.
 Its final pages add 50-ohm Smith-chart interpretation and an explicit
 literature/assumption/model-boundary audit. The page-by-page explanation is
 `pdf/etch-ccp-dcs-dynamic-impedance-study-guide-ja.md`.
