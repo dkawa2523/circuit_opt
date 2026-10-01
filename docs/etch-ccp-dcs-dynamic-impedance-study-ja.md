@@ -210,7 +210,7 @@ pulse transitionを含む実波形計算自体は前節のcharge/flux state equa
 持つsystem-identification benchmarkである。実機適用では複数recipe、同期V/I、参照面de-embedding、noise、parameter
 相関を含むidentifiability確認が必要になる。
 
-### 6.1 OptunaHub AutoSamplerと標準TPEを200 trialで評価
+### 6.1 GP-UCBによる連続値同定
 
 完全格子で真値を回収できることと、連続空間を効率よく探索できることは別の課題である。そのため、共通envelopeと
 off値は固定したまま、`Rp,on`、`Lp,on`、`Cs,u,on`、`Cs,w,on`を次の連続範囲で探索した。既知真値は初期候補へ注入していない。
@@ -222,53 +222,29 @@ off値は固定したまま、`Rp,on`、`Lp,on`、`Cs,u,on`、`Cs,w,on`を次の
 | `Cs,u,on` | 440–600 pF | 520 pF |
 | `Cs,w,on` | 620–820 pF | 720 pF |
 
-この問題は4次元、全変数が連続、単一目的、1評価がngspice transientを伴うblack-boxである。この条件と200 trialの
-予算に対して、OptunaHubの `samplers/auto_sampler` を採用した。固定したregistry ref
-`61da9ce3093a6c92da998a127b55720f9d3b8fd7` のAutoSamplerは、数値だけの単一目的空間かつ完了trial数250未満では
-`GPSampler` を選ぶ。比較対象は通常の `TPESampler` とし、他手法の横並び比較は行わない。
+この問題は4次元、全変数が連続、単一目的、1評価がngspice transientを伴うblack-boxである。OptunaHubの
+[`gp_acqf_samplers`](https://hub.optuna.org/samplers/gp_acqf_samplers/)にある`GPUCBSampler`を使い、
+`beta=2.0`、`deterministic_objective=true`、seed 0～2、各200 trialとした。lossはwafer電圧のnormalized RMSEだけであり、
+上部反射波は最適化へ渡さないhold-outである。
 
-両samplerを同じ探索範囲、同じseed 0～2、各200 trialで実行した。lossは完全格子と同じwafer電圧のnormalized RMSEだけで、
-上部反射波は選択に使わないhold-outとした。1,200 trialはすべて評価recordを生成し、solver failureは0である。ただし
-AutoSampler/GPは既評価点を再提案し、50 trialはPCDのraw-result cacheを利用した。したがって新規ngspice solveは
-AutoSampler 550回、TPE 600回、合計1,150回である。
+| seed | 最良trial | wafer nRMSE | 未使用反射波nRMSE | `Rp` (Ω) | `Lp` (nH) | `Cs,u` (pF) | `Cs,w` (pF) |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 0 | 183 | `9.36455e-5` | `3.33969e-3` | 14.8756 | 16.1690 | 520.119 | 719.471 |
+| 1 | 195 | `9.34679e-5` | `3.23329e-3` | 14.8676 | 16.1257 | 519.746 | 719.891 |
+| 2 | 199 | `9.86703e-5` | `3.13983e-3` | 14.8867 | 16.1059 | 521.324 | 718.086 |
 
-| sampler | 最終loss最小値 | 3 seed中央値 | 最大値 |
-|---|---:|---:|---:|
-| OptunaHub AutoSampler（実効GP） | 1.07206e-4 | 1.10212e-4 | 1.74637e-4 |
-| 標準TPESampler | 1.21653e-4 | 1.74070e-4 | 2.06896e-4 |
+図では最良seedを選ばず、wafer nRMSEが3 seed中央値となるseed 0を代表runとして使う。これにより、目的波形とhold-outを
+都合のよいrunだけで示すことを避けた。3 seedの最終wafer nRMSEは`9.347e-5`～`9.867e-5`、中央値`9.365e-5`で、
+全seedが`1.0e-4`未満に到達した。既知真値に対する絶対相対誤差中央値は`Rp 0.829%`、`Lp 0.785%`、
+`Cs,u 0.049%`、`Cs,w 0.074%`である。
 
-AutoSamplerのwafer目的中央値はTPEの0.633倍、すなわち36.7%低い。一方、未使用の上部反射波nRMSE中央値は
-AutoSampler `3.26337e-3`、TPE `2.56432e-3`で、TPEが21.4%低い。wafer lossだけでsamplerを選ぶ場合と、
-別出力への整合や物理parameter回収を重視する場合で評価が分かれる。
+600 trialはすべて成功し、solver failureは0である。65件の同一点再提案はraw-result cacheを利用したため、新規ngspice solveは
+535回となった。各seedの最良更新はtrial 183、195、199であり、200 trial時点で完全に飽和したとは言えない。一方、
+未使用反射波のnRMSE中央値は`3.233e-3`で、wafer目的より大きい。したがって本結果は、既知の波形形状を持つ4つの
+on-state値をGP-UCBで安定して近似できることを示すが、単一波形からの一意同定や連続空間の大域最適性は示さない。
 
-#### 評価
-
-| 評価観点 | 判定 | 根拠 |
-|---|---|---|
-| 計算完全性 | 成立 | 1,200/1,200 trial成功、solver failure 0、新規ngspice solve 1,150回 |
-| AutoSampler選定 | 妥当 | 4次元数値・単一目的・200 trialなので、固定版AutoSamplerは初回以外をGPで提案 |
-| wafer目的の探索 | AutoSamplerが良好 | 最終nRMSE中央値はAuto/GP `1.102e-4`、TPE `1.741e-4` |
-| 提案の重複 | 要注意 | Auto/GPは50/600 trialがcache hit。うち41件がseed 0に集中、TPEは0件 |
-| 未使用波形への整合 | TPEが良好 | 上部反射波nRMSE中央値はAuto/GP `3.263e-3`、TPE `2.564e-3` |
-| 素子値の一意回収 | 未成立 | 低wafer lossでもsampler間でparameter回収とhold-outの順位が一致しない |
-
-既知真値に対する絶対相対誤差の3 seed中央値は、Auto/GPが `Rp 0.878%`、`Lp 1.235%`、`Cs,u 0.182%`、
-`Cs,w 0.114%`、TPEが `Rp 0.668%`、`Lp 0.159%`、`Cs,u 0.125%`、`Cs,w 0.276%` である。
-Auto/GPはwafer目的をより小さくしたが、4parameterのうち3つと未使用反射波ではTPEの方が真値へ近い。これは
-AutoSamplerが不適切という意味ではなく、現在の単一波形lossに沿ってより強く局所化した結果が、物理parameterの最良回収と
-一致しないことを示す。
-
-#### 考察
-
-AutoSampler/GPはこの低次元・少数trialの数値探索に適しており、wafer波形の最小化だけが目的なら採用候補である。
-ただしstock AutoSamplerは本問題が決定論的であることを明示的に受け取らず、同一点再提案が発生した。cacheにより不要な
-ngspice再実行は防げたが、trialを消費するため運用上は監視すべきである。200 trialを超えるとAutoSamplerの内部選択規則も
-変わり得るため、本結果を別予算へ外挿しない。
-
-3 seedの記述比較なので、AutoSamplerまたはTPEの一般的優位性や大域最適性は主張しない。本ケースの結論は、
-AutoSampler/GPがwafer目的には有効だが、素子同定全体ではTPEを無条件に置き換える根拠にならない、である。次に必要なのは
-samplerを増やすことではなく、同期V/I、上部反射波、複数pulse recipeなど独立な観測を目的関数またはhold-outへ追加して
-parameter相関を減らすことである。
+この成果物の目的はGP-UCB同定の妥当性確認であり、optimizer間の順位比較は図から除外した。次の本質的な改善は手法数を
+増やすことではなく、同期V/I、上部反射波、複数pulse recipeなど独立な観測でparameter相関を減らすことである。
 
 ## 7. 図と再現可能な証拠
 
@@ -276,12 +252,12 @@ parameter相関を減らすことである。
 2. [入力波形と4つの時間変化素子](../bench/figures/etch_ccp_dcs/02-inputs-and-dynamic-elements.svg)
 3. [独立MNAとngspiceの順問題比較](../bench/figures/etch_ccp_dcs/03-forward-conformance.svg)
 4. [2 MHz / 60 MHz動的branch impedanceとSmith chart](../bench/figures/etch_ccp_dcs/04-dynamic-branch-impedance.svg)
-5. [wafer電圧同定、loss履歴、hold-out反射波](../bench/figures/etch_ccp_dcs/05-inverse-identification.svg)
-6. [文献根拠、benchmark固有仮定、物理スケール確認](../bench/figures/etch_ccp_dcs/06-literature-basis-and-scope.svg)
-7. [OptunaHub AutoSampler（GP）と標準TPEの200 trial比較](../bench/figures/etch_ccp_dcs/07-optunahub-auto-vs-tpe.svg)
+5. [GP-UCBの目的波形、未使用反射波、残差](../bench/figures/etch_ccp_dcs/05-gp-ucb-waveform-validation.svg)
+6. [GP-UCBの収束、素子値回収、時間変化profile](../bench/figures/etch_ccp_dcs/06-gp-ucb-identification.svg)
+7. [文献根拠、benchmark固有仮定、物理スケール確認](../bench/figures/etch_ccp_dcs/07-literature-basis-and-scope.svg)
 
 結合PDFは `output/pdf/etch-ccp-dcs-dynamic-impedance-study.pdf`、全source path、SHA-256、solver version、誤差、
-全81格子候補、Optuna 1,200 trialのloss履歴と集約評価は `bench/figures/etch_ccp_dcs/figure_data.json` に保存している。
+全81格子候補、GP-UCB 600 trialのloss履歴と集約評価は `bench/figures/etch_ccp_dcs/figure_data.json` に保存している。
 図生成器は保存済みartifactを読むだけで、simulationやsearchを再実行しない。
 
 ## 8. 再現方法
@@ -307,11 +283,8 @@ uv run --frozen python -m pcd validate-case `
 $continuousCase = "bench/figures/cases/etch_ccp_dcs_continuous_inverse.yaml"
 foreach ($seed in 0..2) {
   uv run --frozen --group optuna-benchmark python -m pcd run $continuousCase `
-    --output "runs/etch_ccp_dcs_optunahub_auto_seed${seed}_20261001" `
-    --optimizer optuna_auto --trials 200 --seed $seed --json
-  uv run --frozen --group optuna-benchmark python -m pcd run $continuousCase `
-    --output "runs/etch_ccp_dcs_tpe_seed${seed}_20261001" `
-    --optimizer optuna_tpe --trials 200 --seed $seed --json
+    --output "runs/etch_ccp_dcs_gp_ucb_seed${seed}_20261001" `
+    --optimizer optuna_gp_ucb --trials 200 --seed $seed --json
 }
 
 uv run --frozen --group optuna-benchmark python -m bench.figures.generate_etch_ccp_dcs_evidence

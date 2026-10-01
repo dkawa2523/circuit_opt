@@ -2,7 +2,7 @@
 
 The generator is deliberately read-only with respect to simulation. It uses
 an archived charge/flux MNA target, one completed ngspice forward run, one
-completed 3^4 exact-grid study, and repeated Optuna studies.
+completed 3^4 exact-grid study, and three completed GP-UCB studies.
 """
 
 from __future__ import annotations
@@ -23,9 +23,8 @@ import numpy as np
 from matplotlib.backends.backend_pdf import PdfPages
 
 from bench.figures.etch_ccp_dcs_optuna_evidence import (
-    build_optuna_evidence,
+    build_gp_ucb_evidence,
     collect_optuna_sources,
-    figure_optuna_comparison,
 )
 from pcd.figures import (
     BLUE,
@@ -52,10 +51,7 @@ DEFAULT_INVERSE_CASE = CASES / "etch_ccp_dcs_inverse.yaml"
 DEFAULT_CONTINUOUS_CASE = CASES / "etch_ccp_dcs_continuous_inverse.yaml"
 DEFAULT_FORWARD_ROOT = ROOT / "runs" / "etch_ccp_dcs_forward_v7_20261001"
 DEFAULT_INVERSE_ROOT = ROOT / "runs" / "etch_ccp_dcs_inverse_v3_20261001"
-DEFAULT_OPTUNAHUB_AUTO_ROOTS = tuple(
-    ROOT / "runs" / f"etch_ccp_dcs_optunahub_auto_seed{seed}_20261001" for seed in range(3)
-)
-DEFAULT_TPE_ROOTS = tuple(ROOT / "runs" / f"etch_ccp_dcs_tpe_seed{seed}_20261001" for seed in range(3))
+DEFAULT_GP_UCB_ROOTS = tuple(ROOT / "runs" / f"etch_ccp_dcs_gp_ucb_seed{seed}_20261001" for seed in range(3))
 DEFAULT_OUTPUT = HERE / "etch_ccp_dcs"
 DEFAULT_PDF_OUTPUT = ROOT / "output" / "pdf" / "etch-ccp-dcs-dynamic-impedance-study.pdf"
 SVG_HASHSALT = "pcd-etch-ccp-dcs-v2"
@@ -170,8 +166,7 @@ def collect_sources(
     continuous_case: Path,
     forward_root: Path,
     inverse_root: Path,
-    optunahub_auto_roots: tuple[Path, ...],
-    tpe_roots: tuple[Path, ...],
+    gp_ucb_roots: tuple[Path, ...],
 ) -> dict[str, Path]:
     simulation = _find_simulation(forward_root, "etch_ccp_dcs_forward")
     summary_path = simulation / "summary.json"
@@ -195,7 +190,14 @@ def collect_sources(
     sources.update(
         {f"inverse_{name}": path for name, path in _study_sources(inverse_root, "etch_ccp_dcs_inverse").items()}
     )
-    sources.update(collect_optuna_sources(continuous_case, optunahub_auto_roots, tpe_roots))
+    sources.update(
+        collect_optuna_sources(
+            continuous_case,
+            (),
+            (),
+            gp_ucb_roots,
+        )
+    )
     return sources
 
 
@@ -319,7 +321,7 @@ def build_figure_data(sources: dict[str, Path]) -> dict[str, Any]:
     }
     ordered_losses = sorted(row["loss"] for row in candidates)
     data = {
-        "schema": "etch_ccp_dcs_figure_data.v1",
+        "schema": "etch_ccp_dcs_figure_data.v2",
         "scope": {
             "claim": "circuit-level dynamic R/L/sheath-C forward conformance and bounded four-parameter identification",
             "not_claimed": [
@@ -409,7 +411,7 @@ def build_figure_data(sources: dict[str, Path]) -> dict[str, Any]:
         },
         "sources": {name: _source_record(path) for name, path in sources.items()},
     }
-    data["optuna_comparison"] = build_optuna_evidence(sources)
+    data["gp_ucb_identification"] = build_gp_ucb_evidence(sources)
     return data
 
 
@@ -774,7 +776,7 @@ def figure_apparatus() -> plt.Figure:
         fig,
         "[R1] Kim et al., JJAP 54, 01AE07 (300 mm, 20 mm, upper 60 MHz/lower 2 MHz).\n"
         "[R2] Yamaguchi et al., J. Phys. D 45, 025203 (negative DC on upper VHF electrode).\n"
-        "See p. 6 for source details, benchmark-specific assumptions, and the model boundary.",
+        "See p. 7 for source details, benchmark-specific assumptions, and the model boundary.",
     )
     fig.subplots_adjust(left=0.020, right=0.992, top=0.80, bottom=0.105, wspace=0.055)
     return fig
@@ -1053,146 +1055,202 @@ def figure_impedance(sources: dict[str, Path]) -> plt.Figure:
     return fig
 
 
-def _scaled_parameter_values(values: dict[str, float]) -> list[float]:
-    return [values["Rp_on_ohm"], 1e9 * values["Lp_on_H"], 1e12 * values["Csu_on_F"], 1e12 * values["Csw_on_F"]]
+def _representative_gp_run(data: dict[str, Any]) -> dict[str, Any]:
+    evidence = data["gp_ucb_identification"]
+    prefix = evidence["representative_source_prefix"]
+    return next(run for run in evidence["runs"] if run["source_prefix"] == prefix)
 
 
-def figure_inverse(sources: dict[str, Path], data: dict[str, Any]) -> plt.Figure:
-    target = _read_numeric_csv(sources["target_observables"])
-    initial = _read_numeric_csv(sources["inverse_initial_waveform"])
-    selected = _read_numeric_csv(sources["inverse_selected_waveform"])
-    time_us = _target_time_us(target)
-    initial_wafer = _aligned(target, initial, "wafer_voltage_V")
-    selected_wafer = _aligned(target, selected, "wafer_voltage_V")
-    selected_reflection = _reflected(target, selected)
-    result = data["inverse"]
-    true_profiles = _profiles(target["time_s"], result["truth_values"])
-    selected_profiles = _profiles(target["time_s"], result["selected_values"])
-    candidates = result["candidates"]
-    trials = np.asarray([row["trial"] + 1 for row in candidates])
-    losses = np.asarray([row["loss"] for row in candidates])
-    best_so_far = np.minimum.accumulate(losses)
-    selected_trial = 1 + next(
-        row["trial"] for row in candidates if row["candidate_id"] == result["selected_candidate_id"]
-    )
-    fig, axes = plt.subplots(3, 2, figsize=PAGE_SIZE)
-    truth_handle = plt.Line2D([], [], color=ORANGE, lw=1.55, ls=(0, (4, 2)))
-    initial_handle = plt.Line2D([], [], color=MUTED, lw=0.9)
-    selected_handle = plt.Line2D([], [], color=BLUE, lw=1.0)
-
-    add_panel_title(axes[0, 0], "(a)", "Fitted objective: wafer voltage only")
-    axes[0, 0].plot(time_us, initial_wafer, color=MUTED, lw=0.9)
-    axes[0, 0].plot(time_us, selected_wafer, color=BLUE, lw=1.0)
-    axes[0, 0].plot(time_us, target["wafer_voltage_V"], color=ORANGE, lw=1.55, ls=(0, (4, 2)))
-    axes[0, 0].set_ylabel(r"$V_W$ (V)")
-
-    add_panel_title(axes[0, 1], "(b)", "Held-out check: upper reflected wave")
-    axes[0, 1].plot(time_us, selected_reflection, color=BLUE, lw=1.0)
-    axes[0, 1].plot(time_us, target["upper_reflected_voltage_V"], color=ORANGE, lw=1.55, ls=(0, (4, 2)))
-    axes[0, 1].set_ylabel(r"$V_-$ (V)")
-
-    add_panel_title(axes[1, 0], "(c)", "Recovered bulk profiles")
-    axes[1, 0].plot(time_us, true_profiles["Rp_ohm"], color=ORANGE, lw=1.5, ls=(0, (4, 2)))
-    axes[1, 0].plot(time_us, selected_profiles["Rp_ohm"], color=BLUE, lw=0.8)
-    axes[1, 0].set_ylabel(r"$R_p$ (Ω)")
-    ax_lp = axes[1, 0].twinx()
-    ax_lp.plot(time_us, 1e9 * true_profiles["Lp_H"], color=ORANGE, lw=1.3, ls=(0, (4, 2)))
-    ax_lp.plot(time_us, 1e9 * selected_profiles["Lp_H"], color=BLUE, lw=0.7)
-    ax_lp.tick_params(axis="y", colors=BLUE)
-    ax_lp.spines["top"].set_visible(False)
-    axes[1, 0].text(
-        0.98,
-        0.08,
-        r"right scale: $L_p$ (nH)",
-        transform=axes[1, 0].transAxes,
-        ha="right",
-        color=BLUE,
-        fontsize=6.0,
-    )
-
-    add_panel_title(axes[1, 1], "(d)", "Recovered sheath-capacitance profiles")
-    axes[1, 1].plot(
-        time_us, 1e12 * true_profiles["Csu_F"], color=ORANGE, lw=1.5, ls=(0, (4, 2)), label=r"truth $C_{s,u}$"
-    )
-    axes[1, 1].plot(time_us, 1e12 * selected_profiles["Csu_F"], color=BLUE, lw=0.8, label=r"fit $C_{s,u}$")
-    axes[1, 1].plot(
-        time_us, 1e12 * true_profiles["Csw_F"], color=ORANGE, lw=1.1, ls=(0, (1, 2)), label=r"truth $C_{s,w}$"
-    )
-    axes[1, 1].plot(
-        time_us, 1e12 * selected_profiles["Csw_F"], color=BLUE, lw=0.7, ls=(0, (1, 2)), label=r"fit $C_{s,w}$"
-    )
-    axes[1, 1].set_ylabel("Capacitance (pF)")
-
-    add_panel_title(axes[2, 0], "(e)", "Complete 81-candidate grid")
-    axes[2, 0].semilogy(trials, losses, color=MUTED, marker=".", ms=2.2, lw=0.45)
-    axes[2, 0].step(trials, best_so_far, where="post", color=BLUE, lw=1.25)
-    axes[2, 0].scatter([selected_trial], [result["selected_loss"]], color=ORANGE, s=24, zorder=4)
-    axes[2, 0].set_xlim(1.0, 81.0)
-    axes[2, 0].set_xticks([1, 20, 40, 60, 81])
-    axes[2, 0].set_xlabel("Evaluated candidate")
-    axes[2, 0].set_ylabel("Normalized RMSE")
-    axes[2, 0].text(
-        0.98,
-        0.92,
-        f"best {result['selected_loss']:.3e}\n2nd {result['second_best_loss']:.3e}",
-        transform=axes[2, 0].transAxes,
+def _annotate_residual(axis: plt.Axes, residual: np.ndarray, normalized_rmse: float) -> None:
+    limit = 1.58 * float(np.max(np.abs(residual)))
+    axis.axhline(0.0, color=INK, lw=0.75, ls=(0, (3, 2)))
+    axis.set_ylim(-limit, limit)
+    axis.text(
+        0.97,
+        0.94,
+        f"nRMSE = {normalized_rmse:.3e}\nmax |error| = {np.max(np.abs(residual)):.3f} V",
+        transform=axis.transAxes,
         ha="right",
         va="top",
-        fontsize=5.8,
-        bbox={"facecolor": WHITE, "edgecolor": "none", "alpha": 0.88, "pad": 1.5},
+        fontsize=7.1,
+        bbox={"facecolor": WHITE, "edgecolor": "none", "alpha": 0.90, "pad": 2.0},
     )
 
-    add_panel_title(axes[2, 1], "(f)", "Parameter recovery / truth")
-    x = np.arange(4)
-    width = 0.32
-    truth_values = np.asarray(_scaled_parameter_values(result["truth_values"]))
-    initial_ratio = np.asarray(_scaled_parameter_values(result["initial_values"])) / truth_values
-    selected_ratio = np.asarray(_scaled_parameter_values(result["selected_values"])) / truth_values
-    axes[2, 1].bar(
-        x - width / 2.0,
-        initial_ratio,
-        width,
-        color="#c8ced3",
-        edgecolor=MUTED,
-        linewidth=0.7,
-    )
-    axes[2, 1].bar(
-        x + width / 2.0,
-        selected_ratio,
-        width,
-        facecolor=BLUE_LIGHT,
-        edgecolor=BLUE,
-        linewidth=0.8,
-    )
-    axes[2, 1].axhline(1.0, color=ORANGE, lw=1.0, ls=(0, (4, 2)))
-    axes[2, 1].set_ylim(0.72, 1.06)
-    axes[2, 1].set_xticks(x, ["$R_p$", "$L_p$", "$C_{s,u}$", "$C_{s,w}$"])
-    axes[2, 1].set_ylabel("estimated / truth")
-    axes[2, 1].text(0.02, 0.91, "orange line = exact truth", transform=axes[2, 1].transAxes, fontsize=5.7, color=ORANGE)
 
-    for axis in axes.flat:
-        _format_axes(axis)
-    for axis in (axes[0, 0], axes[0, 1], axes[1, 0], axes[1, 1]):
-        axis.set_xlim(0.0, 2.5)
-        axis.set_xticks(np.arange(0.0, 2.51, 0.5))
-    _figure_legend(
-        fig,
-        [truth_handle, initial_handle, selected_handle],
-        ["independent truth / target", "first grid candidate", "selected ngspice candidate"],
+def figure_gp_waveform_validation(sources: dict[str, Path], data: dict[str, Any]) -> plt.Figure:
+    target = _read_numeric_csv(sources["target_observables"])
+    result = _representative_gp_run(data)
+    waveform = _read_numeric_csv(sources[f"{result['source_prefix']}_selected_waveform"])
+    time_us = _target_time_us(target)
+    fitted_wafer = _aligned(target, waveform, "wafer_voltage_V")
+    held_out_reflection = _reflected(target, waveform)
+    wafer_residual = fitted_wafer - target["wafer_voltage_V"]
+    reflection_residual = held_out_reflection - target["upper_reflected_voltage_V"]
+    fig, axes = plt.subplots(2, 2, figsize=PAGE_SIZE)
+
+    target_style = {"color": INK, "lw": 1.45, "ls": (0, (4, 2)), "zorder": 3}
+    fit_style = {"color": BLUE, "lw": 1.05, "zorder": 2}
+    add_panel_title(axes[0, 0], "(a)", "Fitted output: wafer voltage")
+    axes[0, 0].plot(time_us, fitted_wafer, **fit_style)
+    axes[0, 0].plot(time_us, target["wafer_voltage_V"], **target_style)
+    axes[0, 0].set_ylabel(r"$V_W$ (V)")
+
+    add_panel_title(axes[0, 1], "(b)", "Unused output: upper reflected voltage")
+    axes[0, 1].plot(time_us, held_out_reflection, **fit_style)
+    axes[0, 1].plot(time_us, target["upper_reflected_voltage_V"], **target_style)
+    axes[0, 1].set_ylabel(r"$V_-$ (V)")
+
+    add_panel_title(axes[1, 0], "(c)", "Wafer-voltage residual")
+    axes[1, 0].plot(time_us, wafer_residual, color=BLUE, lw=1.0)
+    _annotate_residual(axes[1, 0], wafer_residual, float(result["objective_error"]["normalized_rmse"]))
+    axes[1, 0].set_ylabel(r"$V_W^{GP}-V_W^{target}$ (V)")
+
+    add_panel_title(axes[1, 1], "(d)", "Held-out reflection residual")
+    axes[1, 1].plot(time_us, reflection_residual, color=BLUE, lw=1.0)
+    _annotate_residual(axes[1, 1], reflection_residual, float(result["held_out_error"]["normalized_rmse"]))
+    axes[1, 1].set_ylabel(r"$V_-^{GP}-V_-^{target}$ (V)")
+
+    _apply_time_axes(axes)
+    fig.legend(
+        [
+            plt.Line2D([], [], color=INK, lw=1.45, ls=(0, (4, 2))),
+            plt.Line2D([], [], color=BLUE, lw=1.15),
+        ],
+        ["independent target", f"GP-UCB estimate (representative seed {result['seed']})"],
+        frameon=False,
+        loc="upper center",
+        bbox_to_anchor=(0.52, 0.825),
+        ncol=2,
     )
     add_figure_title(
         fig,
-        "Inverse validity: one measured waveform recovers four bounded on-state values",
-        "Only wafer voltage contributes to loss; upper reflection is retained as a genuinely unused circuit-level validation output.",
+        "GP-UCB waveform validity for the dynamic plasma circuit",
+        "The wafer waveform is fitted; upper reflection is excluded from optimization and retained as a circuit-level validation output.",
     )
     add_figure_footer(
         fig,
-        f"Selected: Rp={result['selected_values']['Rp_on_ohm']:g} Ω, Lp={1e9 * result['selected_values']['Lp_on_H']:.0f} nH, "
-        f"Csu={1e12 * result['selected_values']['Csu_on_F']:.0f} pF, Csw={1e12 * result['selected_values']['Csw_on_F']:.0f} pF. "
-        f"Objective nRMSE={result['objective_error']['normalized_rmse']:.3e}; held-out nRMSE={result['held_out_error']['normalized_rmse']:.3e}; "
-        f"second-best / best loss={result['second_best_loss'] / result['selected_loss']:.2f}.",
+        f"Representative seed {result['seed']} is the median fitted run, not the best run. "
+        f"Wafer nRMSE={result['objective_error']['normalized_rmse']:.3e}; held-out reflection nRMSE={result['held_out_error']['normalized_rmse']:.3e}.\n"
+        "Known synthetic target and identical circuit equations are used; this validates the bounded inverse workflow, not an experimental plasma model.",
     )
-    fig.subplots_adjust(left=0.08, right=0.92, top=0.75, bottom=0.17, hspace=0.75, wspace=0.34)
+    fig.subplots_adjust(left=0.095, right=0.975, top=0.69, bottom=0.18, hspace=0.70, wspace=0.32)
+    return fig
+
+
+def figure_gp_identification(sources: dict[str, Path], data: dict[str, Any]) -> plt.Figure:
+    target = _read_numeric_csv(sources["target_observables"])
+    evidence = data["gp_ucb_identification"]
+    representative = _representative_gp_run(data)
+    runs = evidence["runs"]
+    time_us = _target_time_us(target)
+    true_profiles = _profiles(target["time_s"], TRUE_PARAMETERS)
+    fitted_profiles = _profiles(target["time_s"], representative["selected_values"])
+    traces = np.asarray([run["best_so_far"] for run in runs], dtype=float)
+    trials = np.arange(1, traces.shape[1] + 1)
+    fig, axes = plt.subplots(2, 2, figsize=PAGE_SIZE)
+
+    add_panel_title(axes[0, 0], "(a)", "Convergence over three independent seeds")
+    axes[0, 0].fill_between(
+        trials,
+        np.min(traces, axis=0),
+        np.max(traces, axis=0),
+        color=BLUE_LIGHT,
+        alpha=0.95,
+        linewidth=0.0,
+        label="seed range",
+    )
+    axes[0, 0].step(
+        trials,
+        np.median(traces, axis=0),
+        where="post",
+        color=BLUE,
+        lw=1.65,
+        label="median best-so-far",
+    )
+    axes[0, 0].set_yscale("log")
+    axes[0, 0].set_xlim(1, 200)
+    axes[0, 0].set_xticks([1, 50, 100, 150, 200])
+    axes[0, 0].set_xlabel("GP-UCB trial")
+    axes[0, 0].set_ylabel("Best wafer-voltage nRMSE")
+    axes[0, 0].legend(loc="upper right")
+
+    add_panel_title(axes[0, 1], "(b)", "Recovered on-state values (truth = 1)")
+    x = np.arange(4, dtype=float)
+    seed_markers = ("o", "s", "^")
+    for index, run in enumerate(runs):
+        ratios = [float(run["parameter_ratio"][name]) for name in PARAMETER_ORDER]
+        axes[0, 1].scatter(
+            x + 0.10 * (index - 1),
+            ratios,
+            s=28,
+            marker=seed_markers[index],
+            color=BLUE,
+            edgecolor=WHITE,
+            linewidth=0.45,
+            zorder=3,
+        )
+    axes[0, 1].axhline(1.0, color=INK, lw=1.1, ls=(0, (4, 2)))
+    axes[0, 1].set_xlim(-0.5, 3.5)
+    axes[0, 1].set_ylim(0.985, 1.015)
+    axes[0, 1].set_xticks(x, [r"$R_p$", r"$L_p$", r"$C_{s,u}$", r"$C_{s,w}$"])
+    axes[0, 1].set_ylabel("Estimate / known truth")
+
+    add_panel_title(axes[1, 0], "(c)", "Recovered bulk resistance and inductance")
+    axes[1, 0].plot(time_us, true_profiles["Rp_ohm"], color=BLUE, lw=1.45, ls=(0, (4, 2)))
+    axes[1, 0].plot(time_us, fitted_profiles["Rp_ohm"], color=BLUE, lw=1.05)
+    axes[1, 0].set_ylabel(r"$R_p$ (Ω)", color=BLUE)
+    axes[1, 0].tick_params(axis="y", colors=BLUE)
+    lp_axis = axes[1, 0].twinx()
+    lp_axis.plot(time_us, 1e9 * true_profiles["Lp_H"], color=ORANGE, lw=1.45, ls=(0, (4, 2)))
+    lp_axis.plot(time_us, 1e9 * fitted_profiles["Lp_H"], color=ORANGE, lw=1.05)
+    lp_axis.set_ylabel(r"$L_p$ (nH)", color=ORANGE)
+    lp_axis.tick_params(axis="y", colors=ORANGE)
+    lp_axis.spines["top"].set_visible(False)
+
+    add_panel_title(axes[1, 1], "(d)", "Recovered sheath capacitances")
+    axes[1, 1].plot(
+        time_us,
+        1e12 * true_profiles["Csu_F"],
+        color=BLUE,
+        lw=1.45,
+        ls=(0, (4, 2)),
+    )
+    axes[1, 1].plot(time_us, 1e12 * fitted_profiles["Csu_F"], color=BLUE, lw=1.05)
+    axes[1, 1].plot(
+        time_us,
+        1e12 * true_profiles["Csw_F"],
+        color=ORANGE,
+        lw=1.45,
+        ls=(0, (4, 2)),
+    )
+    axes[1, 1].plot(time_us, 1e12 * fitted_profiles["Csw_F"], color=ORANGE, lw=1.05)
+    axes[1, 1].set_ylabel("Capacitance (pF)")
+    axes[1, 1].text(1.73, 555.0, r"$C_{s,u}$", color=BLUE, fontsize=7.6, fontweight="bold")
+    axes[1, 1].text(1.73, 675.0, r"$C_{s,w}$", color=ORANGE, fontsize=7.6, fontweight="bold")
+
+    for axis in axes.flat:
+        _format_axes(axis)
+    for axis in axes[1, :]:
+        axis.set_xlim(0.0, 2.5)
+        axis.set_xticks(np.arange(0.0, 2.51, 0.5))
+        axis.set_xlabel("Time within 400 kHz pulse period (µs)")
+    add_figure_title(
+        fig,
+        "GP-UCB convergence and recovered dynamic element values",
+        "Three seeds show repeatability; dashed curves are known truth and solid curves are the median fitted run.",
+    )
+    errors = evidence["median_absolute_parameter_error_pct"]
+    integrity = evidence["execution_integrity"]
+    add_figure_footer(
+        fig,
+        f"Final wafer nRMSE median {evidence['final_loss']['median']:.3e} "
+        f"(range {evidence['final_loss']['minimum']:.3e}-{evidence['final_loss']['maximum']:.3e}); "
+        f"median absolute parameter error: Rp {errors['Rp_on_ohm']:.2f}%, Lp {errors['Lp_on_H']:.2f}%, "
+        f"Csu {errors['Csu_on_F']:.2f}%, Csw {errors['Csw_on_F']:.2f}%.\n"
+        f"Integrity: {integrity['total_trials']} trials, {integrity['new_solver_runs']} new ngspice solves, "
+        f"{integrity['cache_hits']} cache hits, {integrity['failed_evaluations']} failures.",
+    )
+    fig.subplots_adjust(left=0.095, right=0.91, top=0.80, bottom=0.18, hspace=0.62, wspace=0.38)
     return fig
 
 
@@ -1349,8 +1407,7 @@ def generate(
     continuous_case: Path,
     forward_root: Path,
     inverse_root: Path,
-    optunahub_auto_roots: tuple[Path, ...],
-    tpe_roots: tuple[Path, ...],
+    gp_ucb_roots: tuple[Path, ...],
     output: Path,
     pdf_output: Path,
 ) -> dict[str, Any]:
@@ -1360,8 +1417,7 @@ def generate(
         continuous_case,
         forward_root,
         inverse_root,
-        optunahub_auto_roots,
-        tpe_roots,
+        gp_ucb_roots,
     )
     data = build_figure_data(sources)
     output.mkdir(parents=True, exist_ok=True)
@@ -1373,12 +1429,9 @@ def generate(
         ("02-inputs-and-dynamic-elements", figure_inputs(sources)),
         ("03-forward-conformance", figure_forward(sources, data)),
         ("04-dynamic-branch-impedance", figure_impedance(sources)),
-        ("05-inverse-identification", figure_inverse(sources, data)),
-        ("06-literature-basis-and-scope", figure_basis_and_scope(data)),
-        (
-            "07-optunahub-auto-vs-tpe",
-            figure_optuna_comparison(sources, data["optuna_comparison"]),
-        ),
+        ("05-gp-ucb-waveform-validation", figure_gp_waveform_validation(sources, data)),
+        ("06-gp-ucb-identification", figure_gp_identification(sources, data)),
+        ("07-literature-basis-and-scope", figure_basis_and_scope(data)),
     ]
     with PdfPages(
         pdf_output,
@@ -1410,18 +1463,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--continuous-case", type=Path, default=DEFAULT_CONTINUOUS_CASE)
     parser.add_argument("--forward-root", type=Path, default=DEFAULT_FORWARD_ROOT)
     parser.add_argument("--inverse-root", type=Path, default=DEFAULT_INVERSE_ROOT)
-    parser.add_argument(
-        "--optunahub-auto-roots",
-        type=Path,
-        nargs="+",
-        default=DEFAULT_OPTUNAHUB_AUTO_ROOTS,
-    )
-    parser.add_argument(
-        "--tpe-roots",
-        type=Path,
-        nargs="+",
-        default=DEFAULT_TPE_ROOTS,
-    )
+    parser.add_argument("--gp-ucb-roots", type=Path, nargs="+", default=DEFAULT_GP_UCB_ROOTS)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--pdf-output", type=Path, default=DEFAULT_PDF_OUTPUT)
     args = parser.parse_args(argv)
@@ -1431,8 +1473,7 @@ def main(argv: list[str] | None = None) -> int:
         args.continuous_case.resolve(),
         args.forward_root.resolve(),
         args.inverse_root.resolve(),
-        tuple(path.resolve() for path in args.optunahub_auto_roots),
-        tuple(path.resolve() for path in args.tpe_roots),
+        tuple(path.resolve() for path in args.gp_ucb_roots),
         args.output.resolve(),
         args.pdf_output.resolve(),
     )

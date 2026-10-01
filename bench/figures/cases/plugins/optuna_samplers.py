@@ -1,13 +1,13 @@
 """Benchmark-local Optuna adapters for the continuous etch-CCP inverse case.
 
 The core PCD optimizer registry remains dependency-free. This plugin translates
-PCD's ask/tell boundary to one pinned OptunaHub AutoSampler and the standard
-Optuna TPESampler used as the requested baseline.
+PCD's ask/tell boundary to a small, pinned set of Optuna and OptunaHub samplers
+used only by the reproducible benchmark.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, ClassVar
 
 import optuna
 import optunahub
@@ -20,6 +20,7 @@ OPTUNAHUB_REGISTRY_REF = "61da9ce3093a6c92da998a127b55720f9d3b8fd7"
 
 class _OptunaOptimizer(BaseOptimizer):
     sampler_label = "optuna"
+    sampler_settings: ClassVar[dict[str, Any]] = {}
 
     def __init__(self, case: Any, seed: int | None = None) -> None:
         super().__init__(case=case, seed=seed)
@@ -45,6 +46,7 @@ class _OptunaOptimizer(BaseOptimizer):
         self._last_metadata = {
             "framework": "optuna",
             "sampler": self.sampler_label,
+            "sampler_settings": dict(self.sampler_settings),
             "optuna_trial": trial.number,
         }
         return values
@@ -104,6 +106,77 @@ class OptunaTPEOptimizer(_OptunaOptimizer):
         return optuna.samplers.TPESampler(seed=self.effective_seed)
 
 
+class OptunaGPUCBOptimizer(_OptunaOptimizer):
+    """Deterministic GP surrogate with an explicit exploration bonus."""
+
+    sampler_label = "OptunaHub GP-UCB"
+    sampler_settings: ClassVar[dict[str, Any]] = {
+        "beta": 2.0,
+        "deterministic_objective": True,
+        "n_startup_trials": 10,
+    }
+
+    def _make_sampler(self) -> optuna.samplers.BaseSampler:
+        module = optunahub.load_module(
+            package="samplers/gp_acqf_samplers",
+            repo_owner="optuna",
+            ref=OPTUNAHUB_REGISTRY_REF,
+        )
+        return module.GPUCBSampler(
+            beta=2.0,
+            seed=self.effective_seed,
+            n_startup_trials=10,
+            deterministic_objective=True,
+        )
+
+
+class OptunaMESOptimizer(_OptunaOptimizer):
+    """GP maximum-value entropy search using posterior maximum samples."""
+
+    sampler_label = "OptunaHub MES"
+    sampler_settings: ClassVar[dict[str, Any]] = {
+        "max_value_sampler": "posterior",
+        "n_max_value_samples": 32,
+        "n_representer_points": 512,
+        "deterministic_objective": True,
+        "n_startup_trials": 10,
+    }
+
+    def _make_sampler(self) -> optuna.samplers.BaseSampler:
+        module = optunahub.load_module(
+            package="samplers/gp_mes",
+            repo_owner="optuna",
+            ref=OPTUNAHUB_REGISTRY_REF,
+        )
+        return module.MESSampler(
+            max_value_sampler="posterior",
+            n_max_value_samples=32,
+            n_representer_points=512,
+            seed=self.effective_seed,
+            n_startup_trials=10,
+            deterministic_objective=True,
+        )
+
+
+class OptunaJanusOptimizer(_OptunaOptimizer):
+    """JANUS with rank-scaled scalar feedback for this waveform inverse case."""
+
+    sampler_label = "OptunaHub JANUS"
+    sampler_settings: ClassVar[dict[str, Any]] = {"n_startup_trials": 16, "pseudo_target": "rank"}
+
+    def _make_sampler(self) -> optuna.samplers.BaseSampler:
+        module = optunahub.load_module(
+            package="samplers/janus",
+            repo_owner="optuna",
+            ref=OPTUNAHUB_REGISTRY_REF,
+        )
+        return module.JanusSampler(
+            seed=self.effective_seed,
+            n_startup_trials=16,
+            pseudo_target="rank",
+        )
+
+
 @register_optimizer("optuna_auto")
 def optuna_auto_optimizer(case: Any, seed: int | None = None) -> BaseOptimizer:
     return OptunaAutoOptimizer(case, seed=seed)
@@ -112,3 +185,18 @@ def optuna_auto_optimizer(case: Any, seed: int | None = None) -> BaseOptimizer:
 @register_optimizer("optuna_tpe")
 def optuna_tpe_optimizer(case: Any, seed: int | None = None) -> BaseOptimizer:
     return OptunaTPEOptimizer(case, seed=seed)
+
+
+@register_optimizer("optuna_gp_ucb")
+def optuna_gp_ucb_optimizer(case: Any, seed: int | None = None) -> BaseOptimizer:
+    return OptunaGPUCBOptimizer(case, seed=seed)
+
+
+@register_optimizer("optuna_gp_mes")
+def optuna_gp_mes_optimizer(case: Any, seed: int | None = None) -> BaseOptimizer:
+    return OptunaMESOptimizer(case, seed=seed)
+
+
+@register_optimizer("optuna_janus")
+def optuna_janus_optimizer(case: Any, seed: int | None = None) -> BaseOptimizer:
+    return OptunaJanusOptimizer(case, seed=seed)

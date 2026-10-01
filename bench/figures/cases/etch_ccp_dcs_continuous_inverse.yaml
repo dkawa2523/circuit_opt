@@ -1,7 +1,8 @@
 # Continuous inverse problem: optimize four bounded on-state values from
 # wafer voltage only. The upper-port reflected wave remains unused hold-out
-# evidence. No default is declared, so the known truth is not injected as an
-# initial candidate. Optuna adapters stay benchmark-local through this plugin.
+# evidence. No variable default is declared, so the known truth is not injected
+# as an initial candidate. Optuna adapters stay benchmark-local through this
+# plugin; GP-UCB is the selected default after the matched 200-trial screening.
 schema: case_yaml.v1
 case_id: etch_ccp_dcs_continuous_inverse
 plugins:
@@ -75,5 +76,5 @@ study:
   objectives:
     - {metric: normalized_rmse, direction: minimize, aggregation: worst}
 
-optimizer: {name: optuna_auto, seed: 0}
+optimizer: {name: optuna_gp_ucb, seed: 0}
 run: {trials: 200}

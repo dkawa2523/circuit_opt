@@ -21,22 +21,19 @@ sheaths, and a bulk `R-L` path. The prescribed `R_p(t)`, `L_p(t)`,
 4. [Dynamic branch impedance](etch_ccp_dcs/04-dynamic-branch-impedance.svg)
    shows the frozen-time main-plasma-branch impedance and 50-ohm Smith charts
    at 2 MHz and 60 MHz.
-5. [Inverse identification](etch_ccp_dcs/05-inverse-identification.svg) ranks
-   all 81 bounded candidates using only wafer voltage, recovers the four true
-   on-state values, and checks upper reflection without fitting it.
-6. [Literature basis and scope](etch_ccp_dcs/06-literature-basis-and-scope.svg)
+5. [GP-UCB waveform validity](etch_ccp_dcs/05-gp-ucb-waveform-validation.svg)
+   shows the fitted wafer waveform, the unused upper-reflection output, and
+   both residuals for the median fitted seed rather than a cherry-picked best run.
+6. [GP-UCB identification](etch_ccp_dcs/06-gp-ucb-identification.svg)
+   shows three-seed convergence, parameter recovery, and reconstructed dynamic
+   R/L/sheath-C profiles without adding optimizer-comparison panels.
+7. [Literature basis and scope](etch_ccp_dcs/07-literature-basis-and-scope.svg)
    separates published apparatus/model evidence from benchmark-specific
    assumptions and reports transparent order-of-magnitude checks.
-7. [OptunaHub AutoSampler versus TPE](etch_ccp_dcs/07-optunahub-auto-vs-tpe.svg)
-   compares the pinned OptunaHub AutoSampler (which selects `GPSampler` here)
-   with standard `TPESampler`, using three matched seeds and 200 trials per
-   seed. Auto/GP has the lower fitted-wafer loss, while TPE has the lower
-   unused-reflection error and generally closer parameter recovery. Exact GP
-   reproposals and their PCD cache hits are reported rather than hidden.
 
 [`etch_ccp_dcs/figure_data.json`](etch_ccp_dcs/figure_data.json) records every
-source hash, forward error, exact-grid candidate, Optuna selected value,
-repeated-seed loss trace, cache behavior, and held-out error without
+source hash, forward error, exact-grid candidate, GP-UCB selected value,
+three-seed loss trace, cache behavior, and held-out error without
 duplicating every raw trial row. The
 full literature boundary, equations, results, and reproduction commands are in
 [`docs/etch-ccp-dcs-dynamic-impedance-study-ja.md`](../../docs/etch-ccp-dcs-dynamic-impedance-study-ja.md).
