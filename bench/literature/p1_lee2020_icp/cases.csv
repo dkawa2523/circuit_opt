@@ -1,0 +1,7 @@
+case_id,regime,frequency_Hz,I_RF_peak_A,L_coil_H,R_p_ohm,L_p_H,L_e_H,M_H
+weak_damping_13M56,gamma_over_omega_0.01,13560000,0.3,2e-6,0.851999927653552,4e-7,6e-7,5e-7
+underdamped_13M56,gamma_over_omega_0.1,13560000,0.3,2e-6,8.51999927653552,4e-7,6e-7,5e-7
+transition_13M56,gamma_over_omega_1,13560000,0.3,2e-6,85.1999927653552,4e-7,6e-7,5e-7
+overdamped_13M56,gamma_over_omega_10,13560000,0.3,2e-6,851.999927653552,4e-7,6e-7,5e-7
+strong_damping_13M56,gamma_over_omega_100,13560000,0.3,2e-6,8519.99927653552,4e-7,6e-7,5e-7
+transition_27M12,gamma_over_omega_1_frequency_variant,27120000,0.3,2e-6,170.39998553071,2.5e-7,7.5e-7,7e-7

@@ -1,0 +1,181 @@
+; Architecture boundaries for the design-study engine.
+;
+; Keep only boundaries that protect the dependency direction. Numerical and
+; orchestration details are tested as behaviour, not encoded as import rules.
+
+[importlinter]
+root_package = pcd
+
+[importlinter:contract:core-is-domain-independent]
+name = Generic core must not depend on circuit, solver, search implementations, or applications
+type = forbidden
+source_modules =
+    pcd.core
+forbidden_modules =
+    pcd.case
+    pcd.artifacts
+    pcd.spice
+    pcd.study
+    pcd.netlist
+    pcd.solver
+    pcd.sim_core
+    pcd.sim_methods
+    pcd.rf_loads
+    pcd.metrics
+    pcd.metric_registry
+    pcd.search
+    pcd.search_registry
+    pcd.reporting
+    pcd.cli
+
+[importlinter:contract:signals-are-foundational]
+name = Signal primitives must not depend on application or orchestration code
+type = forbidden
+source_modules =
+    pcd.signals
+forbidden_modules =
+    pcd.core
+    pcd.case
+    pcd.artifacts
+    pcd.spice
+    pcd.study
+    pcd.analysis
+    pcd.netlist
+    pcd.solver
+    pcd.sim_core
+    pcd.metrics
+    pcd.search
+    pcd.rf_loads
+    pcd.reporting
+    pcd.cli
+
+[importlinter:contract:cli-is-a-leaf]
+name = The CLI is an entry point, never a library dependency
+type = forbidden
+source_modules =
+    pcd.core
+    pcd.signals
+    pcd.results
+    pcd.plan
+    pcd.case
+    pcd.artifacts
+    pcd.spice
+    pcd.study
+    pcd.analysis
+    pcd.rf_loads
+    pcd.netlist
+    pcd.solver
+    pcd.sim_core
+    pcd.metrics
+    pcd.metric_registry
+    pcd.search
+    pcd.search_registry
+    pcd.records
+    pcd.validation
+    pcd.reporting
+    pcd.ml
+    pcd.corpus
+    pcd.corpus_evaluation
+forbidden_modules =
+    pcd.cli
+
+[importlinter:contract:corpus-is-offline]
+name = AC graph corpus export/evaluation must not execute studies, solvers, search, or reports
+type = forbidden
+source_modules =
+    pcd.corpus
+    pcd.corpus_evaluation
+forbidden_modules =
+    pcd.solver
+    pcd.sim_core
+    pcd.study
+    pcd.search
+    pcd.search_registry
+    pcd.reporting
+    pcd.cli
+
+[importlinter:contract:simulation-is-independent]
+name = Simulation preparation and execution stay below measurement, study, search, and reporting
+type = forbidden
+source_modules =
+    pcd.circuit_graph
+    pcd.simulation
+    pcd.simulation_input
+    pcd.probes
+    pcd.ngspice_io
+    pcd.netlist
+    pcd.solver
+    pcd.sim_core
+    pcd.sim_methods
+    pcd.sim_registry
+forbidden_modules =
+    pcd.analysis
+    pcd.metrics
+    pcd.metric_registry
+    pcd.study
+    pcd.study_config
+    pcd.search
+    pcd.search_registry
+    pcd.results
+    pcd.reporting
+    pcd.ml
+    pcd.figures
+    pcd.cli
+
+[importlinter:contract:analysis-is-pure]
+name = Analysis consumes canonical data and foundational types only
+type = forbidden
+source_modules =
+    pcd.analysis
+forbidden_modules =
+    pcd.case
+    pcd.component_models
+    pcd.plan
+    pcd.validation
+    pcd.artifacts
+    pcd.records
+    pcd.spice
+    pcd.netlist
+    pcd.netlist_import
+    pcd.netlist_parse
+    pcd.netlist_viz
+    pcd.ngspice_io
+    pcd.solver
+    pcd.sim_core
+    pcd.sim_methods
+    pcd.sim_registry
+    pcd.simulation_input
+    pcd.metrics
+    pcd.metric_registry
+    pcd.study
+    pcd.study_config
+    pcd.search
+    pcd.search_registry
+    pcd.results
+    pcd.reporting
+    pcd.ml
+    pcd.figures
+    pcd.rf_loads
+    pcd.cli
+
+[importlinter:contract:ml-is-model-and-persistence-independent]
+name = ML preparation, evaluation, and ranking must not depend on a concrete solver, study orchestration, or persistence
+type = forbidden
+source_modules =
+    pcd.ml
+forbidden_modules =
+    pcd.case
+    pcd.artifacts
+    pcd.records
+    pcd.results
+    pcd.study
+    pcd.study_config
+    pcd.search
+    pcd.search_registry
+    pcd.netlist
+    pcd.solver
+    pcd.sim_core
+    pcd.sim_methods
+    pcd.sim_registry
+    pcd.reporting
+    pcd.cli

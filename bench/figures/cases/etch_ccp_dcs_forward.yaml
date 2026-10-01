@@ -1,0 +1,76 @@
+# Circuit-level benchmark for a 60 MHz / 2 MHz etch CCP with negative
+# DC superposition. Time-varying C and L are raw, case-local elements because
+# their q=C(t)v and phi=L(t)i laws are explicit here, not generic PCD features.
+schema: case_yaml.v1
+case_id: etch_ccp_dcs_forward
+
+sources:
+  - {type: voltage_sine, name: Vhf, p: hf_src, n: 0, dc_V: 0.0, amplitude_V: 220.0, frequency_Hz: 6.0e7, phase_deg: 0.0}
+  - {type: voltage_sine, name: Vlf, p: lf_src, n: 0, dc_V: 0.0, amplitude_V: 450.0, frequency_Hz: 2.0e6, phase_deg: 0.0}
+  - {type: voltage_pulse, name: Vdc, p: dc_src, n: 0, v1_V: 0.0, v2_V: -800.0, delay_s: 2.5e-7, rise_s: 1.0e-7, fall_s: 1.0e-7, width_s: 1.7e-6, period_s: 2.5e-6}
+
+circuit:
+  builder: from_yaml
+  topology_family: dual_rf_dc_superposed_etch_ccp
+  output_node: wafer
+  variables:
+    Rp_on_ohm: {choices: [15.0], default: 15.0}
+    Lp_on_H: {choices: [1.6e-8], default: 1.6e-8}
+    Csu_on_F: {choices: [5.2e-10], default: 5.2e-10}
+    Csw_on_F: {choices: [7.2e-10], default: 7.2e-10}
+  components:
+    # Upper 60 MHz generator, matching, cable/feedthrough, and chamber stray.
+    - {ref: Rgen_hf, n1: hf_src, n2: phf, value: 50.0}
+    - {ref: Cmatch_hf, n1: phf, n2: hf_c, value: 1.2e-10}
+    - {ref: Lmatch_hf, n1: hf_c, n2: hf_l, value: 7.5e-8}
+    - {ref: Rfeed_hf, n1: hf_l, n2: hf_feed, value: 0.6}
+    - {ref: Lfeed_hf, n1: hf_feed, n2: upper, value: 2.5e-8}
+    - {ref: Cstray_upper, n1: upper, n2: 0, value: 9.0e-11}
+
+    # Negative DC bias tee. The choke isolates both RF bands from the supply.
+    - {ref: Rdc, n1: dc_src, n2: dc_r, value: 250.0}
+    - {ref: Ldc_choke, n1: dc_r, n2: upper, value: 2.0e-4}
+
+    # Main vertical plasma branch. env(t) is prescribed and periodic at 400 kHz.
+    - {raw: "Csheath_u upper bulk_top Q = '(2.6e-10+(Csu_on_F-2.6e-10)*pwl((time-floor(time/2.5e-6)*2.5e-6),0,0,2.5e-7,0,5.5e-7,1,2e-6,1,2.4e-6,0,2.5e-6,0))*v(upper,bulk_top)'"}
+    - {ref: Rsheath_u, n1: upper, n2: bulk_top, value: 1500.0}
+    - {raw: "Vbulk_probe bulk_top bulk_probe 0"}
+    - {raw: "Lplasma bulk_probe bulk_mid L = '3.5e-8+(Lp_on_H-3.5e-8)*pwl((time-floor(time/2.5e-6)*2.5e-6),0,0,2.5e-7,0,5.5e-7,1,2e-6,1,2.4e-6,0,2.5e-6,0)'"}
+    - {raw: "Rplasma bulk_mid bulk_bottom R = '35+(Rp_on_ohm-35)*pwl((time-floor(time/2.5e-6)*2.5e-6),0,0,2.5e-7,0,5.5e-7,1,2e-6,1,2.4e-6,0,2.5e-6,0)'"}
+    - {ref: Rwall, n1: bulk_bottom, n2: 0, value: 5000.0}
+    - {raw: "Csheath_w bulk_bottom wafer Q = '(3.6e-10+(Csw_on_F-3.6e-10)*pwl((time-floor(time/2.5e-6)*2.5e-6),0,0,2.5e-7,0,5.5e-7,1,2e-6,1,2.4e-6,0,2.5e-6,0))*v(bulk_bottom,wafer)'"}
+    - {ref: Rsheath_w, n1: bulk_bottom, n2: wafer, value: 2000.0}
+
+    # Lower 2 MHz bias matching, blocking capacitor, feedthrough, and ESC stray.
+    - {ref: Rgen_lf, n1: lf_src, n2: plf, value: 50.0}
+    - {ref: Cblock_lf, n1: plf, n2: lf_c, value: 4.7e-9}
+    - {ref: Lmatch_lf, n1: lf_c, n2: lf_l, value: 1.35e-6}
+    - {ref: Rfeed_lf, n1: lf_l, n2: lf_feed, value: 0.4}
+    - {ref: Lfeed_lf, n1: lf_feed, n2: wafer, value: 6.0e-8}
+    - {ref: Cstray_wafer, n1: wafer, n2: 0, value: 1.4e-10}
+
+measurement:
+  voltage_node: wafer
+  current_source: Vhf
+  reference_impedance_ohm: 50.0
+  probes:
+    wafer_voltage_V: v(wafer)
+    upper_port_voltage_V: v(phf)
+    upper_electrode_voltage_V: v(upper)
+    upper_sheath_voltage_V: v(upper,bulk_top)
+    wafer_sheath_voltage_V: v(bulk_bottom,wafer)
+    bulk_current_A: i(Vbulk_probe)
+    lower_lf_source_voltage_V: v(lf_src)
+    upper_dc_source_voltage_V: v(dc_src)
+
+solver:
+  name: ngspice_cli
+  timeout_s: 300
+  tran: {step_s: 2.5e-10, stop_s: 7.5e-6}
+
+target:
+  waveform_file: etch_ccp_dcs_target_wafer.csv
+  objective: waveform_l2
+  constraints:
+    metric_bounds:
+      peak_abs_voltage_V: {max: 2000.0}

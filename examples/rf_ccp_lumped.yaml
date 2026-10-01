@@ -1,0 +1,27 @@
+# Effective CCP one-port. Parameters require a qualified terminal fit; this
+# model does not infer sheath geometry, plasma state, or species power.
+schema: pcd.rf.v1
+case_id: rf_ccp_lumped
+
+network:
+  type: l_match
+  search:
+    L1: {values: [1.0e-7, 1.0e-6, 3.0e-6], default: 1.0e-6}
+    C1: {values: [1.0e-11, 2.0e-10, 1.0e-9], default: 2.0e-10}
+
+load:
+  type: ccp_lumped
+  reference_plane: electrode_terminal
+  evidence: {origin: example_assumption, qualified_frequency_Hz: [10000000, 20000000]}
+  parameters:
+    R_eff_ohm: 25
+    L_eff_H: 2.0e-7
+    C_sheath_eq_F: 1.2e-10
+
+conditions:
+  - {id: low_frequency, frequency_Hz: 10000000}
+  - {id: nominal_frequency, frequency_Hz: 13560000}
+  - {id: high_frequency, frequency_Hz: 20000000}
+
+acceptance:
+  reflected_power_fraction_max: 0.10

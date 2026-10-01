@@ -1,0 +1,45 @@
+# Figure-evidence case: recover a known RC time constant from a target waveform.
+schema: case_yaml.v1
+case_id: figure_target_waveform_conformance
+
+source:
+  type: voltage_pulse
+  name: Vsrc
+  p: src
+  n: 0
+  v1_V: 0.0
+  v2_V: 5.0
+  rise_s: 2.0e-9
+  fall_s: 2.0e-9
+  width_s: 10.0e-6
+  period_s: 20.0e-6
+
+circuit:
+  builder: from_yaml
+  output_node: out
+  variables:
+    R1: {choices: [500.0, 1000.0, 2000.0], default: 500.0}
+    C1: {choices: [1.0e-10, 3.0e-10, 9.0e-10], default: 1.0e-10}
+  components:
+    - {ref: R1, n1: src, n2: out, value: R1}
+    - {ref: C1, n1: out, n2: 0, value: C1}
+
+load: {name: none}
+measurement: {voltage_node: out, current_source: Vsrc}
+solver:
+  name: ngspice_cli
+  tran: {step_s: 2.0e-9, stop_s: 2.0e-6}
+
+target:
+  waveform_file: ../../../examples/advanced/target_rc.csv
+  objective: waveform_l2
+  constraints:
+    metric_bounds:
+      peak_abs_voltage_V: {max: 5.1}
+study:
+  candidate_enumeration: exact
+  objectives:
+    - {metric: normalized_rmse, direction: minimize, aggregation: worst}
+
+optimizer: {name: grid, seed: 0}
+run: {trials: 9}

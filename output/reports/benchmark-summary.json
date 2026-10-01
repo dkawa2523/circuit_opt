@@ -1,0 +1,48 @@
+{
+  "schema": "benchmark_report.v1",
+  "snapshot_id": "1ffcfe72e2aa8c73",
+  "overall_passed": true,
+  "core_benchmark_passed": true,
+  "literature_benchmark_passed": true,
+  "literature_integrity_passed": true,
+  "solver": "ngspice_cli",
+  "counts": {
+    "core_cases": 16,
+    "core_cases_reproduced": 16,
+    "core_designs_feasible": 6,
+    "core_candidates": 19,
+    "core_evaluations": 411,
+    "literature_source_records": 5,
+    "literature_model_records": 1,
+    "literature_design_challenges": 23,
+    "reference_only_sources": 5
+  },
+  "failed_core_benchmarks": [],
+  "failed_literature_evidence": [],
+  "interpretation": {
+    "benchmark_pass": "source/equation reproduction and expected design classifications, not apparatus qualification",
+    "engineering_feasibility": "reported per row and never inferred from benchmark reproduction",
+    "model_boundary": "These results establish circuit implementation, equation/data reproduction, and declared electrical design decisions only. They do not qualify plasma chemistry, chamber process windows, thermal lifetime, apparatus yield, or self-consistent plasma-circuit dynamics."
+  },
+  "source_artifacts": {
+    "core": {
+      "path": "runs/benchmark_suite/benchmark_result.json",
+      "sha256": "305aa5efa6c501fab4176fe5624977c955141ecb4c0b7d1fa758321245e04778",
+      "schema": "design_benchmark_suite.v1",
+      "platform_version": "0.16.0",
+      "generated_at": "2026-09-14T21:45:14.394883+00:00"
+    },
+    "literature": {
+      "path": "runs/literature/final_evaluation/evaluation.json",
+      "sha256": "4a7cb1dc2f0115293c4421853aa6a804491bd8798508f7a94531fd86582119b4",
+      "schema": "pcd.literature_benchmark_suite.v4",
+      "platform_version": "0.16.0",
+      "generated_at": "2026-09-14T21:46:08.381206+00:00"
+    }
+  },
+  "artifacts": {
+    "report": "benchmark-report.md",
+    "core_cases": "core-cases.csv",
+    "literature_evidence": "literature-evidence.csv"
+  }
+}

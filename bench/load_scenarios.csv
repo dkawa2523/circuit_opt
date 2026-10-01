@@ -1,0 +1,6 @@
+scenario_id,resistance_ohm,reactance_ohm,weight,meaning
+high_R_strong_capacitive,50.0,-161.53817286914716,1,upper resistance and strongest capacitive reactance corner
+nominal,25.0,-80.76908643457358,1,nominal electrical load point
+low_R_weak_capacitive,12.5,-40.38454321728679,1,lower resistance and weakest capacitive reactance corner
+low_R_nominal_X,12.5,-80.76908643457358,1,resistance-only lower corner at nominal reactance
+high_R_nominal_X,50.0,-80.76908643457358,1,resistance-only upper corner at nominal reactance

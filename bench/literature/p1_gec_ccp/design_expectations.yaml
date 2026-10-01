@@ -1,0 +1,49 @@
+match_fixed_central.yaml:
+  id: P1_CCP_fixed_central
+  role: negative_control
+  question: Can one network tuned at a central published load cover all eight 66 Pa group-average loads without retuning?
+  demonstrates: The low-drive 34 MHz resonance group is outside the fixed central design even though seven other literature points pass.
+  does_not_establish: Group-average electrical coverage is not cell-specific process qualification.
+  expected:
+    feasible: false
+    feasible_fraction: [0.87, 0.88]
+    worst_reflection_magnitude: [0.52, 0.53]
+    infeasible_scenarios: [gec66_r34_vpp075]
+
+match_limited_central.yaml:
+  id: P1_CCP_limited_central
+  role: negative_control
+  question: Does a two-position input capacitor with fixed output capacitance provide enough authority for the eight published loads?
+  demonstrates: Limited retuning reduces the worst reflection but still cannot reach the low-drive 34 MHz-group point.
+  does_not_establish: Discrete settings represent reachable steady states, not tuner dynamics.
+  expected:
+    feasible: false
+    feasible_fraction: [0.87, 0.88]
+    worst_reflection_magnitude: [0.48, 0.50]
+    infeasible_scenarios: [gec66_r34_vpp075]
+
+match_full_central.yaml:
+  id: P1_CCP_full_central
+  role: positive_control
+  question: Can the same fixed inductor cover all eight group-average loads with a bounded 4 by 4 capacitor grid?
+  demonstrates: A compact declared control range covers the central literature window with substantial reflection margin.
+  does_not_establish: The capacitor grid is a platform design fixture, not the matcher used in the paper.
+  expected:
+    feasible: true
+    feasible_fraction: [0.99, 1.0]
+    worst_reflection_magnitude: [0.075, 0.085]
+    infeasible_scenarios: []
+
+match_full_reported_spread.yaml:
+  id: P1_CCP_reported_spread
+  role: robustness_challenge
+  question: Does the tuner qualified on group-average points also cover the four-corner envelope formed from the paper's reported group spread?
+  demonstrates: Passing all central values is not enough; two high-impedance corners of the low-drive 34 MHz group exceed the same tuner range.
+  does_not_establish: The reported spread mixes cell variation and measurement effects and is not a statistical confidence interval.
+  expected:
+    feasible: false
+    feasible_fraction: [0.93, 0.94]
+    worst_reflection_magnitude: [0.52, 0.54]
+    infeasible_scenarios:
+      - gec66_r34_vpp075__zhigh_phase_low
+      - gec66_r34_vpp075__zhigh_phase_high

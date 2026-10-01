@@ -1,0 +1,33 @@
+# D3: deliberate negative control. The upstream impedance already contains
+# the complete lossy R-L fixture, yet the same two-port is inserted again.
+schema: case_yaml.v1
+case_id: benchmark_reference_plane_fixture_double_counted
+source: {type: sine_voltage, name: Vsrc, p: src, n: 0, amplitude_V: 1, frequency_Hz: 13560000}
+circuit:
+  builder: from_yaml
+  output_node: plasma_terminal
+  components:
+    - {ref: C1, n1: src, n2: 0, value: 2.58221757073e-10}
+    - {ref: L1, n1: src, n2: electrode_terminal, value: 1.19731080934e-6}
+    - {ref: C2, n1: electrode_terminal, n2: 0, value: 7.45488022912e-12}
+    - {ref: Rfixture, n1: electrode_terminal, n2: fixture_mid, value: 2.0}
+    - {ref: Lfixture, n1: fixture_mid, n2: plasma_terminal, value: 2.257149671173009e-7}
+load:
+  name: impedance_point
+  ports: {p: plasma_terminal, n: 0}
+  resistance_ohm: 27
+  reactance_ohm: -80.76908643457358
+  model_frequency_Hz: 13560000
+  reference_plane: electrode_terminal
+  characterization: {origin: analytic_benchmark, fixture_representation: lossy_series_two_port_double_counted}
+measurement: {voltage_node: plasma_terminal, current_source: Vsrc, reference_impedance_ohm: 50}
+solver: {name: ngspice_cli, ac: {frequency_Hz: 13560000}}
+target:
+  fundamental_Hz: 13560000
+  objective: impedance_match
+  constraints: {metric_bounds: {reflection_magnitude: {max: 0.31622776601683794}}}
+study:
+  design_variables: []
+  objectives: [{metric: reflection_magnitude, direction: minimize, aggregation: worst}]
+optimizer: {name: random, seed: 0}
+run: {trials: 1}

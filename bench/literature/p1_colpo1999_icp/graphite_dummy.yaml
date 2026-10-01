@@ -1,0 +1,34 @@
+schema: case_yaml.v1
+case_id: literature_colpo1999_graphite_dummy
+
+source:
+  type: sine_voltage
+  name: Vsrc
+  p: src
+  n: 0
+  amplitude_V: 1
+  frequency_Hz: 13560000
+
+circuit:
+  builder: from_yaml
+  output_node: port
+  components:
+    - {raw: "Rfixture src port 1e-9"}
+
+load:
+  name: impedance_point
+  ports: {p: port, n: 0}
+  reference_plane: graphite_dummy_coil_terminal
+  characterization:
+    origin: published_measurement
+    doi: 10.1063/1.369268
+    section: IV.A
+  resistance_ohm: 1.26
+  reactance_ohm: 57
+  model_frequency_Hz: 13560000
+
+solver:
+  name: ngspice_cli
+  ac: {frequency_Hz: 13560000}
+
+target: {objective: impedance_match}

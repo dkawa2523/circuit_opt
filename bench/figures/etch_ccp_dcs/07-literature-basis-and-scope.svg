@@ -1,0 +1,382 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"
+  "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg xmlns:xlink="http://www.w3.org/1999/xlink" width="522pt" height="345.6pt" viewBox="0 0 522 345.6" xmlns="http://www.w3.org/2000/svg" version="1.1">
+ <title>07 literature basis and scope</title>
+ <metadata>
+  <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+   <cc:Work>
+    <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
+    <dc:title>07 literature basis and scope</dc:title>
+    <dc:description>Dynamic-impedance dual-RF and DC-superposed etch-CCP evidence</dc:description>
+    <dc:format>image/svg+xml</dc:format>
+    <dc:creator>
+     <cc:Agent>
+      <dc:title>PCD etch-CCP evidence generator</dc:title>
+     </cc:Agent>
+    </dc:creator>
+   </cc:Work>
+  </rdf:RDF>
+ </metadata>
+ <defs>
+  <style type="text/css">*{stroke-linejoin: round; stroke-linecap: butt}</style>
+ </defs>
+ <g id="figure_1">
+  <g id="patch_1">
+   <path d="M 0 345.6
+L 522 345.6
+L 522 0
+L 0 0
+z
+" style="fill: #ffffff"/>
+  </g>
+  <g id="axes_1">
+   <g id="patch_2">
+    <path d="M 277.9911 110.941056
+L 494.0208 110.941056
+Q 497.90448 110.941056 497.90448 109.08864
+L 497.90448 84.77568
+Q 497.90448 82.923264 494.0208 82.923264
+L 277.9911 82.923264
+Q 274.10742 82.923264 274.10742 84.77568
+L 274.10742 109.08864
+Q 274.10742 110.941056 277.9911 110.941056
+z
+" clip-path="url(#pef00755bf2)" style="fill: #dcebf3; stroke: #c6cdd2; stroke-width: 0.65; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_3">
+    <path d="M 277.9911 144.516096
+L 494.0208 144.516096
+Q 497.90448 144.516096 497.90448 142.66368
+L 497.90448 118.35072
+Q 497.90448 116.498304 494.0208 116.498304
+L 277.9911 116.498304
+Q 274.10742 116.498304 274.10742 118.35072
+L 274.10742 142.66368
+Q 274.10742 144.516096 277.9911 144.516096
+z
+" clip-path="url(#pef00755bf2)" style="fill: #dcebf3; stroke: #c6cdd2; stroke-width: 0.65; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_4">
+    <path d="M 277.9911 178.091136
+L 494.0208 178.091136
+Q 497.90448 178.091136 497.90448 176.23872
+L 497.90448 151.92576
+Q 497.90448 150.073344 494.0208 150.073344
+L 277.9911 150.073344
+Q 274.10742 150.073344 274.10742 151.92576
+L 274.10742 176.23872
+Q 274.10742 178.091136 277.9911 178.091136
+z
+" clip-path="url(#pef00755bf2)" style="fill: #f5e1cd; stroke: #c6cdd2; stroke-width: 0.65; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_5">
+    <path d="M 277.9911 211.666176
+L 494.0208 211.666176
+Q 497.90448 211.666176 497.90448 209.81376
+L 497.90448 185.5008
+Q 497.90448 183.648384 494.0208 183.648384
+L 277.9911 183.648384
+Q 274.10742 183.648384 274.10742 185.5008
+L 274.10742 209.81376
+Q 274.10742 211.666176 277.9911 211.666176
+z
+" clip-path="url(#pef00755bf2)" style="fill: #f5e1cd; stroke: #c6cdd2; stroke-width: 0.65; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_6">
+    <path d="M 277.9911 245.241216
+L 494.0208 245.241216
+Q 497.90448 245.241216 497.90448 243.3888
+L 497.90448 219.07584
+Q 497.90448 217.223424 494.0208 217.223424
+L 277.9911 217.223424
+Q 274.10742 217.223424 274.10742 219.07584
+L 274.10742 243.3888
+Q 274.10742 245.241216 277.9911 245.241216
+z
+" clip-path="url(#pef00755bf2)" style="fill: #eef1f3; stroke: #c6cdd2; stroke-width: 0.65; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_7">
+    <path d="M 18.27 292.709376
+L 171.1899 292.709376
+Q 175.07358 292.709376 175.07358 290.85696
+L 175.07358 261.91296
+Q 175.07358 260.060544 171.1899 260.060544
+L 18.27 260.060544
+Q 14.38632 260.060544 14.38632 261.91296
+L 14.38632 290.85696
+Q 14.38632 292.709376 18.27 292.709376
+z
+" clip-path="url(#pef00755bf2)" style="fill: #ffffff; stroke: #bfc7cd; stroke-width: 0.7; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_8">
+    <path d="M 180.8991 292.709376
+L 333.819 292.709376
+Q 337.70268 292.709376 337.70268 290.85696
+L 337.70268 261.91296
+Q 337.70268 260.060544 333.819 260.060544
+L 180.8991 260.060544
+Q 177.01542 260.060544 177.01542 261.91296
+L 177.01542 290.85696
+Q 177.01542 292.709376 180.8991 292.709376
+z
+" clip-path="url(#pef00755bf2)" style="fill: #ffffff; stroke: #bfc7cd; stroke-width: 0.7; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_9">
+    <path d="M 343.5282 292.709376
+L 496.4481 292.709376
+Q 500.33178 292.709376 500.33178 290.85696
+L 500.33178 261.91296
+Q 500.33178 260.060544 496.4481 260.060544
+L 343.5282 260.060544
+Q 339.64452 260.060544 339.64452 261.91296
+L 339.64452 290.85696
+Q 339.64452 292.709376 343.5282 292.709376
+z
+" clip-path="url(#pef00755bf2)" style="fill: #ffffff; stroke: #bfc7cd; stroke-width: 0.7; stroke-linejoin: miter"/>
+   </g>
+   <g id="line2d_1">
+    <path d="M 263.4273 246.86208
+L 263.4273 68.56704
+" clip-path="url(#pef00755bf2)" style="fill: none; stroke: #d6dbe0; stroke-width: 0.8; stroke-linecap: square"/>
+   </g>
+   <g id="text_1">
+    <text style="font-weight: 700; font-size: 8.3px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="18.27" y="74.873743" transform="rotate(-0 18.27 74.873743)">(a)  Primary-source basis</text>
+   </g>
+   <g id="text_2">
+    <text style="font-weight: 700; font-size: 5.9px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="18.27" y="89.258758" transform="rotate(-0 18.27 89.258758)">[R1] H. J. Kim et al., JJAP 54, 01AE07 (2015)</text>
+   </g>
+   <g id="text_3">
+    <text style="font-size: 5.25px; font-family: 'DejaVu Sans'; fill: #68737d" transform="translate(18.27 100.388546)">300 mm DF-CCP; 20 mm gap; upper 13.56-60 MHz; lower 2 MHz.</text>
+    <text style="font-size: 5.25px; font-family: 'DejaVu Sans'; fill: #68737d" transform="translate(18.27 106.971554)">doi:10.7567/JJAP.54.01AE07</text>
+   </g>
+   <g id="text_4">
+    <text style="font-weight: 700; font-size: 5.9px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="18.27" y="121.676038" transform="rotate(-0 18.27 121.676038)">[R2] T. Yamaguchi et al., J. Phys. D 45, 025203 (2012)</text>
+   </g>
+   <g id="text_5">
+    <text style="font-size: 5.25px; font-family: 'DejaVu Sans'; fill: #68737d" transform="translate(18.27 132.805826)">Negative DC above about 800 V on the upper 60 MHz electrode;</text>
+    <text style="font-size: 5.25px; font-family: 'DejaVu Sans'; fill: #68737d" transform="translate(18.27 139.670611)">lower electrode was 13.56 MHz. doi:10.1088/0022-3727/45/2/025203</text>
+   </g>
+   <g id="text_6">
+    <text style="font-weight: 700; font-size: 5.9px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="18.27" y="154.093318" transform="rotate(-0 18.27 154.093318)">[R3] J. Kim et al., Electronics 14, 2022 (2025)</text>
+   </g>
+   <g id="text_7">
+    <text style="font-size: 5.25px; font-family: 'DejaVu Sans'; fill: #68737d" transform="translate(18.27 165.223106)">CCP load interpreted as sheath capacitance plus plasma L and R;</text>
+    <text style="font-size: 5.25px; font-family: 'DejaVu Sans'; fill: #68737d" transform="translate(18.27 171.785606)">50 ohm matching-network reference plane. doi:10.3390/electronics14102022</text>
+   </g>
+   <g id="text_8">
+    <text style="font-weight: 700; font-size: 5.9px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="18.27" y="186.510598" transform="rotate(-0 18.27 186.510598)">[R4] H. Lee et al., Rev. Sci. Instrum. 86, 083505 (2015)</text>
+   </g>
+   <g id="text_9">
+    <text style="font-size: 5.25px; font-family: 'DejaVu Sans'; fill: #68737d" transform="translate(18.27 197.640386)">Sub-microsecond V/I impedance observation in pulsed dual-frequency CCP.</text>
+    <text style="font-size: 5.25px; font-family: 'DejaVu Sans'; fill: #68737d" transform="translate(18.27 204.505171)">doi:10.1063/1.4928121</text>
+   </g>
+   <g id="text_10">
+    <text style="font-weight: 700; font-size: 5.9px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="18.27" y="218.927878" transform="rotate(-0 18.27 218.927878)">[R5] F. Schmidt et al., Plasma Sources Sci. Technol. 27, 105017 (2018)</text>
+   </g>
+   <g id="text_11">
+    <text style="font-size: 5.25px; font-family: 'DejaVu Sans'; fill: #68737d" transform="translate(18.27 230.057666)">Generator, matcher, discharge and stray elements must be coupled explicitly.</text>
+    <text style="font-size: 5.25px; font-family: 'DejaVu Sans'; fill: #68737d" transform="translate(18.27 236.922451)">doi:10.1088/1361-6595/aae429</text>
+   </g>
+   <g id="text_12">
+    <text style="font-weight: 700; font-size: 8.3px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="277.9911" y="74.873743" transform="rotate(-0 277.9911 74.873743)">(b)  What the numerical values mean</text>
+   </g>
+   <g id="text_13">
+    <text style="font-weight: 700; font-size: 5.9px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="285.273" y="93.889798" transform="rotate(-0 285.273 93.889798)">Literature-grounded</text>
+   </g>
+   <g id="text_14">
+    <text style="font-size: 5.15px; font-family: 'DejaVu Sans'; fill: #20262d" transform="translate(285.273 101.708186)">300 mm geometry, 20 mm gap, 60/2 MHz arrangement, upper negative DC, R-L-C plasma</text>
+    <text style="font-size: 5.15px; font-family: 'DejaVu Sans'; fill: #20262d" transform="translate(285.273 107.889594)">interpretation</text>
+   </g>
+   <g id="text_15">
+    <text style="font-weight: 700; font-size: 5.9px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="285.273" y="127.464838" transform="rotate(-0 285.273 127.464838)">Scale-grounded</text>
+   </g>
+   <g id="text_16">
+    <text style="font-size: 5.15px; font-family: 'DejaVu Sans'; fill: #20262d" transform="translate(285.273 135.283226)">Hundreds-of-volts RF/DC excitation, millimeter-order sheath thickness, 50 ohm generator</text>
+    <text style="font-size: 5.15px; font-family: 'DejaVu Sans'; fill: #20262d" transform="translate(285.273 141.464634)">reference</text>
+   </g>
+   <g id="text_17">
+    <text style="font-weight: 700; font-size: 5.9px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="285.273" y="161.039878" transform="rotate(-0 285.273 161.039878)">Benchmark-specific</text>
+   </g>
+   <g id="text_18">
+    <text style="font-size: 5.15px; font-family: 'DejaVu Sans'; fill: #20262d" transform="translate(285.273 168.858266)">400 kHz DC-pulse envelope, ideal source amplitudes, matcher/feed/stray values, exact</text>
+    <text style="font-size: 5.15px; font-family: 'DejaVu Sans'; fill: #20262d" transform="translate(285.273 175.039674)">R/L/C trajectories</text>
+   </g>
+   <g id="text_19">
+    <text style="font-weight: 700; font-size: 5.9px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="285.273" y="194.614918" transform="rotate(-0 285.273 194.614918)">Identification-specific</text>
+   </g>
+   <g id="text_20">
+    <text style="font-size: 5.15px; font-family: 'DejaVu Sans'; fill: #20262d" transform="translate(285.273 202.433306)">Three values for each of four on-state parameters; complete 3^4 = 81 candidate</text>
+    <text style="font-size: 5.15px; font-family: 'DejaVu Sans'; fill: #20262d" transform="translate(285.273 208.614714)">enumeration</text>
+   </g>
+   <g id="text_21">
+    <text style="font-weight: 700; font-size: 5.9px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="285.273" y="228.189958" transform="rotate(-0 285.273 228.189958)">Not established</text>
+   </g>
+   <g id="text_22">
+    <text style="font-size: 5.15px; font-family: 'DejaVu Sans'; fill: #20262d" transform="translate(285.273 236.008346)">Gas chemistry, electron-energy distribution, ion-energy distribution, etch rate, uniformity,</text>
+    <text style="font-size: 5.15px; font-family: 'DejaVu Sans'; fill: #20262d" transform="translate(285.273 242.189754)">or a calibrated production recipe</text>
+   </g>
+   <g id="text_23">
+    <text style="font-weight: 700; font-size: 8px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="18.27" y="258.72963" transform="rotate(-0 18.27 258.72963)">(c)  Transparent order-of-magnitude checks</text>
+   </g>
+   <g id="text_24">
+    <text style="font-weight: 700; font-size: 5.8px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="24.09552" y="268.396416" transform="rotate(-0 24.09552 268.396416)">Sheath C -&gt; thickness</text>
+   </g>
+   <g id="text_25">
+    <text style="font-size: 6.2px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #2a6f97" x="24.09552" y="278.584704" transform="rotate(-0 24.09552 278.584704)">0.87-2.41 mm</text>
+   </g>
+   <g id="text_26">
+    <!-- $d_s=\epsilon_0 A/C_s$, 300 mm plate -->
+    <g style="fill: #68737d" transform="translate(24.09552 287.38368)">
+     <text>
+      <tspan x="0" y="-0.28125" style="font-style: italic; font-size: 4.9px; font-family: 'STIXGeneral'; fill: #68737d">𝘥</tspan>
+      <tspan x="13.483266" y="-0.28125" style="font-style: italic; font-size: 4.9px; font-family: 'STIXGeneral'; fill: #68737d">𝘈</tspan>
+      <tspan x="18.100056" y="-0.28125" style="font-style: italic; font-size: 4.9px; font-family: 'STIXGeneral'; fill: #68737d">𝘊</tspan>
+      <tspan x="2.416" y="0.45375" style="font-style: italic; font-size: 3.43px; font-family: 'STIXGeneral'; fill: #68737d">𝘴</tspan>
+      <tspan x="21.381703" y="0.45375" style="font-style: italic; font-size: 3.43px; font-family: 'STIXGeneral'; fill: #68737d">𝘴</tspan>
+      <tspan x="4.837987" y="-0.28125" style="font-size: 4.9px; font-family: 'STIXGeneral'; fill: #68737d">=</tspan>
+      <tspan x="16.740452" y="-0.28125" style="font-size: 4.9px; font-family: 'STIXGeneral'; fill: #68737d">/</tspan>
+      <tspan x="9.1681" y="-0.28125" style="font-style: italic; font-size: 4.9px; font-family: 'STIXNonUnicode'; fill: #68737d"></tspan>
+      <tspan x="11.661275" y="0.45375" style="font-size: 3.43px; font-family: 'STIXGeneral'; fill: #68737d">𝟢</tspan>
+      <tspan x="22.82369" y="-0.28125" style="font-size: 4.9px; font-family: 'DejaVu Sans'; fill: #68737d">,</tspan>
+      <tspan x="24.378286" y="-0.28125" style="font-size: 4.9px; font-family: 'DejaVu Sans'; fill: #68737d"> </tspan>
+      <tspan x="25.932882" y="-0.28125" style="font-size: 4.9px; font-family: 'DejaVu Sans'; fill: #68737d">3</tspan>
+      <tspan x="29.044454" y="-0.28125" style="font-size: 4.9px; font-family: 'DejaVu Sans'; fill: #68737d">0</tspan>
+      <tspan x="32.156026" y="-0.28125" style="font-size: 4.9px; font-family: 'DejaVu Sans'; fill: #68737d">0</tspan>
+      <tspan x="35.267598" y="-0.28125" style="font-size: 4.9px; font-family: 'DejaVu Sans'; fill: #68737d"> </tspan>
+      <tspan x="36.822194" y="-0.28125" style="font-size: 4.9px; font-family: 'DejaVu Sans'; fill: #68737d">m</tspan>
+      <tspan x="41.586263" y="-0.28125" style="font-size: 4.9px; font-family: 'DejaVu Sans'; fill: #68737d">m</tspan>
+      <tspan x="46.350332" y="-0.28125" style="font-size: 4.9px; font-family: 'DejaVu Sans'; fill: #68737d"> </tspan>
+      <tspan x="47.904928" y="-0.28125" style="font-size: 4.9px; font-family: 'DejaVu Sans'; fill: #68737d">p</tspan>
+      <tspan x="51.009328" y="-0.28125" style="font-size: 4.9px; font-family: 'DejaVu Sans'; fill: #68737d">l</tspan>
+      <tspan x="52.368108" y="-0.28125" style="font-size: 4.9px; font-family: 'DejaVu Sans'; fill: #68737d">a</tspan>
+      <tspan x="55.365056" y="-0.28125" style="font-size: 4.9px; font-family: 'DejaVu Sans'; fill: #68737d">t</tspan>
+      <tspan x="57.282628" y="-0.28125" style="font-size: 4.9px; font-family: 'DejaVu Sans'; fill: #68737d">e</tspan>
+     </text>
+    </g>
+   </g>
+   <g id="text_27">
+    <text style="font-weight: 700; font-size: 5.8px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="186.72462" y="268.396416" transform="rotate(-0 186.72462 268.396416)">Plasma L -&gt; density</text>
+   </g>
+   <g id="text_28">
+    <!-- 2.58e+14-5.65e+14 m$^{-3}$ -->
+    <g style="fill: #2a6f97" transform="translate(186.72462 278.584704)">
+     <text>
+      <tspan x="0" y="-0.50815" style="font-size: 6.2px; font-family: 'DejaVu Sans'; fill: #2a6f97">2</tspan>
+      <tspan x="3.936676" y="-0.50815" style="font-size: 6.2px; font-family: 'DejaVu Sans'; fill: #2a6f97">.</tspan>
+      <tspan x="5.903503" y="-0.50815" style="font-size: 6.2px; font-family: 'DejaVu Sans'; fill: #2a6f97">5</tspan>
+      <tspan x="9.840179" y="-0.50815" style="font-size: 6.2px; font-family: 'DejaVu Sans'; fill: #2a6f97">8</tspan>
+      <tspan x="13.776855" y="-0.50815" style="font-size: 6.2px; font-family: 'DejaVu Sans'; fill: #2a6f97">e</tspan>
+      <tspan x="17.583618" y="-0.50815" style="font-size: 6.2px; font-family: 'DejaVu Sans'; fill: #2a6f97">+</tspan>
+      <tspan x="22.768066" y="-0.50815" style="font-size: 6.2px; font-family: 'DejaVu Sans'; fill: #2a6f97">1</tspan>
+      <tspan x="26.704742" y="-0.50815" style="font-size: 6.2px; font-family: 'DejaVu Sans'; fill: #2a6f97">4</tspan>
+      <tspan x="30.641418" y="-0.50815" style="font-size: 6.2px; font-family: 'DejaVu Sans'; fill: #2a6f97">-</tspan>
+      <tspan x="32.874115" y="-0.50815" style="font-size: 6.2px; font-family: 'DejaVu Sans'; fill: #2a6f97">5</tspan>
+      <tspan x="36.810791" y="-0.50815" style="font-size: 6.2px; font-family: 'DejaVu Sans'; fill: #2a6f97">.</tspan>
+      <tspan x="38.777618" y="-0.50815" style="font-size: 6.2px; font-family: 'DejaVu Sans'; fill: #2a6f97">6</tspan>
+      <tspan x="42.714294" y="-0.50815" style="font-size: 6.2px; font-family: 'DejaVu Sans'; fill: #2a6f97">5</tspan>
+      <tspan x="46.65097" y="-0.50815" style="font-size: 6.2px; font-family: 'DejaVu Sans'; fill: #2a6f97">e</tspan>
+      <tspan x="50.457733" y="-0.50815" style="font-size: 6.2px; font-family: 'DejaVu Sans'; fill: #2a6f97">+</tspan>
+      <tspan x="55.642181" y="-0.50815" style="font-size: 6.2px; font-family: 'DejaVu Sans'; fill: #2a6f97">1</tspan>
+      <tspan x="59.578857" y="-0.50815" style="font-size: 6.2px; font-family: 'DejaVu Sans'; fill: #2a6f97">4</tspan>
+      <tspan x="63.515533" y="-0.50815" style="font-size: 6.2px; font-family: 'DejaVu Sans'; fill: #2a6f97"> </tspan>
+      <tspan x="65.482361" y="-0.50815" style="font-size: 6.2px; font-family: 'DejaVu Sans'; fill: #2a6f97">m</tspan>
+      <tspan x="71.607385" y="-3.06875" style="font-size: 4.34px; font-family: 'STIXGeneral'; fill: #2a6f97">−</tspan>
+      <tspan x="74.574267" y="-3.06875" style="font-size: 4.34px; font-family: 'STIXGeneral'; fill: #2a6f97">𝟥</tspan>
+     </text>
+    </g>
+   </g>
+   <g id="text_29">
+    <!-- $L_p=m_e l/(n_e e^2 A)$, $l=18$ mm -->
+    <g style="fill: #68737d" transform="translate(186.72462 287.38368)">
+     <text>
+      <tspan x="0" y="-0.65755" style="font-style: italic; font-size: 4.9px; font-family: 'STIXGeneral'; fill: #68737d">𝘓</tspan>
+      <tspan x="9.859143" y="-0.65755" style="font-style: italic; font-size: 4.9px; font-family: 'STIXGeneral'; fill: #68737d">𝘮</tspan>
+      <tspan x="15.186774" y="-0.65755" style="font-style: italic; font-size: 4.9px; font-family: 'STIXGeneral'; fill: #68737d">𝘭</tspan>
+      <tspan x="19.177573" y="-0.65755" style="font-style: italic; font-size: 4.9px; font-family: 'STIXGeneral'; fill: #68737d">𝘯</tspan>
+      <tspan x="23.189607" y="-0.65755" style="font-style: italic; font-size: 4.9px; font-family: 'STIXGeneral'; fill: #68737d">𝘦</tspan>
+      <tspan x="27.671573" y="-0.65755" style="font-style: italic; font-size: 4.9px; font-family: 'STIXGeneral'; fill: #68737d">𝘈</tspan>
+      <tspan x="35.666553" y="-0.65755" style="font-style: italic; font-size: 4.9px; font-family: 'STIXGeneral'; fill: #68737d">𝘭</tspan>
+      <tspan x="2.733887" y="0.07745" style="font-style: italic; font-size: 3.43px; font-family: 'STIXGeneral'; fill: #68737d">𝘱</tspan>
+      <tspan x="13.5565" y="0.07745" style="font-style: italic; font-size: 3.43px; font-family: 'STIXGeneral'; fill: #68737d">𝘦</tspan>
+      <tspan x="21.559333" y="0.07745" style="font-style: italic; font-size: 3.43px; font-family: 'STIXGeneral'; fill: #68737d">𝘦</tspan>
+      <tspan x="5.52903" y="-0.65755" style="font-size: 4.9px; font-family: 'STIXGeneral'; fill: #68737d">=</tspan>
+      <tspan x="16.189368" y="-0.65755" style="font-size: 4.9px; font-family: 'STIXGeneral'; fill: #68737d">/</tspan>
+      <tspan x="17.548972" y="-0.65755" style="font-size: 4.9px; font-family: 'STIXGeneral'; fill: #68737d">(</tspan>
+      <tspan x="30.92876" y="-0.65755" style="font-size: 4.9px; font-family: 'STIXGeneral'; fill: #68737d">)</tspan>
+      <tspan x="37.649147" y="-0.65755" style="font-size: 4.9px; font-family: 'STIXGeneral'; fill: #68737d">=</tspan>
+      <tspan x="41.97926" y="-0.65755" style="font-size: 4.9px; font-family: 'STIXGeneral'; fill: #68737d">𝟣</tspan>
+      <tspan x="44.424603" y="-0.65755" style="font-size: 4.9px; font-family: 'STIXGeneral'; fill: #68737d">𝟪</tspan>
+      <tspan x="25.849583" y="-2.68125" style="font-size: 3.43px; font-family: 'STIXGeneral'; fill: #68737d">𝟤</tspan>
+      <tspan x="32.557361" y="-0.65755" style="font-size: 4.9px; font-family: 'DejaVu Sans'; fill: #68737d">,</tspan>
+      <tspan x="34.111957" y="-0.65755" style="font-size: 4.9px; font-family: 'DejaVu Sans'; fill: #68737d"> </tspan>
+      <tspan x="46.869946" y="-0.65755" style="font-size: 4.9px; font-family: 'DejaVu Sans'; fill: #68737d"> </tspan>
+      <tspan x="48.424541" y="-0.65755" style="font-size: 4.9px; font-family: 'DejaVu Sans'; fill: #68737d">m</tspan>
+      <tspan x="53.18861" y="-0.65755" style="font-size: 4.9px; font-family: 'DejaVu Sans'; fill: #68737d">m</tspan>
+     </text>
+    </g>
+   </g>
+   <g id="text_30">
+    <text style="font-weight: 700; font-size: 5.8px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="349.35372" y="268.396416" transform="rotate(-0 349.35372 268.396416)">R/L -&gt; collision scale</text>
+   </g>
+   <g id="text_31">
+    <!-- 9.38e+08-1.00e+09 s$^{-1}$ -->
+    <g style="fill: #2a6f97" transform="translate(349.35372 278.584704)">
+     <text>
+      <tspan x="0" y="-0.50815" style="font-size: 6.2px; font-family: 'DejaVu Sans'; fill: #2a6f97">9</tspan>
+      <tspan x="3.936676" y="-0.50815" style="font-size: 6.2px; font-family: 'DejaVu Sans'; fill: #2a6f97">.</tspan>
+      <tspan x="5.903503" y="-0.50815" style="font-size: 6.2px; font-family: 'DejaVu Sans'; fill: #2a6f97">3</tspan>
+      <tspan x="9.840179" y="-0.50815" style="font-size: 6.2px; font-family: 'DejaVu Sans'; fill: #2a6f97">8</tspan>
+      <tspan x="13.776855" y="-0.50815" style="font-size: 6.2px; font-family: 'DejaVu Sans'; fill: #2a6f97">e</tspan>
+      <tspan x="17.583618" y="-0.50815" style="font-size: 6.2px; font-family: 'DejaVu Sans'; fill: #2a6f97">+</tspan>
+      <tspan x="22.768066" y="-0.50815" style="font-size: 6.2px; font-family: 'DejaVu Sans'; fill: #2a6f97">0</tspan>
+      <tspan x="26.704742" y="-0.50815" style="font-size: 6.2px; font-family: 'DejaVu Sans'; fill: #2a6f97">8</tspan>
+      <tspan x="30.641418" y="-0.50815" style="font-size: 6.2px; font-family: 'DejaVu Sans'; fill: #2a6f97">-</tspan>
+      <tspan x="32.874115" y="-0.50815" style="font-size: 6.2px; font-family: 'DejaVu Sans'; fill: #2a6f97">1</tspan>
+      <tspan x="36.810791" y="-0.50815" style="font-size: 6.2px; font-family: 'DejaVu Sans'; fill: #2a6f97">.</tspan>
+      <tspan x="38.777618" y="-0.50815" style="font-size: 6.2px; font-family: 'DejaVu Sans'; fill: #2a6f97">0</tspan>
+      <tspan x="42.714294" y="-0.50815" style="font-size: 6.2px; font-family: 'DejaVu Sans'; fill: #2a6f97">0</tspan>
+      <tspan x="46.65097" y="-0.50815" style="font-size: 6.2px; font-family: 'DejaVu Sans'; fill: #2a6f97">e</tspan>
+      <tspan x="50.457733" y="-0.50815" style="font-size: 6.2px; font-family: 'DejaVu Sans'; fill: #2a6f97">+</tspan>
+      <tspan x="55.642181" y="-0.50815" style="font-size: 6.2px; font-family: 'DejaVu Sans'; fill: #2a6f97">0</tspan>
+      <tspan x="59.578857" y="-0.50815" style="font-size: 6.2px; font-family: 'DejaVu Sans'; fill: #2a6f97">9</tspan>
+      <tspan x="63.515533" y="-0.50815" style="font-size: 6.2px; font-family: 'DejaVu Sans'; fill: #2a6f97"> </tspan>
+      <tspan x="65.482361" y="-0.50815" style="font-size: 6.2px; font-family: 'DejaVu Sans'; fill: #2a6f97">s</tspan>
+      <tspan x="68.803674" y="-3.06875" style="font-size: 4.34px; font-family: 'STIXGeneral'; fill: #2a6f97">−</tspan>
+      <tspan x="71.770556" y="-3.06875" style="font-size: 4.34px; font-family: 'STIXGeneral'; fill: #2a6f97">𝟣</tspan>
+     </text>
+    </g>
+   </g>
+   <g id="text_32">
+    <!-- $\nu_m\approx R_p/L_p$ -->
+    <g style="fill: #68737d" transform="translate(349.35372 287.38368)">
+     <text>
+      <tspan x="0" y="-0.6875" style="font-style: italic; font-size: 4.9px; font-family: 'STIXNonUnicode'; fill: #68737d"></tspan>
+      <tspan x="1.916073" y="0.0475" style="font-style: italic; font-size: 3.43px; font-family: 'STIXGeneral'; fill: #68737d">𝘮</tspan>
+      <tspan x="12.805201" y="0.0475" style="font-style: italic; font-size: 3.43px; font-family: 'STIXGeneral'; fill: #68737d">𝘱</tspan>
+      <tspan x="18.713835" y="0.0475" style="font-style: italic; font-size: 3.43px; font-family: 'STIXGeneral'; fill: #68737d">𝘱</tspan>
+      <tspan x="5.594473" y="-0.6875" style="font-size: 4.9px; font-family: 'STIXGeneral'; fill: #68737d">≈</tspan>
+      <tspan x="14.620344" y="-0.6875" style="font-size: 4.9px; font-family: 'STIXGeneral'; fill: #68737d">/</tspan>
+      <tspan x="9.924586" y="-0.6875" style="font-style: italic; font-size: 4.9px; font-family: 'STIXGeneral'; fill: #68737d">𝘙</tspan>
+      <tspan x="15.979948" y="-0.6875" style="font-style: italic; font-size: 4.9px; font-family: 'STIXGeneral'; fill: #68737d">𝘓</tspan>
+     </text>
+    </g>
+   </g>
+  </g>
+  <g id="text_33">
+   <text style="font-weight: 700; font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262d" x="10.44" y="13.542281" transform="rotate(-0 10.44 13.542281)">Evidence basis, realism assessment, and model boundary</text>
+  </g>
+  <g id="text_34">
+   <text style="font-size: 7.7px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #68737d" x="10.44" y="33.498797" transform="rotate(-0 10.44 33.498797)">Published apparatus topology and scale checks are separated from synthetic benchmark inputs.</text>
+  </g>
+  <g id="text_35">
+   <text style="font-size: 6.6px; font-family: 'DejaVu Sans'; fill: #68737d" transform="translate(10.44 331.284804)">Assessment: suitable for circuit-solver and bounded-identification verification.</text>
+   <text style="font-size: 6.6px; font-family: 'DejaVu Sans'; fill: #68737d" transform="translate(10.44 339.206609)">Not established: quantitative chamber calibration or process prediction.</text>
+  </g>
+ </g>
+ <defs>
+  <clipPath id="pef00755bf2">
+   <rect x="18.27" y="63.936" width="485.46" height="231.552"/>
+  </clipPath>
+ </defs>
+</svg>

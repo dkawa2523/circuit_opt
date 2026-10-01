@@ -1,0 +1,29 @@
+# Effective ICP coil loading using the two terminal-identifiable reflected
+# terms. This does not predict density, temperature, or plasma power split.
+schema: pcd.rf.v1
+case_id: rf_icp_transformer
+
+network:
+  type: l_match
+  search:
+    L1: {values: [1.0e-8, 2.0e-7, 2.0e-6], default: 2.0e-7}
+    C1: {values: [1.0e-11, 4.0e-10, 2.0e-9], default: 4.0e-10}
+
+load:
+  type: icp_transformer
+  reference_plane: coil_feedthrough
+  evidence: {origin: example_assumption, condition: plasma_on_minus_dummy_fixture}
+  parameters:
+    R_coil_ohm: 0.4
+    L_coil_H: 2.0e-6
+    reflected_inductance_H: 2.45e-7
+    secondary_damping_rate_rad_s: 6.66666666667e6
+    C_parallel_F: 2.0e-11
+
+conditions:
+  - {id: low_frequency, frequency_Hz: 10000000}
+  - {id: nominal_frequency, frequency_Hz: 13560000}
+  - {id: high_frequency, frequency_Hz: 20000000}
+
+acceptance:
+  reflected_power_fraction_max: 0.10

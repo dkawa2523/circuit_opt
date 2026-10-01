@@ -1,0 +1,31 @@
+# D2: the same fixture is folded once into the upstream one-port. D1 and D2
+# must therefore produce the same source impedance and reflection.
+schema: case_yaml.v1
+case_id: benchmark_reference_plane_fixture_embedded
+source: {type: sine_voltage, name: Vsrc, p: src, n: 0, amplitude_V: 1, frequency_Hz: 13560000}
+circuit:
+  builder: from_yaml
+  output_node: electrode_terminal
+  components:
+    - {ref: C1, n1: src, n2: 0, value: 2.58221757073e-10}
+    - {ref: L1, n1: src, n2: electrode_terminal, value: 1.19731080934e-6}
+    - {ref: C2, n1: electrode_terminal, n2: 0, value: 7.45488022912e-12}
+load:
+  name: impedance_point
+  ports: {p: electrode_terminal, n: 0}
+  resistance_ohm: 27
+  reactance_ohm: -80.76908643457358
+  model_frequency_Hz: 13560000
+  reference_plane: electrode_terminal
+  characterization: {origin: analytic_benchmark, fixture_representation: lossy_series_two_port_embedded_once}
+measurement: {voltage_node: electrode_terminal, current_source: Vsrc, reference_impedance_ohm: 50}
+solver: {name: ngspice_cli, ac: {frequency_Hz: 13560000}}
+target:
+  fundamental_Hz: 13560000
+  objective: impedance_match
+  constraints: {metric_bounds: {reflection_magnitude: {max: 0.31622776601683794}}}
+study:
+  design_variables: []
+  objectives: [{metric: reflection_magnitude, direction: minimize, aggregation: worst}]
+optimizer: {name: random, seed: 0}
+run: {trials: 1}
