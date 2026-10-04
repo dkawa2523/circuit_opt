@@ -1,0 +1,40 @@
+schema: literature.matcher_family_comparison.v1
+case_id_prefix: gec_matcher_family
+
+# Deliberately small fixed-hardware alternatives. C1 and C2 remain
+# per-condition controls. This is a platform design challenge, not a matcher
+# reported by either paper.
+candidate_L1_H: [1.4e-6, 1.5e-6, 1.6e-6]
+current_L1_H: 1.5e-6
+
+controls:
+  C1_F: [4.0e-10, 4.5e-10, 5.0e-10, 5.5e-10]
+  C2_F: [6.5e-11, 7.0e-11, 7.5e-11, 8.0e-11]
+
+# These families are evaluated independently. Their rows are never combined
+# into a weighted coverage score or a global "best" hardware decision.
+families:
+  - id: central_operating_conditions
+    kind: published_operating_conditions
+    file: derived_impedance_all32.csv
+    expected_rows: 32
+    evidence: Hargis Tables III-IV central group averages at 13, 33, 66, and 133 Pa
+  - id: reported_apparatus_spread
+    kind: published_apparatus_population_spread
+    file: reported_spread_envelope.csv
+    expected_rows: 32
+    evidence: four deterministic corners from the Hargis 66 Pa reported group spread
+  - id: phase_model_minus6
+    kind: counterfactual_model_sensitivity
+    file: phase_systematic_minus6.csv
+    expected_rows: 8
+    evidence: common-mode -6 degree model-form stress motivated by Sobolewski
+  - id: phase_model_plus6
+    kind: counterfactual_model_sensitivity
+    file: phase_systematic_plus6.csv
+    expected_rows: 8
+    evidence: common-mode +6 degree model-form stress motivated by Sobolewski
+
+acceptance:
+  reflected_power_fraction_max: 0.10
+  origin: platform engineering criterion, not a literature acceptance limit

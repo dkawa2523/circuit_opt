@@ -1,0 +1,34 @@
+table_i_closure:
+  paper_target_ohm: {resistance: 2.69, reactance: -12.8}
+  paper_rounding_tolerance_ohm:
+    resistance_abs: 0.01
+    reactance_abs: 0.05
+    rationale: Table I rounds resistance to 0.01 ohm and reactance to 0.1 ohm; half-unit rounding plus numerical margin.
+  ngspice_vs_independent_oracle_tolerance_ohm:
+    resistance_abs: 1.0e-5
+    reactance_abs: 1.0e-5
+    rationale: Same linear circuit and component values; this is a numerical implementation check, not an experimental tolerance.
+
+matching_cases:
+  matcher_output_probe.yaml:
+    expected_feasible: true
+    expected_reflection_magnitude: [0.0, 1.0e-6]
+    role: correct matcher-output reference-plane positive
+  post_coax_plane_sensitivity.yaml:
+    expected_feasible: false
+    expected_reflection_magnitude: [0.8143, 0.8147]
+    role: post-coax plane substitution sensitivity with the matcher-output fixture held fixed
+  plasma_terminal_plane_sensitivity.yaml:
+    expected_feasible: false
+    expected_reflection_magnitude: [0.7246, 0.7250]
+    role: corrected plasma-terminal plane substitution sensitivity with the matcher-output fixture held fixed
+
+matching_numeric_tolerance:
+  input_resistance_abs_ohm: 1.0e-4
+  input_reactance_abs_ohm: 1.0e-4
+  reflection_magnitude_abs: 1.0e-6
+  rationale: Independent complex algebra versus ngspice for an ideal linear pi network.
+
+decision_limit:
+  reflected_power_fraction_max: 0.10
+  rationale: Platform test criterion only; Lee et al. did not prescribe a universal 10 percent limit.

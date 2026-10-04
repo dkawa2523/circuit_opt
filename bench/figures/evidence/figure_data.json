@@ -1,0 +1,265 @@
+{
+  "schema": "calculation_evidence_figures.v1",
+  "sources": {
+    "benchmark_result": {
+      "path": "runs/benchmark_suite/benchmark_result.json",
+      "sha256": "305aa5efa6c501fab4176fe5624977c955141ecb4c0b7d1fa758321245e04778",
+      "bytes": 66008
+    },
+    "external.summary": {
+      "path": "runs/calculation_evidence_20261001_verified/sim_20261001_070735_97d170e1/summary.json",
+      "sha256": "1cb10a135965a244222603a09417cde0c586a4183da659b5f138128107604182",
+      "bytes": 489
+    },
+    "external.record": {
+      "path": "runs/calculation_evidence_20261001_verified/sim_20261001_070735_97d170e1/debug/manifest.json",
+      "sha256": "d462c1921f27f1316e9dae3e05e7b11e25ae009614eeedf4bcf3d1cc5db8966b",
+      "bytes": 1992
+    },
+    "external.waveform": {
+      "path": "runs/calculation_evidence_20261001_verified/sim_20261001_070735_97d170e1/data/transient.csv",
+      "sha256": "3d089a9300e7e208301deb42efbcbdbc201fea2205e2a5940543f5c8032bb9ba",
+      "bytes": 209350
+    },
+    "external.case": {
+      "path": "bench/figures/cases/external_netlist_rc.yaml",
+      "sha256": "f88964b4b498eaae190759433485793ac63251fc85ef5a0a5d2ef8d5088c2cdf",
+      "bytes": 533
+    },
+    "external.fragment": {
+      "path": "bench/figures/cases/external_netlist_rc.cir",
+      "sha256": "8ce367837c8a3707eaf0db0945de1ee890bf301b02579f31504a2578b862fc21",
+      "bytes": 108
+    },
+    "external.resolved_netlist": {
+      "path": "runs/calculation_evidence_20261001_verified/external_netlist_resolved.cir",
+      "sha256": "1dabf81c2c47689f37db492c9ff7c004fb5b8953d16ec3fabd6c134f18e3991b",
+      "bytes": 419
+    },
+    "varying.summary": {
+      "path": "runs/p4_release_final2_20260930/cases/time_varying_resistor/sim_20260930_094642_97d170e1/summary.json",
+      "sha256": "e31e67ca93178c5b4bb451462520713e243e9ecfc02ccb3d02e43faf3a0e40e3",
+      "bytes": 502
+    },
+    "varying.record": {
+      "path": "runs/p4_release_final2_20260930/cases/time_varying_resistor/sim_20260930_094642_97d170e1/debug/manifest.json",
+      "sha256": "cf58440e58349fbec4c6bea0159185d5d68987d40133265f85c75e1ee9ba843d",
+      "bytes": 1947
+    },
+    "varying.waveform": {
+      "path": "runs/p4_release_final2_20260930/cases/time_varying_resistor/sim_20260930_094642_97d170e1/data/transient.csv",
+      "sha256": "7e77d82748f9e20b42c06790c7542db960a8753f1fddf02949f6d29c53fdfc28",
+      "bytes": 26394
+    },
+    "varying.case": {
+      "path": "runs/p4_release_final2_20260930/cases/time_varying_resistor/sim_20260930_094642_97d170e1/debug/case.yaml",
+      "sha256": "90e3de69f71299faeb788bb484ef617008319c436c06a4f2a526168a7c8d1335",
+      "bytes": 683
+    },
+    "varying.profile": {
+      "path": "runs/p4_release_final2_20260930/cases/time_varying_resistor/sim_20260930_094642_97d170e1/debug/inputs/c1466271c59c53fa9a056ad98436efc3",
+      "sha256": "c1466271c59c53fa9a056ad98436efc3c1cf0d88a571e2a04630a205cfe892e9",
+      "bytes": 48
+    },
+    "optimization.study": {
+      "path": "runs/calculation_evidence_20261001/figure_target_w-51305976c782c25a/study_result.json",
+      "sha256": "eadad154c8c261a009a5d7aedf30af73a1111b315e204f2a32cb4b94207afa2c",
+      "bytes": 3222
+    },
+    "optimization.case": {
+      "path": "runs/calculation_evidence_20261001/figure_target_w-51305976c782c25a/generations/g_f55c9a00a3624b58/case.yaml",
+      "sha256": "7858eabadc0e6baacec7bf1f52abbb5c8cf8a6f8c506cfa38611ebb41af51c9d",
+      "bytes": 1141
+    },
+    "optimization.target": {
+      "path": "runs/calculation_evidence_20261001/figure_target_w-51305976c782c25a/generations/g_f55c9a00a3624b58/inputs/f4d1c4db18604e1e868663961fad5a25",
+      "sha256": "f4d1c4db18604e1e868663961fad5a25a2553f4ace15b104dab28dceebe7f18e",
+      "bytes": 39464
+    },
+    "optimization.best": {
+      "path": "runs/calculation_evidence_20261001/figure_target_w-51305976c782c25a/generations/g_f55c9a00a3624b58/best_candidate.json",
+      "sha256": "feb62dda9a183baa68f401c714b5417f91cfaf614624d20c50cfa5e40820d7bb",
+      "bytes": 2884
+    },
+    "optimization.history": {
+      "path": "runs/calculation_evidence_20261001/figure_target_w-51305976c782c25a/generations/g_f55c9a00a3624b58/study_history.json",
+      "sha256": "5d3725dac299a6714ff518f48051798d00592c1db6d2045185fb720fbe34fa30",
+      "bytes": 6595
+    },
+    "optimization.evaluations": {
+      "path": "runs/calculation_evidence_20261001/figure_target_w-51305976c782c25a/generations/g_f55c9a00a3624b58/evaluations.csv",
+      "sha256": "eda99141a19b6f5d3c46f65ca0973e648b13bae89f6004e11ac4e444830ca6e7",
+      "bytes": 8128
+    }
+  },
+  "renderer": {
+    "python": "3.12.13",
+    "matplotlib": "3.11.1",
+    "schemdraw": "0.23",
+    "page_inches": [
+      7.25,
+      4.8
+    ],
+    "png_dpi": 300
+  },
+  "external_netlist": {
+    "R_ohm": 1000.0,
+    "C_F": 1e-07,
+    "frequency_Hz": 1000.0,
+    "expected_gain": 0.8467330159648304,
+    "expected_phase_deg": -32.14190763534206,
+    "comparison_start_s": 0.003000300328994942,
+    "rmse_V": 4.190473218455098e-06,
+    "max_abs_error_V": 5.928106177721659e-06,
+    "samples": 2511
+  },
+  "time_varying_element": {
+    "source_voltage_V": 10.0,
+    "source_resistance_ohm": 50.0,
+    "profile_points": 3,
+    "samples": 258,
+    "max_abs_voltage_error_V": 3.9968028886505635e-15,
+    "max_abs_current_error_A": 8.326672684688674e-17
+  },
+  "effective_plasma_loads": {
+    "scope": "terminal-equivalent circuit conformance; not plasma-state validation",
+    "ccp": [
+      {
+        "scenario_id": "low_frequency",
+        "frequency_Hz": 10000000.0,
+        "expected_resistance_ohm": 18.86079421249643,
+        "expected_reactance_ohm": -92.27146715450908,
+        "ngspice_resistance_ohm": 18.86079421249597,
+        "ngspice_reactance_ohm": -92.27146715450937
+      },
+      {
+        "scenario_id": "nominal_frequency",
+        "frequency_Hz": 13560000.0,
+        "expected_resistance_ohm": 19.28985642608597,
+        "expected_reactance_ohm": -54.67997855439334,
+        "ngspice_resistance_ohm": 19.28985642608592,
+        "ngspice_reactance_ohm": -54.67997855439337
+      },
+      {
+        "scenario_id": "high_frequency",
+        "frequency_Hz": 20000000.0,
+        "expected_resistance_ohm": 20.463913030896755,
+        "expected_reactance_ohm": -13.351679112169727,
+        "ngspice_resistance_ohm": 20.46391303089679,
+        "ngspice_reactance_ohm": -13.35167911216976
+      }
+    ],
+    "icp": [
+      {
+        "scenario_id": "low_frequency",
+        "frequency_Hz": 10000000.0,
+        "expected_resistance_ohm": 16.750790468909464,
+        "expected_reactance_ohm": 865.4568787265937,
+        "ngspice_resistance_ohm": 16.750790468846905,
+        "ngspice_reactance_ohm": 865.456878726568
+      },
+      {
+        "scenario_id": "nominal_frequency",
+        "frequency_Hz": 13560000.0,
+        "expected_resistance_ohm": 49.99999999999998,
+        "expected_reactance_ohm": 0.0,
+        "ngspice_resistance_ohm": 49.99999999994675,
+        "ngspice_reactance_ohm": -4.758113391127163e-10
+      },
+      {
+        "scenario_id": "high_frequency",
+        "frequency_Hz": 20000000.0,
+        "expected_resistance_ohm": 0.7820990400912651,
+        "expected_reactance_ohm": 957.8679116788057,
+        "ngspice_resistance_ohm": 0.7820990400870411,
+        "ngspice_reactance_ohm": 957.8679116788439
+      }
+    ],
+    "ccp_max_abs_impedance_error_ohm": 4.583000645652646e-13,
+    "icp_max_abs_impedance_error_ohm": 4.758113391127163e-10
+  },
+  "optimization": {
+    "optimizer": "grid",
+    "n_evaluations": 9,
+    "n_failed_evaluations": 0,
+    "selected_candidate_id": "trial_0004",
+    "selected_R1_ohm": 1000.0,
+    "selected_C1_F": 3e-10,
+    "selected_time_constant_s": 3e-07,
+    "selected_normalized_rmse": 0.0010349539006424284,
+    "evaluations": [
+      {
+        "trial": 0,
+        "candidate_id": "trial_0000",
+        "R1_ohm": 500.0,
+        "C1_F": 1e-10,
+        "normalized_rmse": 0.23891639327277026,
+        "waveform": "runs/calculation_evidence_20261001/figure_target_w-51305976c782c25a/artifacts/e_f1a0164a13ebf-44263608460a48ba/data/transient.csv"
+      },
+      {
+        "trial": 1,
+        "candidate_id": "trial_0001",
+        "R1_ohm": 500.0,
+        "C1_F": 3e-10,
+        "normalized_rmse": 0.1260846633161072,
+        "waveform": "runs/calculation_evidence_20261001/figure_target_w-51305976c782c25a/artifacts/e_f1a0164a13ebf-9ace6acbbbeca138/data/transient.csv"
+      },
+      {
+        "trial": 2,
+        "candidate_id": "trial_0002",
+        "R1_ohm": 500.0,
+        "C1_F": 9e-10,
+        "normalized_rmse": 0.09889120558734582,
+        "waveform": "runs/calculation_evidence_20261001/figure_target_w-51305976c782c25a/artifacts/e_f1a0164a13ebf-b6332b8bc212ee16/data/transient.csv"
+      },
+      {
+        "trial": 3,
+        "candidate_id": "trial_0003",
+        "R1_ohm": 1000.0,
+        "C1_F": 1e-10,
+        "normalized_rmse": 0.1786088165346705,
+        "waveform": "runs/calculation_evidence_20261001/figure_target_w-51305976c782c25a/artifacts/e_f1a0164a13ebf-7ba1f08120c5f5fb/data/transient.csv"
+      },
+      {
+        "trial": 4,
+        "candidate_id": "trial_0004",
+        "R1_ohm": 1000.0,
+        "C1_F": 3e-10,
+        "normalized_rmse": 0.0010349539006424284,
+        "waveform": "runs/calculation_evidence_20261001/figure_target_w-51305976c782c25a/artifacts/e_f1a0164a13ebf-39f40f780f25391a/data/transient.csv"
+      },
+      {
+        "trial": 5,
+        "candidate_id": "trial_0005",
+        "R1_ohm": 1000.0,
+        "C1_F": 9e-10,
+        "normalized_rmse": 0.3059759066369325,
+        "waveform": "runs/calculation_evidence_20261001/figure_target_w-51305976c782c25a/artifacts/e_f1a0164a13ebf-e5573cf214c9469c/data/transient.csv"
+      },
+      {
+        "trial": 6,
+        "candidate_id": "trial_0006",
+        "R1_ohm": 2000.0,
+        "C1_F": 1e-10,
+        "normalized_rmse": 0.07947737747168877,
+        "waveform": "runs/calculation_evidence_20261001/figure_target_w-51305976c782c25a/artifacts/e_f1a0164a13ebf-4352a76611de486f/data/transient.csv"
+      },
+      {
+        "trial": 7,
+        "candidate_id": "trial_0007",
+        "R1_ohm": 2000.0,
+        "C1_F": 3e-10,
+        "normalized_rmse": 0.17945029696938053,
+        "waveform": "runs/calculation_evidence_20261001/figure_target_w-51305976c782c25a/artifacts/e_f1a0164a13ebf-72845b632327b8b3/data/transient.csv"
+      },
+      {
+        "trial": 8,
+        "candidate_id": "trial_0008",
+        "R1_ohm": 2000.0,
+        "C1_F": 9e-10,
+        "normalized_rmse": 0.531955624581658,
+        "waveform": "runs/calculation_evidence_20261001/figure_target_w-51305976c782c25a/artifacts/e_f1a0164a13ebf-94f95a00c3769386/data/transient.csv"
+      }
+    ]
+  }
+}

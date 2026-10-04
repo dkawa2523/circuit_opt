@@ -1,0 +1,79 @@
+# Synthetic terminal-identification example for the effective CCP R-L-C load.
+# The calibrated fixture and effective plasma inductance are known. R_eff and
+# C_sheath_eq are fitted on three complex V/I observations and verified on two
+# frequencies that are never used by the optimizer.
+schema: case_yaml.v1
+case_id: ccp_terminal_identification
+run: {root: runs/ccp_terminal_identification, trials: 64}
+
+variables:
+  excitation_frequency_Hz: {role: operating, default: 1.356e7, unit: Hz}
+  target_voltage_re_V: {role: operating, default: 1.0, unit: V}
+  target_voltage_im_V: {role: operating, default: 0.0, unit: V}
+  target_current_re_A: {role: operating, default: 0.01, unit: A}
+  target_current_im_A: {role: operating, default: 0.0, unit: A}
+  fixture_R_ohm: {role: calibration, default: 2.0, unit: ohm}
+  fixture_L_H: {role: calibration, default: 1.0e-7, unit: H}
+  plasma_L_eff_H: {role: calibration, default: 2.5e-7, unit: H}
+  plasma_R_eff_ohm: {role: latent, bounds: [8.0, 35.0], default: 28.0, unit: ohm}
+  plasma_C_sheath_eq_F: {role: latent, bounds: [7.0e-11, 2.0e-10], scale: log, default: 9.0e-11, unit: F}
+
+source:
+  type: sine_voltage
+  name: Vsrc
+  p: src
+  n: 0
+  amplitude_V: 1.0
+  ac_magnitude_V: 1.0
+  frequency_Hz: excitation_frequency_Hz
+
+circuit:
+  builder: from_yaml
+  output_node: electrode
+  components:
+    - {ref: Rfixture, n1: src, n2: fixture_mid, value: fixture_R_ohm}
+    - {ref: Lfixture, n1: fixture_mid, n2: electrode, value: fixture_L_H}
+
+load:
+  name: ccp_lumped
+  reference_plane: electrode_terminal
+  characterization:
+    origin: synthetic_known_parameter_benchmark
+    frequency_Hz: [1.0e7, 4.068e7]
+    fixture: calibrated_series_RL
+  R_eff_ohm: plasma_R_eff_ohm
+  L_eff_H: plasma_L_eff_H
+  C_sheath_eq_F: plasma_C_sheath_eq_F
+
+measurement: {voltage_node: electrode, current_source: Vsrc, reference_impedance_ohm: 50}
+solver:
+  name: ngspice_cli
+  ac: {frequency_Hz: excitation_frequency_Hz}
+target:
+  objective: terminal_vi_fit
+  impedance_scale_ohm: 100.0
+study:
+  scenario_table:
+    table_file: ccp_terminal_observations.csv
+    id_column: scenario_id
+    values:
+      excitation_frequency_Hz: frequency_Hz
+      target_voltage_re_V: target_voltage_re_V
+      target_voltage_im_V: target_voltage_im_V
+      target_current_re_A: target_current_re_A
+      target_current_im_A: target_current_im_A
+  objectives:
+    - {metric: normalized_impedance_error, direction: minimize, aggregation: worst}
+optimizer: {name: differential_evolution, seed: 17}
+identification:
+  fit_scenarios: [fit_10MHz, fit_13_56MHz, fit_27_12MHz]
+  holdout_scenarios: [holdout_20MHz, holdout_40_68MHz]
+  observed_metrics: [resistance_ohm, reactance_ohm]
+  metric_scales: {resistance_ohm: 100.0, reactance_ohm: 100.0}
+  fit_loss_max: 0.02
+  holdout_loss_max: 0.03
+  sensitivity_step: 0.02
+  condition_number_max: 100.0
+  rank_tolerance: 1.0e-6
+  expected: {plasma_R_eff_ohm: 18.0, plasma_C_sheath_eq_F: 1.2e-10}
+  recovery_relative_tolerance: 0.08

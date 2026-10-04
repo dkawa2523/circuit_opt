@@ -1,7 +1,0 @@
-{
-  "loss": 1e+30,
-  "status": "failed",
-  "reason": "simulation_failed",
-  "record_status": "failed",
-  "objective": "ccp_waveform_power_proxy"
-}

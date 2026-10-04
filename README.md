@@ -1,142 +1,454 @@
-# Circuit Design Platform v6
+# PCD — semiconductor-equipment RF circuit studies
 
-This is a compact platform for circuit design studies where the simulation layer and the data/ML layer are deliberately separated.
+PCD evaluates whether one fixed RF matching network remains electrically
+acceptable over a declared chamber-load window after only the tuner settings
+available in the equipment are adjusted.
+
+It is a circuit-model foundation, not a plasma solver. Chamber or plasma
+information enters as a qualified electrical one-port at a named reference
+plane: measured or supplied R+jX points, a time-ordered quasi-static R+jX
+profile, an effective CCP R-L-C fit, or an effective ICP transformer fit. PCD does not infer density, sheath geometry,
+chemistry, species power, temperature, or self-consistent plasma/circuit
+feedback.
+
+Advanced explicit transient cases may also impose a measured or externally
+calculated positive `R(t)` on a declared resistor. This is one-way circuit
+excitation, not self-consistent plasma evolution; its source CSV is archived
+and its terminal voltage/current can be observed directly.
+
+A case-local etch-CCP verification problem now exercises a richer 60 MHz
+upper RF + 2 MHz lower RF + pulsed negative-DC circuit. It keeps matching,
+feedthrough, blocking, choke, electrode/ESC stray, and wall-loss elements
+explicit, while charge/flux laws define time-varying bulk `R/L` and both
+sheath capacitances. An independent MNA target checks voltage, current, charge,
+flux, and reflected voltage; an 81-point exact grid then identifies four
+bounded on-state values from wafer voltage alone. This is evidence for explicit
+circuit modeling, not a new generic plasma-physics feature. See the
+[problem statement and results](docs/etch-ccp-dcs-dynamic-impedance-study-ja.md)
+and the [six evidence figures](bench/figures/README.md#dynamic-impedance-etch-ccp-with-dual-rf-and-dc-superposition).
+
+A worked dual-frequency CCP example combines a 40 MHz upper excitation, an
+800 kHz rectangular lower bias, fixed effective sheaths, and a prescribed
+plasma `R(t)`. It verifies wafer/chuck voltage and the upper-port reflected
+voltage wave against an independent charge equation. Two separate exact-grid
+inverse studies then recover a bounded four-point `R(t)` profile from either
+observable alone and check the unused observable as held-out circuit evidence.
+See the [problem statement and results](docs/dual-frequency-ccp-pulsed-bias-study-ja.md)
+and the [four evidence figures](bench/figures/README.md#dual-frequency-ccp-with-rectangular-lower-bias).
+
+PCD v1 optimizes component values and selects among declared, validated circuit
+templates. It does not generate arbitrary circuit graphs, optimize physical
+PCB/chamber placement, solve plasma chemistry, or perform self-consistent
+plasma-circuit evolution. The four ordinary workflows are `sim-run` for one
+solve, `analyze` for saved-result measurements and figures, `run` for a
+complete Scenario/Control design study or optimization, and `identify` for a
+bounded effective-terminal fit with independent holdout evidence. Machine learning is
+not part of the current product surface. The removed experiments, the reason
+they were rejected, and the gate for any future replacement are specified in the
+[platform reset plan](docs/platform-reset-plan-ja.md).
+
+## Smallest useful study
+
+```yaml
+schema: pcd.rf.v1
+case_id: production_window
+frequency_Hz: 13560000
+
+network:
+  type: pi_match
+  fixed: {L1: 6.43e-7}
+  tuning:
+    C1: [4.8e-10, 6.7e-10, 8.9e-10]
+    C2: [4.5e-11, 1.6e-10, 2.1e-10]
+
+load:
+  type: impedance_table
+  file: load_points.csv
+  reference_plane: electrode_terminal
+
+acceptance:
+  reflected_power_fraction_max: 0.10
+```
+
+`load_points.csv` has one stable shape:
+
+```csv
+scenario_id,resistance_ohm,reactance_ohm,weight
+nominal,25,-80.77,1
+high_R,50,-80.77,1
+low_R,12.5,-80.77,1
+```
+
+Run it with one command:
+
+```powershell
+uv sync --group dev
+uv run pcd solver-diagnose
+uv run pcd run case.yaml
+```
+
+When using Codex inside this repository, the project-local `$pcd-runner` skill
+can select the appropriate validation, one-simulation, study, benchmark, or
+result-inspection workflow. Its instructions live under
+`.agents/skills/pcd-runner`; it is not installed as a user-wide skill.
+
+ngspice must be installed and available on `PATH`; on Windows the console
+binary `ngspice_con.exe` is preferred for unattended runs. If local application
+policy blocks generated console-script launchers, the equivalent entry point
+is `uv run python -m pcd`. `solver-diagnose` checks discovery and reports the
+exact executable/version before a long study starts.
+
+Results default to `runs/`. The terminal shows the selected design candidate,
+separate fixed/calibration/known-latent inputs, analysis type, fixed frequency when applicable, reference plane, condition
+coverage, selected tuner state per condition, declared objectives, failed
+limits, and the result directory. It also prints the selected candidate
+evidence path. `study_result.json` retains the same compact decision together
+with every detailed result reference. Use `--json`
+for the machine-readable result or `--output path` to choose the root
+directory. For CI or unattended qualification, add `--require-acceptance` so
+an electrically solved but rejected design also produces a nonzero exit code.
+The active generation contains the complete flat `evaluations.csv`, compact
+candidate-level `study_history.json`, and one structured `best_candidate.json`
+for the selected design. Reusable raw solver output is cached separately;
+non-selected candidate JSON and interpreted evaluation JSON are not written a
+second time.
+After search ranking, the selected parameter set is run once more through the
+ordinary solver path with cache reuse disabled. `best_candidate.json` and
+`study_result.json.best` are built from that fresh replay; `evaluations.csv`
+and `study_history.json` remain the search evidence. The separate
+`verification` summary reports the fresh solve count and failure status.
+
+The real-ngspice PCD user paths and their circuit-only executable
+release suite are documented in
+[`bench/release/README.md`](bench/release/README.md). The 2026-10-04 run
+reproduced all eight inputs with 353 fresh ngspice evaluations, including
+cache-free selected-control replays. Machine
+learning is intentionally outside that gate; it cannot change a circuit
+foundation decision.
+
+When two or more objectives are declared, it also contains `pareto_front.csv`.
+That table includes only fully solved, fully feasible candidates and identifies
+the ordinary lexicographic selection without replacing it. A sampled continuous
+study reports an observed front, not a claim about the unsearched design space.
+For an `impedance_profile`, the active generation also contains the concise
+`snapshot_response.csv`: one selected row per time point with load and input
+R/X, reflection, forward/reflected/load power, selected tuning, and acceptance.
+
+For one simulation without candidate scoring, use `pcd sim-run case.yaml`.
+Its saved result can be inspected again without rerunning ngspice:
+
+```powershell
+uv run pcd analyze runs/<simulation-run>
+```
+
+A new simulation run has three top-level entries: `summary.json` is the small
+user-facing outcome, `data/` contains the canonical transient/AC tables, and
+`debug/` contains the replay case, exact netlist, solver log, and detailed
+manifest. Parameters are recorded once in the debug manifest instead of a
+duplicate `params.json`. Saved-run tools read this same layout, so artifact
+creation and replay have one path rather than a historical-format branch.
+
+`analyze` writes a concise `summary.json` plus the applicable impedance/Smith,
+transient, power, and component-stress figures. It reports electrical
+measurements only; engineering acceptance remains the responsibility of a
+study so a solver success is never presented as a design pass.
+
+For a multi-point AC sweep, `analyze` also reports the sampled best match and,
+only when both half-power crossings are inside the sweep, the power-response
+resonance, -3 dB bandwidth, fractional bandwidth, and loaded Q. The response
+uses measured load real power when its probes are present, otherwise
+`1 - |Gamma|^2`; this is not an unloaded component Q. Periodic transient runs
+also receive a voltage/current harmonic comparison relative to H1.
+
+## What users specify
+
+| input | engineering meaning | changes when |
+|---|---|---|
+| `network.fixed` | installed or otherwise fixed hardware | the case/hardware definition changes; never during a study |
+| `network.search` | hardware values PCD may search | a new candidate is proposed |
+| `network.tuning` | discrete equipment settings | independently for each load condition |
+| load table / `conditions` | external electrical conditions | imposed on the candidate |
+| `acceptance` | pass/fail engineering limits | never optimized away |
+
+The internal `ParameterSet`, Candidate, Scenario, and ControlState types enforce
+those roles, but public RF users do not need to write them. Candidate values now
+contain only `network.search` hardware; fixed values remain visible as
+`fixed.*` result columns and in the archived case. A parameter cannot belong to
+more than one role.
+
+PCD enumerates every declared tuning combination for every condition. It does
+not sample an incomplete tuner grid and call the result infeasible. The
+default safety limit is 250 states; a deliberately larger study may set
+`execution.control_state_limit`.
+
+The same rule applies to hardware selection: every `network.search.values`
+combination is compared exactly once and the candidate count is inferred.
+The public RF input does not turn a continuous range into an arbitrary sample
+and present that sample as a completed design decision. Exploratory continuous
+optimization remains available only in the advanced explicit extension path.
+There, `differential_evolution` searches bounded numeric design variables with
+a recorded seed and uses the same feasibility-first scenario result as final
+candidate ranking; engineering constraints are not hidden inside the waveform
+objective. `random` remains a simple mixed/categorical exploration baseline,
+not the recommended continuous optimizer.
+Whichever search proposes the candidate, the selected design is independently
+replayed without reading or writing the search cache before it is published as
+the engineering decision.
+For a multi-objective advanced case, PCD derives a direction-aware observed
+Pareto front from the completed candidate evidence. It does not turn
+Differential Evolution into a hidden weighted-sum optimizer, and it labels a
+front as complete only for an explicitly enumerated grid.
+
+## What PCD resolves automatically
+
+The public input is compiled once before validation or simulation. The
+resolved plan explicitly contains:
+
+- the RF source, standard nodes, load ports, and 50-ohm measurement plane;
+- the same frequency for source, impedance anchor, and one-point AC solve;
+- scenario-column mappings and a complete tuning-state budget;
+- reflection objective, engineering constraints, solver, and the exact
+  candidate count;
+- component probes and effective series-loss elements only when requested.
+
+No numerical layer reinterprets the short input independently. Every run
+archives `input_case.yaml`, `resolved_plan.yaml`, and executable `case.yaml`,
+so inferred defaults remain reviewable and replayable. Command-line execution
+overrides are applied before validation, hashing, and archival; the stored
+resolved plan therefore describes the run that actually occurred.
+
+See [the RF input reference](docs/input-format.md) for all supported fields and
+[RF load models](docs/rf-load-models.md) for model responsibility and limits.
+The accepted implementation order and the fixed/changeable parameter boundary
+are in the [platform reset plan](docs/platform-reset-plan-ja.md). The older
+foundation plan was removed because it no longer described the executable
+architecture.
+
+## Component stress and effective loss
+
+Absolute stress requires a declared drive amplitude:
+
+```yaml
+drive_peak_V: 100
+network:
+  type: pi_match
+  fixed: {C1: 2.58e-10, L1: 1.20e-6, C2: 7.45e-12}
+  loss_ohm: {C1: 0.1, L1: 0.5, C2: 0.1}
+acceptance:
+  reflected_power_fraction_max: 0.10
+  component_limits:
+    L1: {current_rms_A_max: 1.0, loss_W_max: 0.5}
+  loss_balance_fraction_max: 1.0e-5
+```
+
+PCD reports terminal RMS/peak voltage and current, effective loss, network
+efficiency, source-terminal RMS current/apparent power, and electrical loss
+closure. With an explicit drive, every named component in the public matching
+topology is observed automatically; limits remain optional. Effective ESR/DCR
+is not an internal temperature or lifetime model. Details are in
+[component loss and stress](docs/component-loss-stress.md).
+
+## RF load choices
+
+| public load type | appropriate input | boundary |
+|---|---|---|
+| `impedance_table` | independent R+jX points, optionally with `frequency_Hz` per row | no interpolation between supplied points |
+| `impedance_profile` | strictly time-ordered `time_s, resistance_ohm, reactance_ohm` observations | independent AC snapshots; no state propagation |
+| `impedance_point` | one R+jX value at one frequency | exact only at that anchor |
+| `ccp_lumped` | qualified effective series R-L-C parameters | no sheath state or species-power inference |
+| `icp_transformer` | qualified coil plus identifiable reflected-loading fit | terminal model only; no density or plasma-power split |
+
+`reference_plane` is required. `evidence` is optional so exploratory work can
+run, but strict validation warns when applicability has not been documented.
+Referenced scenario, target-waveform, and external-netlist files are archived
+once per study by content hash, so the executable `case.yaml` replays from the
+study bundle rather than depending on the original file location.
+Advanced component resistance profiles use that same archive and fingerprint
+path. See
+[`time_varying_resistor.yaml`](examples/advanced/time_varying_resistor.yaml)
+for a runnable transient whose ngspice result is checked against a closed-form
+resistive divider.
+
+A quasi-static profile additionally requires an absolute `drive_peak_V`,
+either once in the case or in every CSV row, because its output includes power
+in watts. Each row is solved at its declared frequency as an independent
+small-signal AC condition. PCD does not interpolate the measured profile or
+claim that the circuit/plasma state evolves between rows. The runnable
+[`rf_quasi_static_profile.yaml`](examples/rf_quasi_static_profile.yaml)
+demonstrates the complete input and output path.
+
+## Effective terminal identification
+
+`pcd identify CASE.yaml` fits only parameters explicitly marked `latent` on
+named fit scenarios. It then replays the fitted values on holdout scenarios
+that were never visible to the optimizer and calculates a normalized local
+sensitivity matrix. A small fit loss is not reported as identified when the
+holdout fails, the sensitivity rank is deficient, or its condition number is
+outside the declared limit.
+
+The runnable CCP example uses complex source-plane V/I observations from CSV,
+a calibrated fixture, and an effective series plasma R-L-C terminal model:
+
+```powershell
+uv run --frozen python -m pcd identify examples/advanced/ccp_terminal_identification.yaml
+```
+
+`identification_result.json` links the fit and holdout studies, aligned
+observation tables, and sensitivity evidence. This identifies effective
+electrical terminal parameters; it does not infer sheath geometry, plasma
+chemistry, density, or process yield.
+
+## Core electrical benchmarks
+
+The core suite contains twelve concise public RF cases and four explicit
+advanced/boundary cases:
+
+- A1-A3: independent complex-impedance goldens for every public topology;
+- A4: multi-frequency E2E for the effective CCP R-L-C port;
+- A5: multi-frequency public-input E2E for the effective ICP transformer port;
+- B1-B3: fixed, limited-control, and full-control design decisions;
+- B4: independent synthetic frequency-point replay;
+- B5: match passes but high-drive component limits fail;
+- B6: complete three-value hardware search;
+- B7: Candidate x Scenario x Control orthogonal enumeration;
+- B8: deterministic full-factorial component-value corner stress;
+- D1-D3: equivalent lossy reference-plane representations and a fixture
+  double-counting negative control.
+
+Expectations and explanatory text live separately in
+`bench/expectations.yaml`. Reproduce all 411 real-ngspice evaluations with:
+
+```powershell
+uv run python bench/run_suite.py --run-root runs/benchmark_suite
+```
+
+These cases establish circuit-pipeline behavior and bounded electrical design
+decisions, not a qualified reactor process window.
+
+The concise benchmark report is stored at
+[`output/reports/benchmark-report.md`](output/reports/benchmark-report.md),
+with a machine-readable summary and flat core/literature evidence tables in
+the same directory. See [`bench/reports/README.md`](bench/reports/README.md)
+for its reproducible generation sequence and interpretation boundary.
+
+## Code structure
 
 ```text
-Simulation layer:  pcd.sim_core + pcd.sim_methods + pcd.sim_registry
-  case.yaml -> circuit/load -> ngspice netlist -> solver -> waveform artifacts
-  It does not compute objective metrics and does not import ML code.
-
-Data/ML layer:     pcd.records + pcd.ml_core + pcd.ml_methods + pcd.ml_registry
-  existing artifacts or external waveforms -> metrics -> learning table -> candidates/surrogate
-  It does not import ngspice solvers or circuit builders.
-
-Workflow layer:    pcd.workflow
-  optional glue: ask -> simulate -> score -> tell
+.agents/skills/pcd-runner/ repository-local Codex execution workflow
+pcd/plan.py       public RF input -> explicit resolved execution plan
+pcd/topology_catalog.py reviewed matching connections and component roles
+pcd/case.py       schema routing, case paths, and parameter defaults
+pcd/problem.py    one fixed/calibration/operating/control/design/latent assignment
+pcd/api.py        supported imports for Python callers and plugins
+pcd/study_config.py advanced Candidate/Scenario/Control translation
+pcd/core/         role types, scenario/control selection, aggregation
+pcd/evaluation.py one request -> canonical response -> metric adapter
+pcd/study.py      candidate orchestration, caching, and result assembly
+pcd/identification.py latent fit, holdout replay, and sensitivity rank
+pcd/search.py     optimizer interface, exact grids, and random baseline
+pcd/continuous_search.py bounded differential-evolution candidate search
+pcd/sim_core.py   one forward solve and its immutable run artifacts
+pcd/simulation.py solver-neutral analysis/result types
+pcd/simulation_input.py Case -> typed solver execution input
+pcd/probes.py     Case-free waveform/AC/component probe declarations
+pcd/component_models.py Case -> observed component and ESR/DCR resolution
+pcd/component_profiles.py prescribed R(t) CSV validation and SPICE rendering
+pcd/netlist.py    circuit IR and ngspice rendering
+pcd/solver.py     typed ngspice process adapter
+pcd/ngspice_io.py ngspice output -> canonical arrays
+pcd/netlist_import.py execution-preserving external-netlist import
+pcd/netlist_parse.py drawing-oriented topology parsing
+pcd/netlist_viz.py parsed-topology rendering
+pcd/sim_methods.py named circuit, load, and solver implementations
+pcd/spice.py      SPICE parameter resolution and value formatting
+pcd/artifacts.py  run serialization and implementation identity
+pcd/records.py    stable reads and artifact-path resolution for saved runs
+pcd/analysis/     AC, periodic-transient, and component-stress measurements
+pcd/reporting/    saved-run electrical summary and standard figures
+pcd/metrics.py    metrics and engineering-limit evaluation
+pcd/rf_loads.py   electrical RF-load equations and parameter validation
+pcd/results/      content-addressed result storage and summaries
+pcd/signals/      reusable time-series and phasor primitives
 ```
 
-The boundary artifact is:
+The dependency flow and directory ownership are summarized in
+[the architecture guide](docs/architecture.md). Third-party extensions should
+import documented types and decorators from `pcd.api`; internal module helpers
+may change within a minor release. Each extension receives an isolated case and
+parameter snapshot, so accidental mutation cannot alter the study fingerprint
+or another evaluation.
 
-```text
-sim_manifest.json + waveform.csv
+Solver extensions use `register_solver` and accept one `SolverRunRequest`.
+Every solver follows this boundary; adapters do not receive the whole Case
+dictionary merely to obtain analysis or execution settings.
+Metric extensions receive an isolated Case, the fully resolved parameter
+mapping, and the canonical `SimulationResult`; they return named electrical
+values and never locate artifacts or run a solver.
+
+The explicit `case_yaml.v1` form remains an advanced extension path for custom
+netlists, plugins, transient studies, and generic waveform objectives. In a
+case, use either the single `source` mapping or the `sources` list, not both.
+In a multi-source advanced case, `measurement.current_source` selects the single AC
+excitation and measured input port; other structured sources are AC-grounded,
+and a floating source is measured across its declared `p`/`n` terminals. Both
+public and advanced studies use `pcd run`; `sim-run` is reserved for one
+simulation without scoring. A solver-reported failed `sim-run` exits nonzero
+while retaining its run record; `--allow-failure` is available for deliberate
+collection of those known solver outcomes. Invalid input exits with code 2 and
+is not converted into a fake waveform or bypassed by `--allow-failure`.
+Source selection, probe columns, solver analysis, and measurement/load-port
+shape are resolved before a run directory is created, so validation and
+execution use the same interpretation. Circuit and load builders are also run
+in memory before artifact allocation; missing RF-model parameters, nonphysical
+values, malformed components, and invalid imported-netlist policies therefore
+do not leave partial run directories. Unexpected extension errors propagate.
+`Circuit.add` declares a two-terminal element and `Circuit.raw` adds an
+explicit SPICE statement. Graph-learning metadata is not part of this runtime
+contract.
+New RF matching studies should use `pcd.rf.v1`.
+
+For `circuit.builder: from_netlist`, authored `.param`, `.model`, `.options`,
+conditionals, and subcircuits are retained. Relative `.include` dependencies
+and selected `.lib` sections are resolved recursively and inlined into the
+portable execution snapshot; every contributing source file is hashed in the
+input manifest. The case owns the source, analysis/control block, output
+files, and final design-parameter overrides, so imported `.control`, `.ac`,
+`.tran`, and `.end` statements are not copied into the generated run deck.
+Set `circuit.netlist_mode` to `deck` for a complete SPICE file with its
+mandatory first-line title, or leave the default `fragment` for circuit
+statements with no title. The default `source_policy: replace_named` removes
+only imported independent sources whose names exactly match generated case
+sources; `preserve` keeps every imported source. PCD never guesses a source
+conflict from a shared node.
+
+Advanced transient RF cases may tune the measurement policy without replacing
+the metric implementation:
+
+```yaml
+measurement:
+  load_current: auto
+  periodic_cycles: 5
+  settling_comparisons: 3
+  settling_tolerance: 1.0e-4
+  harmonic_count: 7
 ```
 
-Simulation commands never write `metrics.json`.  ML commands read existing records and write `metrics.json`, `scores.csv`, and optional surrogate outputs.
+Defaults remain 3 measured cycles, 2 adjacent-cycle comparisons, `1e-3`
+normalized residual, and 3 harmonics. A measurement is accepted only when the
+trace contains both the requested measured cycles and enough history for every
+settling comparison; PCD reports required and available cycle counts.
 
-## Install
+## Verification
 
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -e .
+```powershell
+uv run --frozen python -m pytest -q
+uv run --frozen python -m nox -s quality-pr
+uv run --frozen python -m nox -s architecture-audit
+uv run --frozen python bench/run_suite.py --run-root runs/benchmark_suite
 ```
 
-Optional Optuna:
-
-```bash
-pip install -e '.[optuna]'
-```
-
-## Simulation only
-
-```bash
-pcd sim-run examples/rf_plasma_fixed.yaml --solver dummy --run-root runs/sim_only
-pcd sim-netlist examples/rf_plasma_fixed.yaml --out netlist.cir
-pcd visualize-netlist netlist.cir --out circuit_schematic.png --summary-json circuit_schematic.json
-```
-
-`visualize-netlist` uses Schemdraw to render conventional schematic symbols
-for resistors, capacitors, inductors, sources, and grounds.  Subcircuits are
-expanded where possible so load-model internals remain visible.
-
-## Research mode vs production-safe mode
-
-Research mode keeps exploratory loops moving.  It allows the `dummy` solver and
-scores failed simulations with an explicit large penalty so optimizers can keep
-collecting observations:
-
-```bash
-pcd workflow-optimize examples/topology_choice_pipeline.yaml \
-  --optimizer random \
-  --solver dummy \
-  --n-trials 10 \
-  --run-root runs/research_loop
-```
-
-Production-safe mode adds validation, strict process exit behavior, failed-run
-exclusion for surrogate training, and a bounded external solver timeout:
-
-```bash
-pcd validate-case examples/rf_plasma_fixed.yaml --strict
-pcd sim-run examples/rf_plasma_fixed.yaml --solver ngspice_cli --run-root runs/prod_sim --strict-exit
-pcd ml-score examples/rf_plasma_fixed.yaml runs/prod_sim --strict-exit
-pcd ml-fit-surrogate runs/prod_sim --exclude-failed --out runs/prod_sim/surrogate.json
-```
-
-Set `solver.timeout_s` in the case file to override the default 300 second
-timeout used by `ngspice_cli`.
-
-## ML/data only
-
-```bash
-pcd ml-propose examples/topology_choice_pipeline.yaml --n 20 --out candidates.csv
-pcd ml-score examples/topology_choice_pipeline.yaml runs/sim_only
-pcd ml-fit-surrogate runs/sim_only --out surrogate.json
-pcd ml-predict surrogate.json candidates.csv --out predicted_candidates.csv
-```
-
-External measured or plasma-coupled waveforms can be imported with `pcd.records.import_external_waveform()` and then scored by the ML layer without running ngspice.
-
-## Explicit closed-loop workflow
-
-```bash
-pcd workflow-optimize examples/topology_choice_pipeline.yaml \
-  --optimizer random \
-  --solver dummy \
-  --n-trials 10 \
-  --run-root runs/closed_loop
-```
-
-## Built-in simulation methods
-
-Circuit builders:
-
-```text
-from_yaml, l_match, pi_match, pi_match_harmonic
-```
-
-Load models:
-
-```text
-none, resistor, parallel_rc, series_rlc, electrode_stray,
-from_yaml, plasma_fixed_rlc, plasma_state_rlc, plasma_table_rlcq
-```
-
-Solvers:
-
-```text
-dummy, ngspice_cli
-```
-
-## Built-in ML methods
-
-Objectives:
-
-```text
-waveform_l2, waveform_l2_harmonics
-```
-
-Optimizers:
-
-```text
-random, optuna
-```
-
-## Plugin pattern
-
-```python
-from pcd.sim_registry import register as sim_register
-from pcd.ml_registry import register as ml_register
-```
-
-Keep plugin functions small.  A circuit builder returns `Circuit`; a load builder returns a `load_model` subckt string; an objective consumes a saved waveform and returns a metrics dict containing `loss`.
+Runtime output belongs under `runs/`; examples document syntax; tests verify
+software and numerical behavior; benchmarks support only their stated
+electrical decisions. The architecture audit combines Ruff complexity checks,
+Pyrefly, Import Linter, and Radon hotspot reports; Radon scores are review
+evidence rather than blanket pass/fail thresholds.

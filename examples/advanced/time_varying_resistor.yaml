@@ -1,0 +1,32 @@
+# Advanced transient with an externally prescribed chamber resistance.
+schema: case_yaml.v1
+case_id: time_varying_resistor
+run: {root: runs/time_varying_resistor}
+
+source:
+  type: dc_voltage
+  name: Vsrc
+  p: src
+  n: 0
+  voltage_V: 10
+
+circuit:
+  builder: from_yaml
+  output_node: out
+  components:
+    - {ref: Rsource, n1: src, n2: out, value: 50}
+    - ref: Rchamber
+      n1: out
+      n2: 0
+      observe: true
+      value:
+        profile: time_varying_resistor.csv
+        time_column: time_s
+        value_column: resistance_ohm
+        interpolation: linear
+
+load: {name: none}
+measurement: {voltage_node: out, current_source: Vsrc}
+solver:
+  name: ngspice_cli
+  tran: {step_s: 1.0e-8, stop_s: 2.5e-6}

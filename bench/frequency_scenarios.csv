@@ -1,0 +1,4 @@
+scenario_id,frequency_Hz,resistance_ohm,reactance_ohm,weight,meaning
+low_frequency,10000000,20,-110,1,independent low-frequency impedance point
+nominal_frequency,13560000,25,-80.76908643457358,1,network tuning point
+high_frequency,18000000,30,-55,1,independent high-frequency impedance point

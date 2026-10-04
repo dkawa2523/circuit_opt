@@ -1,0 +1,53 @@
+benchmark_id: p1_gec_ccp_tables_iii_iv
+evidence_grade: measured_table_with_reported_group_spread
+drive:
+  frequency_Hz: 13560000
+  gas: argon
+  pressures_Pa: [13, 33, 66, 133]
+reference_plane: powered_electrode_surface
+amplitude_convention: fundamental_peak_amplitude
+phase_convention: voltage_relative_to_current_deg
+sources:
+  - id: hargis_1994
+    role: numerical_source
+    citation: >-
+      P. J. Hargis et al., The Gaseous Electronics Conference
+      radio-frequency reference cell: A defined parallel-plate
+      radio-frequency system for experimental and theoretical studies of
+      plasma-processing discharges, Review of Scientific Instruments 65,
+      140-154 (1994).
+    doi: https://doi.org/10.1063/1.1144770
+    full_text: https://cpseg.eecs.umich.edu/pub/articles/rsi_65_140_1994.pdf
+    extraction:
+      method: manual_transcription_checked_against_rendered_pdf
+      table_III:
+        journal_page: 149
+        population: cells_with_24_MHz_empty_cell_resonance
+      table_IV:
+        journal_page: 150
+        population: cells_with_34_MHz_empty_cell_resonance
+      selected_rows: all_32_central_rows_at_13_33_66_and_133_Pa
+    power_definition: >-
+      Equation 8 sums the first five voltage/current harmonics; the
+      fundamental term is 0.5*Ve1*Ie1*cos(phi_e1).
+  - id: sobolewski_1995
+    role: reference_plane_and_uncertainty_interpretation
+    citation: >-
+      M. A. Sobolewski, Current and Voltage Measurements in the Gaseous
+      Electronics Conference RF Reference Cell, Journal of Research of the
+      National Institute of Standards and Technology 100, 341-351 (1995).
+    doi: https://doi.org/10.6028/jres.100.026
+    full_text: https://pmc.ncbi.nlm.nih.gov/articles/PMC4887242/
+    relevant_findings:
+      - corrected quantities are reported at the powered-electrode surface
+      - probe and oscilloscope amplitude accuracy is only a few percent
+      - omitted cell and shunt resistive parasitics caused a systematic phase error typically about 5 degrees in the NIST cell
+      - the reported spread includes real cell differences as well as error
+limitations:
+  - 24_MHz_and_34_MHz_are_empty_cell_resonance_groups_not_drive_frequencies
+  - group_spread_is_not_instrument_only_uncertainty
+  - reported_power_contains_up_to_five_harmonics
+  - this_is_a_GEC_reference_cell_not_a_production_semiconductor_chamber
+  - no_microscopic_plasma_parameter_claim_is_made
+  - the_10_percent_reflected_power_limit_is_a_platform_fixture_not_a_paper_criterion
+  - symmetric_plus_minus_6_degree_phase_sets_are_platform_sensitivity_stresses_not_paper_uncertainty_intervals

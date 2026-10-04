@@ -1,0 +1,19 @@
+# B4: a fixed network is replayed at independent synthetic frequency points.
+schema: pcd.rf.v1
+case_id: benchmark_match_independent_frequency_points
+
+network:
+  type: pi_match
+  fixed:
+    C1: 2.58221757073e-10
+    L1: 1.19731080934e-6
+    C2: 7.45488022912e-12
+
+load:
+  type: impedance_table
+  file: ../frequency_scenarios.csv
+  reference_plane: electrode_terminal
+  evidence: {origin: synthetic_benchmark}
+
+acceptance:
+  reflected_power_fraction_max: 0.10

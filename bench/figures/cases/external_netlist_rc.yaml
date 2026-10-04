@@ -1,0 +1,24 @@
+# Figure-evidence case: an authored SPICE fragment solved through the public CLI.
+schema: case_yaml.v1
+case_id: figure_external_netlist_rc
+
+source:
+  type: sine_voltage
+  name: Vsrc
+  p: src
+  n: 0
+  amplitude_V: 1.0
+  frequency_Hz: 1000.0
+
+circuit:
+  builder: from_netlist
+  netlist_file: external_netlist_rc.cir
+  netlist_mode: fragment
+  source_policy: replace_named
+  output_node: out
+
+load: {name: none}
+measurement: {voltage_node: out, current_source: Vsrc}
+solver:
+  name: ngspice_cli
+  tran: {step_s: 2.0e-6, stop_s: 5.0e-3}

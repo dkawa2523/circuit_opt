@@ -1,0 +1,63 @@
+# Inverse problem A: use only wafer/chuck voltage to identify four values of
+# the repeated, piecewise-linear plasma resistance trajectory.
+schema: case_yaml.v1
+case_id: dual_frequency_ccp_inverse_wafer
+
+sources:
+  - {type: voltage_sine, name: Vhf, p: hf_src, n: 0, dc_V: 0.0, amplitude_V: 400.0, frequency_Hz: 4.0e7, phase_deg: 0.0}
+  - {type: voltage_pulse, name: Vbias, p: bias_src, n: 0, v1_V: 100.0, v2_V: -400.0, delay_s: 0.0, rise_s: 5.0e-8, fall_s: 5.0e-8, width_s: 1.0e-6, period_s: 1.25e-6}
+
+circuit:
+  builder: from_yaml
+  output_node: top_electrode
+  variables:
+    R_off_ohm: {choices: [55.0, 70.0, 85.0], default: 70.0}
+    R_edge_ohm: {choices: [18.0, 24.0, 30.0], default: 24.0}
+    R_plateau_ohm: {choices: [24.0, 30.0, 36.0], default: 30.0}
+    R_recovery_ohm: {choices: [50.0, 65.0, 80.0], default: 65.0}
+  components:
+    - {ref: Rhf, n1: hf_src, n2: top_electrode, value: 50.0}
+    - {ref: Rbias, n1: bias_src, n2: bias_feed, value: 50.0}
+    - {ref: Cblock, n1: bias_feed, n2: bottom_electrode, value: 2.0e-9}
+    - {raw: "Bupper_incident upper_incident_monitor 0 V = '(v(top_electrode)-50*i(Vhf))/2'"}
+    - {raw: "Bupper_reflected upper_reflected_monitor 0 V = '(v(top_electrode)+50*i(Vhf))/2'"}
+
+load:
+  name: from_yaml
+  ports: {p: top_electrode, n: bottom_electrode}
+  reference_plane: electrode_terminals
+  components:
+    - {ref: Csheath_upper, n1: p, n2: bulk_top, value: 1.0e-9}
+    - raw: "Rplasma bulk_top bulk_bottom R = 'pwl((time-floor(time/1.25e-6)*1.25e-6), 0, R_off_ohm, 5e-8, R_edge_ohm, 1.05e-6, R_plateau_ohm, 1.1e-6, R_recovery_ohm, 1.25e-6, R_off_ohm)'"
+    - {ref: Csheath_wafer, n1: bulk_bottom, n2: n, value: 1.0e-9}
+
+measurement:
+  voltage_node: bottom_electrode
+  current_source: Vhf
+  load_current: auto
+  reference_impedance_ohm: 50.0
+  probes:
+    wafer_voltage_V: v(bottom_electrode)
+    upper_port_voltage_V: v(top_electrode)
+    upper_reflected_voltage_V: v(upper_reflected_monitor)
+
+solver:
+  name: ngspice_cli
+  timeout_s: 300
+  tran: {step_s: 2.5e-10, stop_s: 5.0e-6}
+
+target:
+  waveform_file: dual_frequency_ccp_target_wafer.csv
+  objective: waveform_l2
+  constraints:
+    metric_bounds:
+      peak_abs_voltage_V: {max: 1000.0}
+
+study:
+  candidate_enumeration: exact
+  design_variables: [R_off_ohm, R_edge_ohm, R_plateau_ohm, R_recovery_ohm]
+  objectives:
+    - {metric: normalized_rmse, direction: minimize, aggregation: worst}
+
+optimizer: {name: grid, seed: 0}
+run: {trials: 81}
