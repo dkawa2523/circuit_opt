@@ -5,12 +5,12 @@ from __future__ import annotations
 import csv
 import math
 from collections.abc import Mapping
-from copy import deepcopy
 from typing import Any
 
-from .case import Case, resolve_path, variable_specs
+from .case import Case, resolve_path
 from .core.models import Candidate, ControlState, Objective, Scenario, StudySpec
 from .core.spaces import parameter_grid
+from .problem import project_candidate_case, resolve_parameter_set
 
 
 def mapping(value: Any, path: str) -> dict[str, Any]:
@@ -132,6 +132,7 @@ def _electrical_context(case: Case) -> dict[str, Any]:
 def study_spec_from_case(case: Case) -> StudySpec:
     study_cfg = mapping(case.data.get("study"), "study")
     target_cfg = mapping(case.data.get("target"), "target")
+    parameters = resolve_parameter_set(case)
     analysis_mode = str(study_cfg.get("analysis_mode", "")).strip()
     if "fidelities" in study_cfg:
         raise ValueError(
@@ -150,61 +151,21 @@ def study_spec_from_case(case: Case) -> StudySpec:
             "case_schema": str(case.authored_data.get("schema", "case_yaml.v1")),
             "resolved_case_schema": str(case.data.get("schema", "case_yaml.v1")),
             "objective_adapter": str(target_cfg.get("objective", "waveform_l2")),
+            "parameter_roles": parameters.role_names(),
             **_electrical_context(case),
             **({"analysis_mode": analysis_mode} if analysis_mode else {}),
         },
     )
 
 
-def _role_variable_names(case: Case) -> set[str]:
-    study_cfg = mapping(case.data.get("study"), "study")
-    names: set[str] = set()
-    for index, item in enumerate(study_cfg.get("scenarios") or []):
-        cfg = mapping(item, f"study.scenarios[{index}]")
-        names.update(mapping(cfg.get("values"), f"study.scenarios[{index}].values"))
-        names.update(mapping(cfg.get("controls"), f"study.scenarios[{index}].controls"))
-    scenario_table = mapping(study_cfg.get("scenario_table"), "study.scenario_table")
-    names.update(mapping(scenario_table.get("values"), "study.scenario_table.values"))
-    controls = mapping(study_cfg.get("controls"), "study.controls")
-    names.update(mapping(controls.get("defaults"), "study.controls.defaults"))
-    names.update(mapping(controls.get("variables"), "study.controls.variables"))
-    for scenario_id, values in mapping(controls.get("by_scenario"), "study.controls.by_scenario").items():
-        names.update(mapping(values, f"study.controls.by_scenario.{scenario_id}"))
-    return names
-
-
 def candidate_case(case: Case) -> Case:
-    """Project all variable declarations onto fixed-design variables only."""
+    """Project a case onto the parameters that an optimizer may change."""
 
-    study_cfg = mapping(case.data.get("study"), "study")
-    declared = variable_specs(case)
-    explicit = study_cfg.get("design_variables")
-    if isinstance(explicit, list):
-        missing = sorted({str(item) for item in explicit} - set(declared))
-        if missing:
-            raise ValueError(f"study.design_variables are not declared: {missing}")
-        specs = {str(name): declared[str(name)] for name in explicit}
-    elif isinstance(explicit, Mapping):
-        specs = {str(name): mapping(spec, f"study.design_variables.{name}") for name, spec in explicit.items()}
-    elif explicit is not None:
-        raise ValueError("study.design_variables must be a list or mapping")
-    else:
-        role_names = _role_variable_names(case)
-        specs = {name: spec for name, spec in declared.items() if name not in role_names}
-
-    data = deepcopy(case.data)
-    data["variables"] = specs
-    for section in ("source", "circuit", "load"):
-        if isinstance(data.get(section), dict):
-            data[section].pop("variables", None)
-    for source in data.get("sources") or []:
-        if isinstance(source, dict):
-            source.pop("variables", None)
-    return Case(path=case.path, data=data)
+    return project_candidate_case(case)
 
 
 class CaseControlPolicy:
-    """Expand explicitly tunable controls separately from fixed designs."""
+    """Expand tunable controls separately from each candidate design."""
 
     def __init__(self, case: Case) -> None:
         study_cfg = mapping(case.data.get("study"), "study")

@@ -1,16 +1,14 @@
-"""Reproduce the five supported PCD v1 user workflows through the public CLI.
+"""Reproduce the supported PCD circuit workflows through the public CLI.
 
-The suite qualifies the circuit-analysis path, not a chamber process.  Expected
+The suite qualifies the circuit-analysis path, not a chamber process. Expected
 engineering rejection is a valid result when the declared failed limits are
-reproduced.  A separate, preregistered ML result may be attached so release
-closure does not confuse circuit readiness with ML proposal readiness.
+reproduced.
 """
 
 from __future__ import annotations
 
 import argparse
 import csv
-import hashlib
 import json
 import math
 import subprocess
@@ -32,7 +30,7 @@ class CaseSpec:
     case_id: str
     workflow: str
     path: Path
-    mode: Literal["simulation_analysis", "study"]
+    mode: Literal["simulation_analysis", "study", "identification"]
     require_acceptance: bool = False
 
 
@@ -80,6 +78,12 @@ CASES = (
         ROOT / "examples" / "advanced" / "generic_rc_filter.yaml",
         "study",
         require_acceptance=True,
+    ),
+    CaseSpec(
+        "terminal_identification",
+        "effective terminal-parameter identification",
+        ROOT / "examples" / "advanced" / "ccp_terminal_identification.yaml",
+        "identification",
     ),
 )
 
@@ -208,9 +212,14 @@ def _study_common(bundle: dict[str, Any], required: tuple[str, ...]) -> dict[str
     study = bundle["study"]
     root = Path(str(study["run_root"]))
     rows = bundle["evaluation_rows"]
+    verification = study.get("verification") or {}
     return {
-        "all_solver_evaluations_succeeded": int(study["n_failed_evaluations"]) == 0,
+        "all_solver_evaluations_succeeded": int(study["n_failed_evaluations"]) == 0
+        and int(verification.get("n_failed_evaluations", 1)) == 0,
         "fresh_solver_evidence": _cache_hits(rows) == 0,
+        "selected_candidate_was_replayed_fresh": verification.get("status") == "verified"
+        and verification.get("cache_reused") is False
+        and int(verification.get("n_evaluations", 0)) == len(study["study"]["scenarios"]),
         "complete_audit_and_selected_evidence": _artifact_files(
             root,
             study["artifacts"],
@@ -284,21 +293,55 @@ def _check_target_sizing(bundle: dict[str, Any]) -> tuple[dict[str, bool], dict[
     study = bundle["study"]
     aggregates = study["best"]["aggregates"]
     pareto = study.get("pareto") or {}
+    history_path = Path(str(study["run_root"])) / str(study["artifacts"]["history"])
+    history = json.loads(history_path.read_text(encoding="utf-8"))
+    initial_loss = float(history[0]["aggregates"]["normalized_rmse"])
+    selected_loss = float(aggregates["normalized_rmse"])
     checks = _study_common(bundle, ("pareto_front",))
     checks.update(
         {
             "fixed_budget_and_seed": int(study["n_evaluations"]) == 24 and int(study["execution"]["seed"]) == 3,
             "declared_acceptance_met": study["best"]["status"] == "meets_declared_acceptance",
-            "objective_quality_reproduced": float(aggregates["normalized_rmse"]) <= 0.55
-            and float(aggregates["peak_abs_voltage_V"]) <= 4.1,
+            "objective_quality_reproduced": selected_loss <= 0.25
+            and selected_loss <= 0.8 * initial_loss
+            and float(aggregates["peak_abs_voltage_V"]) <= 4.9,
             "pareto_scope_is_honest": pareto.get("scope") == "observed_candidates"
             and int(pareto.get("front_candidates", 0)) > 0,
         }
     )
     return checks, {
         "evaluations": int(study["n_evaluations"]),
-        "normalized_rmse": float(aggregates["normalized_rmse"]),
+        "initial_normalized_rmse": initial_loss,
+        "normalized_rmse": selected_loss,
         "peak_abs_voltage_V": float(aggregates["peak_abs_voltage_V"]),
+    }
+
+
+def _check_terminal_identification(bundle: dict[str, Any]) -> tuple[dict[str, bool], dict[str, Any]]:
+    result = bundle["identification"]
+    root = Path(str(result["run_root"]))
+    sensitivity = result["identifiability"]
+    recovery = result.get("recovery") or {}
+    checks = {
+        "latent_fit_was_accepted": result["status"] == "identified" and bool(result["fit"]["passed"]),
+        "unseen_frequencies_were_held_out": bool(result["holdout"]["passed"])
+        and len(result["holdout"]["scenario_ids"]) == 2,
+        "local_sensitivity_is_full_rank": bool(sensitivity["identifiable"])
+        and int(sensitivity["rank"]) == int(sensitivity["required_rank"]) == 2,
+        "known_parameters_were_recovered": bool(recovery.get("passed")),
+        "identification_artifacts_exist": _artifact_files(
+            root,
+            result["artifacts"],
+            ("fit_result", "holdout_result", "fit_observations", "holdout_observations", "sensitivity"),
+        ),
+        "fit_and_holdout_searches_used_fresh_evidence": bundle["cache_hits"] == 0,
+    }
+    return checks, {
+        "estimated_latent": result["estimated_latent"],
+        "fit_loss": float(result["fit"]["value"]),
+        "holdout_loss": float(result["holdout"]["value"]),
+        "sensitivity_rank": int(sensitivity["rank"]),
+        "condition_number": float(sensitivity["condition_number"]),
     }
 
 
@@ -310,6 +353,7 @@ CHECKERS: dict[str, Callable[[dict[str, Any]], tuple[dict[str, bool], dict[str, 
     "quasi_static_profile": _check_quasi_static,
     "time_varying_resistor": _check_time_varying_resistor,
     "target_waveform_sizing": _check_target_sizing,
+    "terminal_identification": _check_terminal_identification,
 }
 
 
@@ -336,7 +380,7 @@ def _run_case(spec: CaseSpec, run_root: Path, log_dir: Path) -> dict[str, Any]:
             "simulation": str(run_dir / "summary.json"),
             "analysis": str(Path(analysis["output_dir"]) / "summary.json"),
         }
-    else:
+    elif spec.mode == "study":
         args = ["run", str(spec.path), "--output", str(case_root)]
         if spec.require_acceptance:
             args.append("--require-acceptance")
@@ -345,9 +389,31 @@ def _run_case(spec: CaseSpec, run_root: Path, log_dir: Path) -> dict[str, Any]:
         study = _read_json(study_root / "study_result.json")
         rows = _evaluation_rows(study, study_root)
         bundle = {"study": study, "evaluation_rows": rows}
-        evaluations = int(study["n_evaluations"])
+        evaluations = int(study["n_evaluations"]) + int((study.get("verification") or {}).get("n_evaluations", 0))
         cache_hits = _cache_hits(rows)
         evidence = {"study": str(study_root / "study_result.json"), "generation": str(study["artifacts"]["generation"])}
+    else:
+        result = _json_command(
+            f"{spec.case_id}_identify",
+            ["identify", str(spec.path), "--output", str(case_root)],
+            log_dir,
+        )
+        identification_root = Path(str(result["run_root"]))
+        identification = _read_json(identification_root / "identification_result.json")
+        fit = _read_json(identification_root / str(identification["artifacts"]["fit_result"]))
+        holdout = _read_json(identification_root / str(identification["artifacts"]["holdout_result"]))
+        fit_rows = _evaluation_rows(fit, identification_root / "fit")
+        holdout_rows = _evaluation_rows(holdout, identification_root / "holdout")
+        cache_hits = _cache_hits(fit_rows) + _cache_hits(holdout_rows)
+        evaluations = (
+            int(fit["n_evaluations"])
+            + int(fit["verification"]["n_evaluations"])
+            + int(holdout["n_evaluations"])
+            + int(holdout["verification"]["n_evaluations"])
+            + int(identification["identifiability"]["n_evaluations"])
+        )
+        bundle = {"identification": identification, "cache_hits": cache_hits}
+        evidence = {"identification": str(identification_root / "identification_result.json")}
 
     checks, observed = CHECKERS[spec.case_id](bundle)
     checks = {"strict_validation": bool(validation["ok"]), **checks}
@@ -365,82 +431,11 @@ def _run_case(spec: CaseSpec, run_root: Path, log_dir: Path) -> dict[str, Any]:
     }
 
 
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
-
-
-def _ml_case_integrity(case: dict[str, Any]) -> bool:
-    pool_checks = case.get("pool_checks") or {}
-    verification = case.get("verification") or {}
-    ranking = case.get("ranking") or {}
-    savings = (ranking.get("outcome") or {}).get("savings_fraction")
-    valid_savings = isinstance(savings, int | float) and not isinstance(savings, bool) and math.isfinite(savings)
-    return all(bool(value) for value in pool_checks.values()) and bool(verification.get("passed")) and valid_savings
-
-
-def _ml_case_summary(case: dict[str, Any]) -> dict[str, Any]:
-    ranking = case.get("ranking") or {}
-    return {
-        "case_id": case.get("case_id"),
-        "savings_fraction": (ranking.get("outcome") or {}).get("savings_fraction"),
-        "case_passed": case.get("passed"),
-        "verification_passed": (case.get("verification") or {}).get("passed"),
-    }
-
-
-def _ml_evidence(path: Path | None) -> dict[str, Any]:
-    if path is None:
-        return {"status": "not_attached", "integrity_passed": False}
-    result = _read_json(path.resolve())
-    protocol_path = ROOT / "bench" / "ml" / "ranking_protocol.yaml"
-    cases = result.get("cases") or []
-    integrity = {
-        "schema": result.get("schema") == "pcd.ml_ranking_benchmark.v1",
-        "protocol_hash": result.get("protocol_sha256") == _sha256(protocol_path),
-        "case_evidence": len(cases) == 2 and all(_ml_case_integrity(case) for case in cases),
-        "proposal_decision_matches_gate": bool(result.get("sequential_proposal_allowed")) == bool(result.get("passed")),
-    }
-    return {
-        "status": "attached",
-        "path": str(path.resolve()),
-        "protocol_id": result.get("protocol_id"),
-        "protocol_sha256": result.get("protocol_sha256"),
-        "integrity_passed": all(integrity.values()),
-        "integrity_checks": integrity,
-        "ranking_gate_passed": bool(result.get("passed")),
-        "sequential_proposal_allowed": bool(result.get("sequential_proposal_allowed")),
-        "cases": [_ml_case_summary(case) for case in cases],
-    }
-
-
-def _release_decisions(circuit_passed: bool, ml_attached: bool, ml_ready: bool) -> dict[str, str]:
-    if not ml_attached:
-        ml_decision = "NOT ASSESSED"
-        full_scope_decision = "NOT ASSESSED" if circuit_passed else "NO-GO"
-    else:
-        ml_decision = "GO" if ml_ready else "NO-GO"
-        full_scope_decision = "GO" if circuit_passed and ml_ready else "NO-GO"
-    return {
-        "circuit_foundation": "GO" if circuit_passed else "NO-GO",
-        "ml_candidate_proposal": ml_decision,
-        "full_requested_scope": full_scope_decision,
-    }
-
-
-def _release_status(cases: list[dict[str, Any]], ml: dict[str, Any]) -> dict[str, Any]:
+def _release_status(cases: list[dict[str, Any]]) -> dict[str, Any]:
     circuit_passed = all(case["passed"] for case in cases)
-    ml_attached = ml["status"] == "attached"
-    evidence_complete = ml_attached and bool(ml["integrity_passed"])
-    ml_ready = evidence_complete and bool(ml["ranking_gate_passed"])
     return {
-        "passed": circuit_passed and (not ml_attached or evidence_complete),
-        "workflow_acceptance_passed": circuit_passed,
-        "ml_evidence_complete": evidence_complete,
-        "release_decision": _release_decisions(circuit_passed, ml_attached, ml_ready),
+        "passed": circuit_passed,
+        "release_decision": "GO" if circuit_passed else "NO-GO",
     }
 
 
@@ -451,40 +446,12 @@ def _release_totals(cases: list[dict[str, Any]]) -> dict[str, int]:
     }
 
 
-def _format_savings(value: Any) -> str:
-    if isinstance(value, int | float) and not isinstance(value, bool) and math.isfinite(value):
-        return f"{value:.1%}"
-    return "n/a"
-
-
-def _ml_report_note(ml: dict[str, Any]) -> str:
-    if ml["status"] != "attached":
-        return "No ML ranking evidence was attached, so ML and full-scope readiness were not assessed."
-    if ml["ranking_gate_passed"]:
-        return "The attached ML gate passed; candidate-proposal readiness is still limited to its declared scope."
-    return (
-        "The ML failure is retained as evidence. It does not invalidate the circuit foundation, and the "
-        "circuit-suite PASS does not authorize an ML proposal command."
-    )
-
-
 def _render_report(payload: dict[str, Any]) -> str:
     rows = "\n".join(
         f"| {'PASS' if case['passed'] else '**FAIL**'} | {case['workflow']} | `{case['case_id']}` | "
         f"{case['ngspice_evaluations']} | {case['cache_hits']} |"
         for case in payload["cases"]
     )
-    decisions = payload["release_decision"]
-    ml = payload["ml_ranking_evidence"]
-    ml_rows = (
-        "\n".join(
-            f"| `{case['case_id']}` | {_format_savings(case['savings_fraction'])} | "
-            f"{'PASS' if case['case_passed'] else 'FAIL'} |"
-            for case in ml.get("cases", [])
-        )
-        or "| not attached | - | NOT ASSESSED |"
-    )
-    ml_note = _ml_report_note(ml)
     return f"""<!-- generated by bench/release/run_suite.py; do not edit -->
 # PCD v1 release closure
 
@@ -505,41 +472,33 @@ coverage are reproduced without a solver failure.
 
 | scope | decision |
 |---|---|
-| circuit analysis and deterministic optimization foundation | **{decisions["circuit_foundation"]}** |
-| ML candidate proposal | **{decisions["ml_candidate_proposal"]}** |
-| full originally requested scope | **{decisions["full_requested_scope"]}** |
+| circuit analysis, deterministic optimization, and terminal identification foundation | **{payload["release_decision"]}** |
 | chamber/plasma process qualification | **OUT OF SCOPE** |
 
-## Fixed ML ranking evidence
-
-| case | evaluation saving | gate |
-|---|---:|---|
-{ml_rows}
-
-{ml_note} No result here qualifies plasma chemistry, thermal lifetime, process
-yield, or a self-consistent plasma/circuit model.
+No result here qualifies plasma chemistry, thermal lifetime, process yield, or
+a self-consistent plasma/circuit model. Machine learning is not part of this
+release gate.
 """
 
 
-def run_release_suite(run_root: Path, ml_ranking_result: Path | None = None) -> dict[str, Any]:
+def run_release_suite(run_root: Path) -> dict[str, Any]:
     run_root = run_root.resolve()
     if run_root.exists():
         raise FileExistsError(f"release run root already exists: {run_root}")
     log_dir = run_root / "logs"
     solver = _json_command("solver_diagnose", ["solver-diagnose"], log_dir)
     cases = [_run_case(spec, run_root, log_dir) for spec in CASES]
-    ml = _ml_evidence(ml_ranking_result)
     payload = {
-        "schema": "pcd.release_closure.v1",
+        "schema": "pcd.release_closure.v2",
         "platform_version": __version__,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "solver": solver,
-        **_release_status(cases, ml),
+        **_release_status(cases),
         **_release_totals(cases),
         "cases": cases,
-        "ml_ranking_evidence": ml,
         "scope_boundary": (
-            "Electrical circuit analysis and deterministic sizing only; no chamber process qualification, "
+            "Electrical circuit analysis, deterministic sizing, and effective terminal identification only; "
+            "no chamber process qualification, "
             "plasma chemistry, thermal lifetime, or self-consistent plasma/circuit claim."
         ),
     }
@@ -551,12 +510,8 @@ def run_release_suite(run_root: Path, ml_ranking_result: Path | None = None) -> 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-root", default="runs/release_acceptance")
-    parser.add_argument("--ml-ranking-result", help="P3 ranking_evaluation.json used for the separate ML decision")
     args = parser.parse_args(argv)
-    payload = run_release_suite(
-        Path(args.run_root),
-        Path(args.ml_ranking_result) if args.ml_ranking_result else None,
-    )
+    payload = run_release_suite(Path(args.run_root))
     print(json.dumps(payload, indent=2))
     return 0 if payload["passed"] else 1
 

@@ -2,51 +2,54 @@
 
 ## Unreleased
 
-- start the topology-aware ML renewal without changing the solver or optimizer:
-  add a framework-neutral `circuit_graph.v1` component-terminal-net record for
-  declared structured templates, preserve explicit source/load/ground ports,
-  separate wiring and value fingerprints, and reject raw SPICE rather than
-  guessing its terminal semantics; keep arbitrary topology generation and
-  online ML proposal outside the implemented scope;
-- add the offline `ml-corpus` path from one or more completed AC studies to
-  physical graphs, source/load/scenario context, complex port targets, and
-  long-form component voltage/current targets. Keep observation meters out of
-  graph identity, preserve declared series loss on logical components, group
-  designs and external conditions before holdout, and mark insufficient or
-  topology-confounded splits unavailable instead of overstating evidence.
-  Keep study discovery/provenance/writes in the application adapter and pure
-  response shaping/split policy in `pcd.ml.corpus`;
-- add the fixed `ml-corpus-evaluate` M2 comparison: training mean, ridge, a
-  two-hidden-layer NumPy MLP, and a component/net relational GNN use the same
-  declared design, condition, and topology-family folds. Keep graph encoding,
-  neural calculation, evaluation policy, and artifact I/O in separate owners;
-  do not persist models or add a candidate-proposal path. The first fixed
-  three-topology, 108-evaluation ngspice corpus selected the constant baseline
-  in every aggregate protocol, so model persistence remains blocked and the
-  next evidence step is a separately locked M2R corpus rather than tuning on
-  the observed holdouts;
+- resolve every executable parameter into one fixed, calibration, operating,
+  control, design, or latent role; reject duplicate/conflicting ownership,
+  project optimizer inputs onto design variables only, retain constants as
+  ordinary solver defaults, and publish role-separated values in study result
+  tables without adding a second execution path;
+- reset the unsupported ML product surface after its evidence gates failed:
+  remove the four ML/corpus CLI commands, runtime ML/corpus/graph modules,
+  graph-only circuit metadata, fixed-pool benchmark code, and ML release-gate
+  attachment; keep the measured negative outcome as a short design record and
+  return `Circuit` to one ngspice-rendering responsibility. The optional
+  OptunaHub group remains isolated for reproduction of the existing
+  case-specific optimization figures and is not a runtime dependency;
+- route direct simulation, studies, and terminal identification through one
+  `execute_case` forward solve returning the canonical in-memory
+  `SimulationResult` together with its persisted `SimRecord`; add one
+  Case-specific evaluation adapter, calculate fresh metrics without a CSV
+  round trip, and restore cached/saved data to the same response type before
+  measurement;
+- add `pcd identify` for bounded latent effective-terminal parameters: fit
+  declared complex V/I scenarios, freeze the result for disjoint holdout
+  scenarios, replay both phases through ordinary ngspice without cache reuse,
+  and reject a low-loss result when its normalized local sensitivity matrix is
+  rank-deficient or ill-conditioned;
+- independently replay the selected design through the ordinary solver with
+  raw-cache reuse disabled; publish the replay as `best_candidate.json` and
+  the final acceptance decision while keeping search evaluations and history
+  separate;
+- centralize L, pi, and harmonic-pi matching connectivity and component roles
+  in one reviewed topology catalog consumed by both public-input compilation
+  and netlist generation; keep values, frequencies, losses, and limits explicit
+  in each case;
+- align the advanced RC sizing example's pulse window with its stored step-
+  response target so the declared waveform objective is attainable instead of
+  comparing against an incompatible source waveform;
+- keep the RC sizing example's installed resistor fixed and optimize only its
+  capacitor because one voltage waveform identifies the RC time constant, not
+  R and C separately;
+- reflect Differential Evolution mutations at continuous bounds instead of
+  clipping many distinct mutations onto duplicate endpoint proposals, and use
+  a seeded uniform fallback when evolution still repeats an evaluated point;
 - carry signed engineering constraint margins through result tables, study
-  histories, ML response targets, and the CLI. This gives
-  calculation, offline learning, and candidate search one useful feasibility
-  signal without adding another optimizer, model, dependency, or execution
-  path;
-- add one public-CLI release runner for the five supported user workflows;
-  strict-validate seven inputs, require a fresh run root, verify concise
+  histories, and the CLI, giving calculation and candidate search one useful
+  feasibility signal without adding another optimizer or execution path;
+- add one public-CLI release runner for the six supported user workflows;
+  strict-validate eight inputs, require a fresh run root, verify concise
   electrical results and replay artifacts, distinguish intentional engineering
-  rejection from solver failure, and combine the circuit result with the
-  preregistered ML evidence as separate GO/NO-GO decisions; the P4 run
-  reproduced 131 uncached ngspice evaluations, yielding circuit foundation GO
-  and ML/full-requested-scope NO-GO;
-- add a preregistered retrospective ML-ranking gate with fixed 81-candidate
-  transient-RC and RF-matching pools, shared initial observations, 101 fixed
-  random baselines, and fresh selected-candidate ngspice verification; retain
-  the measured 14.3%/29.6% savings as a failed 30% gate and deliberately do not
-  add sequential candidate proposal or Bayesian optimization;
-- share one small feature-transform/standardization/three-neighbour owner
-  between holdout evaluation and fixed-pool ranking without adding a solver,
-  study, or persistence dependency to `pcd.ml`; add development-only PyYAML
-  stubs so the new typed boundary and existing YAML readers remain visible to
-  Pyrefly without suppressions;
+  rejection from solver failure, and publish the circuit decision only; machine
+  learning is outside this release gate;
 - stop publishing one structured JSON file per explored candidate; keep all
   candidate summaries in `study_history.json`, all Candidate x Scenario x
   Control rows in `evaluations.csv`, and only the selected design in
@@ -75,23 +78,6 @@
   demonstrate numeric-sizing solver savings, and finish release acceptance;
   keep arbitrary circuit-graph generation, physical placement, self-consistent plasma,
   and unproven Bayesian optimization outside the v1 critical path;
-- add optional independent constraint validation to `ml-evaluate`; fit only on
-  the original training split, reject reused dataset identities/design values,
-  compare every separate validation row with the majority baseline, and retain
-  per-row predictions without changing the fixed holdout or enabling Bayesian
-  optimization;
-- add a fixed 25-point generic-RC boundary study demonstrating real ngspice
-  constraint-validation evidence independently of surrogate fitting;
-- add `ml-evaluate`, a dependency-free fixed-holdout comparison of a declared-
-  scale, distance-weighted 3-neighbour surrogate against training mean/majority
-  baselines; publish per-objective errors, constraint class evidence, uncached
-  source-cost comparison, predictions, and an explicit gate that cannot claim
-  Bayesian-optimization readiness or ngspice savings;
-- add a model-independent ML dataset boundary and `ml-prepare` command that
-  validates committed evaluation identity/grain, preserves failed outcomes,
-  assigns explicit feature/objective/constraint roles, excludes
-  `selected_control` and runtime artifacts, and creates a deterministic
-  fixed-design group holdout without adding scikit-learn to core dependencies;
 - add a direction-aware Pareto decision table for multi-objective studies;
   include only candidates with complete control-solver evidence and full
   scenario feasibility, retain equal trade-off points, preserve the existing

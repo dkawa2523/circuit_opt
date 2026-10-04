@@ -11,7 +11,6 @@ sources:
 
 circuit:
   builder: from_yaml
-  topology_family: dual_rf_dc_superposed_etch_ccp
   output_node: wafer
   variables:
     Rp_on_ohm: {choices: [15.0], default: 15.0}

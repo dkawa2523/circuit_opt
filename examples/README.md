@@ -26,6 +26,7 @@ generic waveform objective for developers extending the platform:
 | advanced example | purpose |
 |---|---|
 | `advanced/generic_rc_filter.yaml` | constrained continuous RC sizing with reproducible differential evolution and an observed tracking-error/peak-voltage Pareto front |
+| `advanced/ccp_terminal_identification.yaml` | fit two bounded effective CCP terminal parameters, verify unseen frequencies, and check local sensitivity rank |
 | `advanced/time_varying_resistor.yaml` | prescribed chamber `R(t)` with observed terminal voltage/current and an analytic divider check |
 | `advanced/rf_port_transient.yaml` | exact load-port current, power flow, harmonics, and settling |
 | `advanced/plugin_case.yaml` | custom circuit and metric registration |

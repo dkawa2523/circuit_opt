@@ -241,7 +241,7 @@ uses the same normalized 0=edge, 1=center value reported in the results.
 ## Execution
 
 Most studies need no execution block. The resolved plan uses `ngspice_cli`, one
-fixed candidate, or the complete Cartesian product of `network.search.values`.
+no-search candidate, or the complete Cartesian product of `network.search.values`.
 
 ```yaml
 execution:
@@ -281,26 +281,6 @@ both. These rules are enforced when the mapping becomes an `AnalysisRequest`,
 before any run directory or ngspice input is created. Invalid explicit values
 are not replaced by defaults; defaults apply only when a field is omitted.
 
-For an advanced structured circuit that will be exported with `ml-corpus`,
-declare its stable family separately from the rendering builder:
-
-```yaml
-circuit:
-  builder: from_yaml
-  topology_family: custom_l_match
-  output_node: electrode
-  components:
-    - {ref: L1, n1: src, n2: electrode, value: L1, observe: true}
-    - {ref: C1, n1: electrode, n2: '0', value: C1, observe: true}
-```
-
-Each structured two-terminal component becomes one logical graph component.
-`observe: true` and `series_resistance_ohm` may change ngspice rendering and
-available targets, but observation meters and internal loss nodes are never
-learned as topology. A raw SPICE line, imported netlist, magnetic coupling, or
-prescribed time profile is still valid for its supported simulation path but
-is not graph-ready until its builder declares equivalent graph semantics.
-
 ## Advanced continuous optimization
 
 The explicit `case_yaml.v1` format may optimize bounded continuous design
@@ -310,7 +290,7 @@ variables without replacing the public RF format's complete discrete search:
 run: {trials: 24}
 circuit:
   variables:
-    R1: {bounds: [100, 10000], scale: log, default: 1000}
+    R1: {default: 1000}  # fixed installed hardware
     C1: {bounds: [1e-10, 1e-7], scale: log, default: 1e-9}
 target:
   objective: waveform_l2
@@ -338,18 +318,118 @@ provide an in-range default; the remaining initial points are stratified over
 the normalized bounds. The implementation uses fixed mutation 0.8 and
 crossover 0.7, while the archived seed and implementation fingerprint make the
 proposal sequence reproducible.
+Out-of-range mutation coordinates are reflected back into the normalized
+interval instead of being clipped onto a boundary; this avoids spending the
+solver budget on repeated endpoint proposals.
+If evolution still produces an exactly repeated normalized vector, the
+optimizer replaces it with one seeded uniform proposal and records
+`duplicate_fallback` in the trace. Thus a built-in DE trial represents a new
+physical parameter point rather than a raw-cache hit.
 
-Every proposed fixed candidate is evaluated through the unchanged
+Every proposed design candidate is evaluated through the unchanged
 Candidate x Scenario x Control pipeline. Child/parent replacement uses the
 same lexicographic order as the final decision: complete solver evidence,
 engineering feasibility, normalized constraint violation, then declared
 objectives. It does not add a tunable penalty to the objective. The compact
 `study_history.json` records parameters, proposal phase/generation and
 acceptance, objective aggregates, failed constraints/evaluations, scenario and
-evaluation counts, seed, and duration. Since every search candidate already
-uses every declared scenario and control, selecting the best candidate does
-not trigger a duplicate solver run. A future surrogate-proposed candidate must
-still be evaluated by ngspice through this full pipeline.
+evaluation counts, seed, and duration. Every search candidate uses every
+declared scenario and control. After ranking, the selected parameter set is
+nevertheless executed once more with raw-cache reuse disabled. This final
+replay is deliberately redundant: it verifies the published decision through
+the ordinary ngspice path rather than treating a cached search observation as
+release evidence. A future surrogate-proposed candidate must use the same
+final replay; no such proposal command exists in the current release.
+
+### Advanced parameter roles
+
+Every executable parameter has one owner. For advanced `case_yaml.v1` inputs,
+the default classification is deliberately small:
+
+- `bounds`, more than one `choices` value, or no `default`: design;
+- only a `default` or one `choices` value: fixed;
+- names in `study.scenarios`/`scenario_table`: operating;
+- names in `study.controls`: control.
+
+Calibration constants and identification targets are marked separately from
+design variables:
+
+```yaml
+circuit:
+  variables:
+    feedthrough_C_F: {role: calibration, default: 90e-12}
+    plasma_R_ohm: {role: latent, bounds: [1, 100], default: 20}
+    matching_C_F: {role: design, bounds: [10e-12, 1e-9], default: 100e-12}
+```
+
+`study.design_variables` may still explicitly select the design subset; when
+present, unlisted declarations are fixed unless their own non-design role is
+explicit or a scenario/control owns them. Duplicate declarations and a name
+assigned to two roles are rejected before a study starts. `run` proposes only
+`design` values. `identify` proposes only bounded `latent` values and cannot
+silently change installed design hardware, calibration constants, operating
+conditions, or controls.
+
+### Effective terminal identification
+
+An identification case uses the same executable circuit, solver, metrics, and
+scenario table as a design study. The only extra block declares which
+observations are used for fitting and which are kept out of the optimizer:
+
+```yaml
+target:
+  objective: terminal_vi_fit
+  impedance_scale_ohm: 100
+study:
+  scenario_table:
+    table_file: terminal_vi.csv
+    id_column: scenario_id
+    values:
+      excitation_frequency_Hz: frequency_Hz
+      target_voltage_re_V: target_voltage_re_V
+      target_voltage_im_V: target_voltage_im_V
+      target_current_re_A: target_current_re_A
+      target_current_im_A: target_current_im_A
+  objectives:
+    - {metric: normalized_impedance_error, direction: minimize, aggregation: worst}
+identification:
+  fit_scenarios: [fit_10MHz, fit_13_56MHz, fit_27_12MHz]
+  holdout_scenarios: [holdout_20MHz, holdout_40_68MHz]
+  observed_metrics: [resistance_ohm, reactance_ohm]
+  metric_scales: {resistance_ohm: 100, reactance_ohm: 100}
+  fit_loss_max: 0.02
+  holdout_loss_max: 0.03
+  sensitivity_step: 0.02
+  condition_number_max: 100
+```
+
+The observation CSV contains delivered source current, not ngspice's current
+sign into the positive source terminal:
+
+```csv
+scenario_id,frequency_Hz,target_voltage_re_V,target_voltage_im_V,target_current_re_A,target_current_im_A
+fit_10MHz,10000000,1,0,0.00158,0.00875
+```
+
+Every declared scenario must belong to exactly one of the fit or holdout
+partitions. Every latent parameter needs finite continuous bounds. The command
+fails unless the fit and holdout loss limits pass, every solver replay
+succeeds, and the normalized local sensitivity matrix has full column rank
+within `rank_tolerance` and `condition_number_max`.
+
+Optional `expected` and `recovery_relative_tolerance` fields are only for a
+synthetic known-parameter benchmark; they are not required for measured data.
+Run the workflow with:
+
+```powershell
+uv run --frozen python -m pcd identify case.yaml --output runs
+```
+
+The result root contains `identification_result.json`, separate fit and
+holdout study results, `fit_observations.csv`, `holdout_observations.csv`, and
+`sensitivity.json`. Search and holdout evidence both use the normal ngspice
+path and cache-free selected-candidate replay. The output qualifies only the
+declared effective terminal model and observation window.
 
 When a study declares at least two objectives, the active generation also
 contains `pareto_front.csv`. Dominance respects each objective's declared
@@ -452,7 +532,7 @@ One direct `sim-run` stores the following responsibility-based layout:
 For a completed `impedance_profile` study, the active immutable generation also
 contains `snapshot_response.csv`. It is the concise selected-candidate time
 projection; `evaluations.csv` remains the complete Candidate x Scenario x
-Control table used for audit and machine learning.
+Control table used for audit and downstream analysis.
 
 Referenced data, an authored public input, and its resolved plan are also kept
 under `debug/` when applicable. Parameters are not duplicated into a separate
@@ -465,8 +545,11 @@ layout under the study artifact area. `evaluations.csv` contains one flat
 candidate/scenario/control row per electrical solve and is the detailed source
 for every explored candidate. `study_history.json` keeps one compact optimizer
 row per candidate. Only the selected design is also stored as
-`best_candidate.json`; it keeps each of that candidate's control trials once
-and identifies the selected trial by `selected_trial`. The
+`best_candidate.json`; it keeps one freshly replayed selected control per
+scenario and identifies it by `selected_trial`. These trials come from the
+cache-free final replay, while `evaluations.csv` and `study_history.json`
+retain the search evaluations. `study_result.json.verification` records the
+fresh solve count, failure count, and replay status. The
 `pcd.results.selected_evaluation` reader follows this single indexed form.
 Content-addressed raw
 simulation results remain separate because they are reusable computation
@@ -513,12 +596,14 @@ hashing. Candidate enumeration remains derived from the authored RF input.
 `input_case.yaml` remains unaltered.
 
 `evaluations.csv` repeats design, scenario, and control values with explicit
-prefixes and includes raw status, selection flag, metrics, constraints, raw
-cache identity, duration, and artifact paths. Constant circuit metadata and
-merged parameters are not repeated as `observation.*` columns. `table_schema`, generation-specific
+prefixes and includes fixed, calibration, and known latent defaults under their
+own prefixes. It also includes raw status, selection flag, metrics, constraints,
+raw cache identity, duration, and artifact paths. Merged parameters are not
+duplicated as `observation.*` columns. `study_result.json.parameters` records
+the resolved role names and constant values. `table_schema`, generation-specific
 `dataset_id`, case schemas, and runtime/solver fingerprints make rows safe to
-combine across studies without relying on directory names. It is intended as
-the direct analysis source and the input to `ml-prepare`; candidate-level
+combine across studies without relying on directory names. It is the direct
+analysis and audit source; candidate-level
 `study_history.json` remains the compact optimizer trace. `selected_control`
 is an outcome of evaluating all controls, not an independent input feature;
 using it to predict that same outcome would leak target information.
@@ -533,92 +618,6 @@ scenario margin per named constraint.
 For a multi-objective study, `pareto_front.csv` is a smaller decision projection
 over the same candidate evidence. It is not a second metric cache and does not
 contain failed or constraint-rejected candidates.
-
-### Preparing a surrogate dataset
-
-Prepare one committed study without rerunning ngspice:
-
-```powershell
-uv run pcd ml-prepare runs/<study> --out runs/ml/<study> --test-fraction 0.2 --seed 0
-```
-
-The output directory contains only `dataset.csv` and `manifest.json`; it must
-not be the active immutable generation. The preparation boundary verifies the
-`evaluation_table.v2` identity, committed row/candidate counts, the unique
-Candidate x Scenario x Control grain, and finite declared objectives on every
-successful solve. Failed solves remain rows for failure classification and are
-marked ineligible for objective regression instead of being silently dropped.
-The manifest also reports train/test class counts for solver success,
-feasibility, and every constraint label, so a one-class holdout cannot be
-mistaken for calibrated constraint evaluation.
-
-Features are only `design.*`, `scenario.*`, and `control.*` columns. Declared
-`metric.*` objectives, other response metrics, constraint labels, feasibility,
-and solver status are explicit targets or context. Cache keys, timings, errors,
-artifact paths, and constant fingerprints stay in the manifest rather than the
-training table. `selected_control` is omitted entirely.
-
-The deterministic split hashes the complete fixed-design value vector, not a
-candidate label, so a repeated design and all its Scenario/Control evaluations
-remain together. Its validity claim is limited to unseen fixed designs inside
-the same archived case. Cross-case or independent measurement-series
-generalization requires explicit series identity and case-level predictors and
-is not inferred from this export. Model fitting and candidate proposal are not
-performed by `ml-prepare`; every later proposal still needs the normal complete
-ngspice evaluation.
-
-Evaluate the prepared fixed holdout without rerunning ngspice:
-
-```powershell
-uv run pcd ml-evaluate runs/ml/<study> --out runs/ml-evaluation/<study>
-```
-
-The evaluator accepts finite numeric features only. It applies a declared
-`log10` transform to log-scale numeric variables, standardizes from training
-rows, and compares a fixed distance-weighted 3-neighbour model against the
-training mean (regression) and majority class (classification). There is no
-hyperparameter search or split selection. `predictions.csv` retains test-row
-identity and actual/baseline/surrogate values; `evaluation.json` reports
-MAE/RMSE/R², confusion counts, balanced accuracy when both classes exist,
-runtime, and an explicit evidence gate. Source evaluation timing is summarized
-only from uncached rows and remains excluded from features.
-
-A one-class train or test label is insufficient classification evidence even
-if accuracy is 100%. The evidence gate always leaves Bayesian optimization
-disabled: this command measures response approximation, not uncertainty,
-candidate-ranking regret, or a reduction in ngspice calls.
-
-If the fixed holdout lacks both constraint classes, do not change its seed to
-obtain a favorable split. Run a separately declared fixed-design study,
-prepare it with `ml-prepare`, and supply it as validation evidence:
-
-```powershell
-uv run pcd ml-evaluate runs/ml/<study> `
-  --constraint-validation runs/ml/<validation-study> `
-  --out runs/ml-evaluation/<study>
-```
-
-The two manifests must declare identical features, transforms, objectives, and
-classification targets. Their committed dataset IDs and fixed-design values
-must differ. The evaluator fits scaling and the locked 3-neighbour model only
-on the original training split, then scores every row of the separate dataset;
-that dataset's own train/test labels are intentionally irrelevant. It writes
-`constraint_validation_predictions.csv` and reports class counts, confusion,
-balanced accuracy, and the majority-class baseline. This establishes only
-interpolation evidence for a separate simulated design set in the same circuit
-family, not measurement validation or cross-circuit generalization. The
-reproducible RC protocol is
-[`bench/ml/generic_rc_constraint_boundary.yaml`](../bench/ml/generic_rc_constraint_boundary.yaml).
-
-Candidate ranking is not an input-schema or CLI feature. A preregistered
-offline gate in [`bench/ml/`](../bench/ml/README.md) replays a fixed
-three-neighbour order over two fully evaluated 81-candidate pools, compares it
-with 101 fixed random orders sharing the same six initial observations, and
-then reruns the selected candidate through the normal study path. The observed
-savings were 14.3% for transient RC sizing and 29.6% for RF matching, both
-below the fixed 30% requirement. Consequently there is no sequential ML
-proposal or Bayesian-optimization option to configure; use exact grids or the
-advanced seeded Differential Evolution path for design selection.
 
 ## Responsibility boundary
 

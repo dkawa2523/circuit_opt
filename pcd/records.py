@@ -10,10 +10,12 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from .artifacts import read_json
 from .ngspice_io import read_frequency_response
+from .simulation import CURRENT_COLUMN, TIME_COLUMN, VOLTAGE_COLUMN, SimulationResult
 
 _DEBUG_MANIFEST = Path("debug/manifest.json")
 
@@ -96,3 +98,41 @@ def load_frequency_response(
     if path is None:
         raise ValueError("simulation manifest does not declare a frequency-response artifact")
     return read_frequency_response(path, extra_columns)
+
+
+def load_simulation_result(record_or_path: dict[str, Any] | str | Path) -> SimulationResult:
+    """Restore the canonical in-memory solver response from saved artifacts."""
+
+    record = read_sim_record(record_or_path)
+    numeric = _numeric_waveform(load_waveform(record))
+    frequency = load_frequency_response(record) if frequency_response_path(record) is not None else None
+    return SimulationResult(
+        time_s=numeric[TIME_COLUMN],
+        voltage_V=numeric[VOLTAGE_COLUMN],
+        current_A=_available_current(numeric.get(CURRENT_COLUMN)),
+        status=str(record.get("status", "failed")),
+        log=_solver_log(record),
+        diagnostics=dict(record.get("diagnostics") or {}),
+        frequency_response=frequency,
+        probes={
+            name: values
+            for name, values in numeric.items()
+            if name not in {TIME_COLUMN, VOLTAGE_COLUMN, CURRENT_COLUMN}
+        },
+    )
+
+
+def _numeric_waveform(waveform: pd.DataFrame) -> dict[str, np.ndarray]:
+    required = {TIME_COLUMN, VOLTAGE_COLUMN}
+    if missing := sorted(required - set(waveform)):
+        raise ValueError(f"canonical waveform is missing columns {missing}")
+    return {name: pd.to_numeric(waveform[name], errors="raise").to_numpy(float) for name in waveform.columns}
+
+
+def _available_current(current: np.ndarray | None) -> np.ndarray | None:
+    return None if current is None or np.isnan(current).all() else current
+
+
+def _solver_log(record: dict[str, Any]) -> str:
+    path = artifact_path(record, "solver_log")
+    return path.read_text(encoding="utf-8", errors="replace") if path and path.is_file() else ""

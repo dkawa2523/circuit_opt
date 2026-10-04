@@ -18,9 +18,9 @@ import pytest
 import pcd.sim_core as sim_core_module
 import pcd.solver as solver_module
 from pcd.case import load_case
-from pcd.metrics import measure_record
+from pcd.metrics import measure_record, measure_response
 from pcd.records import artifact_path
-from pcd.sim_core import prepare_case, simulate_case
+from pcd.sim_core import execute_case, prepare_case, simulate_case
 from pcd.sim_registry import available as sim_available
 from pcd.sim_registry import register_solver
 from pcd.simulation import SimulationResult
@@ -47,6 +47,47 @@ def test_simulation_writes_artifacts_but_never_metrics(tmp_path, rc_case):
     metrics = measure_record(rc_case, manifest)
     assert metrics["loss"] >= 0.0
     assert not (rec.run_dir / "metrics.json").exists(), "measurement must not create a second result store"
+
+
+def test_in_memory_and_restored_responses_have_identical_metrics(tmp_path, rc_case):
+    run = execute_case(rc_case, run_root=tmp_path, solver_override="test_fake")
+
+    direct = measure_response(rc_case, run.response, run.record.params)
+    restored = measure_record(rc_case, run.record.manifest())
+
+    assert direct.keys() == restored.keys()
+    assert direct["objective"] == restored["objective"]
+    for name in ("loss", "normalized_rmse", "rmse_V", "peak_abs_voltage_V"):
+        assert direct[name] == pytest.approx(restored[name], rel=1e-14)
+
+
+def test_structured_and_imported_circuits_return_the_same_response_type(tmp_path, rc_case, make_case):
+    imported = make_case(
+        {
+            "case_id": "imported_response",
+            "source": {"type": "voltage_pulse", "name": "Vsrc", "v1_V": 0, "v2_V": 1},
+            "circuit": {
+                "builder": "from_netlist",
+                "netlist_file": "fragment.cir",
+                "netlist_mode": "fragment",
+                "source_policy": "replace_named",
+                "output_node": "out",
+            },
+            "load": {"name": "none"},
+            "measurement": {"voltage_node": "out", "current_source": "Vsrc"},
+            "solver": {"tran": {"step_s": 1e-9, "stop_s": 1e-7}},
+        },
+        name="imported.yaml",
+    )
+    (imported.base_dir / "fragment.cir").write_text("R1 src out 1k\nC1 out 0 1n\n", encoding="utf-8")
+
+    structured = execute_case(rc_case, run_root=tmp_path / "structured", solver_override="test_fake")
+    external = execute_case(imported, run_root=tmp_path / "external", solver_override="test_fake")
+
+    assert isinstance(structured.response, SimulationResult)
+    assert isinstance(external.response, SimulationResult)
+    assert structured.response.status == external.response.status == "ok"
+    assert structured.response.as_frame().columns.equals(external.response.as_frame().columns)
 
 
 def test_common_simulation_layer_persists_a_custom_solver_ac_result(tmp_path, rc_case, monkeypatch):

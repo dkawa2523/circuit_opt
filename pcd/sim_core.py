@@ -50,8 +50,10 @@ __all__ = [
     "Circuit",
     "SimRecord",
     "SimulationResult",
+    "SimulationRun",
     "archive_case_bundle",
     "archive_case_definition",
+    "execute_case",
     "prepare_case",
     "simulate_case",
 ]
@@ -134,6 +136,14 @@ class SimRecord:
             "diagnostics": self.diagnostics,
             "provenance": self.provenance,
         }
+
+
+@dataclass(frozen=True, slots=True)
+class SimulationRun:
+    """One solver response together with its persisted replay record."""
+
+    record: SimRecord
+    response: SimulationResult
 
 
 # -----------------------------------------------------------------------------
@@ -358,15 +368,15 @@ def _prepare_case_in_dir(
     return record
 
 
-def simulate_case(
+def execute_case(
     case: Case,
     params: dict[str, Any] | None = None,
     run_root: str | Path | None = None,
     solver_override: str | None = None,
     run_id: str | None = None,
     case_archive_root: str | Path | None = None,
-) -> SimRecord:
-    """Prepare, run, and record one case.
+) -> SimulationRun:
+    """Resolve, solve, and persist one case through the canonical path.
 
     Solver-reported execution failures are recorded as results so a study can
     keep collecting observations.  Invalid configuration and implementation
@@ -393,7 +403,32 @@ def simulate_case(
         frequency_response_file=AC_ARTIFACT if result.frequency_response is not None else None,
     )
     _write_record(case, final)
-    return final
+    return SimulationRun(final, result)
+
+
+def simulate_case(
+    case: Case,
+    params: dict[str, Any] | None = None,
+    run_root: str | Path | None = None,
+    solver_override: str | None = None,
+    run_id: str | None = None,
+    case_archive_root: str | Path | None = None,
+) -> SimRecord:
+    """Run one case and return its persisted record.
+
+    ``execute_case`` is the shared in-memory boundary used by studies and
+    future identification.  This wrapper preserves the small public API used
+    by direct simulation callers.
+    """
+
+    return execute_case(
+        case,
+        params=params,
+        run_root=run_root,
+        solver_override=solver_override,
+        run_id=run_id,
+        case_archive_root=case_archive_root,
+    ).record
 
 
 def _run_solver(record: SimRecord, simulation: ResolvedSimulationCase) -> SimulationResult:

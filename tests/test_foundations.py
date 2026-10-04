@@ -263,8 +263,8 @@ def test_a_variable_declared_twice_is_reported(make_case):
             "circuit": {"variables": {"C1": {"default": 2}}},
         }
     )
-    warnings = case_warnings(case)
-    assert any("C1" in w and "later value wins" in w for w in warnings)
+    with pytest.raises(ValueError, match=r"C1.*declared in both"):
+        variable_specs(case)
 
 
 def test_a_case_without_a_source_is_reported(make_case):

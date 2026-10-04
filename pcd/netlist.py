@@ -16,7 +16,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .case import Case
-from .circuit_graph import CircuitGraph, GraphComponent, GraphPort, GraphTerminal
 from .probes import LOAD_AMMETER, ProbePlan
 from .sim_registry import get as get_sim_method
 from .sim_registry import load_plugins as load_sim_plugins
@@ -34,7 +33,6 @@ class Component:
     n2: str | None = None
     value: Any = None
     raw: str | None = None
-    graph_neutral: bool = False
 
     def to_spice(self) -> str:
         if self.raw is not None:
@@ -42,17 +40,6 @@ class Component:
         if self.ref is None or self.n1 is None or self.n2 is None or self.value is None:
             raise ValueError(f"invalid component: {self}")
         return f"{self.ref} {self.n1} {self.n2} {spice_value(self.value)}"
-
-
-@dataclass(frozen=True)
-class PhysicalComponent:
-    """One logical circuit element before solver instrumentation is added."""
-
-    ref: str
-    n1: str
-    n2: str
-    value: Any
-    series_resistance_ohm: float | None = None
 
 
 @dataclass
@@ -65,64 +52,22 @@ class Circuit:
     ground: str = "0"
     notes: list[str] = field(default_factory=list)
     preamble: list[str] = field(default_factory=list)
-    graph_components: list[PhysicalComponent] = field(default_factory=list)
-    graph_issues: list[str] = field(default_factory=list)
 
-    def add(self, ref: str, n1: str, n2: str, value: Any, *, include_in_graph: bool = True) -> None:
-        self.components.append(
-            Component(
-                ref=ref,
-                n1=n1,
-                n2=n2,
-                value=value,
-                graph_neutral=not include_in_graph,
-            )
-        )
-        if include_in_graph:
-            self.add_graph_component(ref, n1, n2, value)
+    def add(self, ref: str, n1: str, n2: str, value: Any) -> None:
+        self.components.append(Component(ref=ref, n1=n1, n2=n2, value=value))
 
-    def add_graph_component(
-        self,
-        ref: str,
-        n1: str,
-        n2: str,
-        value: Any,
-        *,
-        series_resistance_ohm: float | None = None,
-    ) -> None:
-        """Declare one physical element independently of its SPICE rendering."""
-
-        self.graph_components.append(
-            PhysicalComponent(
-                ref=ref,
-                n1=n1,
-                n2=n2,
-                value=value,
-                series_resistance_ohm=series_resistance_ohm,
-            )
-        )
-
-    def mark_graph_unsupported(self, reason: str) -> None:
-        reason = reason.strip()
-        if reason and reason not in self.graph_issues:
-            self.graph_issues.append(reason)
-
-    def raw(self, line: str, *, graph_neutral: bool = False) -> None:
-        self.components.append(Component(raw=line, graph_neutral=graph_neutral))
-        if not graph_neutral:
-            self.mark_graph_unsupported("raw SPICE component has no declared graph semantics")
+    def raw(self, line: str) -> None:
+        self.components.append(Component(raw=line))
 
     def preamble_raw(self, line: str) -> None:
         """Add an authored statement before generated case parameters."""
 
         self.preamble.append(line)
-        self.mark_graph_unsupported("imported SPICE preamble has no declared graph semantics")
 
     def couple(self, ref: str, first: str, second: str, coefficient: float) -> None:
         """Magnetically couple two inductors, i.e. make them a transformer."""
 
-        self.components.append(Component(raw=f"{ref} {first} {second} {spice_value(coefficient)}"))
-        self.mark_graph_unsupported(f"magnetic coupling {ref!r} is not represented by circuit_graph.v1")
+        self.raw(f"{ref} {first} {second} {spice_value(coefficient)}")
 
     def nodes(self) -> set[str]:
         nodes = {self.ground}
@@ -141,9 +86,7 @@ class Circuit:
         # Imported/raw SPICE carries topology outside ``components``.  In that
         # mode this check cannot prove that the output is absent, so avoid a
         # misleading warning while retaining the check for structured cases.
-        has_unparsed_topology = bool(self.preamble) or any(
-            component.raw is not None and not component.graph_neutral for component in self.components
-        )
+        has_unparsed_topology = bool(self.preamble) or any(component.raw is not None for component in self.components)
         if self.output_node not in self.nodes() and not has_unparsed_topology:
             out.append(f"output_node '{self.output_node}' does not appear in two-terminal components")
         return out
@@ -157,78 +100,6 @@ class NetlistInputs:
     circuit: Circuit
     load_name: str
     load_subckt: str
-
-
-_GRAPH_COMPONENT_KINDS = {
-    "R": "resistor",
-    "C": "capacitor",
-    "L": "inductor",
-    "D": "diode",
-    "V": "voltage_source",
-    "I": "current_source",
-}
-
-
-def circuit_to_graph(
-    circuit: Circuit,
-    topology_family: str,
-    *,
-    source_node: str = "src",
-) -> CircuitGraph:
-    """Project a structured circuit builder result into the graph contract.
-
-    The projection uses physical component declarations rather than rendered
-    SPICE lines.  This keeps zero-volt observation sources and internal loss
-    nodes out of the learned topology.  Authored raw SPICE remains unsupported
-    unless a builder supplies equivalent physical declarations explicitly.
-    """
-
-    issues = _graph_issues(circuit)
-    if issues:
-        detail = "; ".join(dict.fromkeys(issues))
-        raise ValueError(f"circuit graph is unavailable: {detail}")
-    return CircuitGraph(
-        topology_family=topology_family,
-        components=tuple(_graph_component(circuit, component) for component in _physical_components(circuit)),
-        ports=(
-            GraphPort("source", source_node),
-            GraphPort("load", circuit.output_node),
-            GraphPort("ground", circuit.ground),
-        ),
-    )
-
-
-def _graph_issues(circuit: Circuit) -> list[str]:
-    issues = list(circuit.graph_issues)
-    if any(component.raw is not None and not component.graph_neutral for component in circuit.components):
-        issues.append("raw SPICE component has no declared graph semantics")
-    return issues
-
-
-def _physical_components(circuit: Circuit) -> list[PhysicalComponent]:
-    physical = list(circuit.graph_components)
-    declared_refs = {component.ref for component in physical}
-    for component in circuit.components:
-        if component.graph_neutral or component.raw is not None or component.ref in declared_refs:
-            continue
-        if component.ref is None or component.n1 is None or component.n2 is None or component.value is None:
-            raise ValueError(f"circuit graph cannot represent incomplete component: {component}")
-        physical.append(PhysicalComponent(component.ref, component.n1, component.n2, component.value))
-        declared_refs.add(component.ref)
-    return physical
-
-
-def _graph_component(circuit: Circuit, component: PhysicalComponent) -> GraphComponent:
-    value = (
-        circuit.params.get(component.value, component.value) if isinstance(component.value, str) else component.value
-    )
-    return GraphComponent(
-        reference=component.ref,
-        kind=_GRAPH_COMPONENT_KINDS.get(component.ref[:1].upper(), "component"),
-        terminals=(GraphTerminal("p", component.n1), GraphTerminal("n", component.n2)),
-        value=value,
-        series_resistance_ohm=component.series_resistance_ohm,
-    )
 
 
 # -----------------------------------------------------------------------------

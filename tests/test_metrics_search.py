@@ -13,8 +13,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from pcd.metrics import interpolate_to_target, measure_record
+from pcd.metrics import interpolate_to_target, measure_record, measure_response
 from pcd.search import create_optimizer, validate_proposal
+from pcd.simulation import SimulationResult
 
 RTOL_LOSS = 1e-12
 
@@ -52,7 +53,7 @@ def test_optimizer_proposals_reject_missing_and_invalid_typed_values(make_case):
     )
     with pytest.raises(TypeError, match="mapping"):
         validate_proposal(case, [])
-    with pytest.raises(ValueError, match="missing design variables"):
+    with pytest.raises(ValueError, match="missing candidate variables"):
         validate_proposal(case, {})
 
     baseline = {"enabled": True, "gain": 1.0, "label": "ok", "mode": "a"}
@@ -111,6 +112,105 @@ def test_scoring_a_target_against_itself_is_zero_error(tmp_path, rc_case):
     metrics = measure_record(rc_case, record)
     assert metrics["normalized_rmse"] == pytest.approx(0.0, abs=1e-12)
     assert metrics["rmse_V"] == pytest.approx(0.0, abs=1e-12)
+
+
+def test_terminal_vi_fit_uses_delivered_current_to_recover_complex_impedance(make_case):
+    case = make_case(
+        {
+            "case_id": "terminal_fit",
+            "source": {"type": "sine_voltage", "frequency_Hz": 1.0e6},
+            "solver": {"ac": {"frequency_Hz": 1.0e6}},
+            "target": {"objective": "terminal_vi_fit", "impedance_scale_ohm": 50.0},
+        }
+    )
+    impedance = 20.0 - 30.0j
+    delivered_current = 1.0 / impedance
+    response = SimulationResult(
+        time_s=np.asarray([], dtype=float),
+        voltage_V=np.asarray([], dtype=float),
+        status="ok",
+        frequency_response=pd.DataFrame(
+            {
+                "frequency_Hz": [1.0e6],
+                "voltage_re": [1.0],
+                "voltage_im": [0.0],
+                "current_re": [-delivered_current.real],
+                "current_im": [-delivered_current.imag],
+            }
+        ),
+    )
+
+    metrics = measure_response(
+        case,
+        response,
+        {
+            "target_voltage_re_V": 1.0,
+            "target_voltage_im_V": 0.0,
+            "target_current_re_A": delivered_current.real,
+            "target_current_im_A": delivered_current.imag,
+        },
+    )
+
+    assert metrics["normalized_impedance_error"] == pytest.approx(0.0, abs=1e-12)
+    assert metrics["resistance_ohm"] == pytest.approx(20.0)
+    assert metrics["reactance_ohm"] == pytest.approx(-30.0)
+
+
+@pytest.mark.parametrize(
+    ("values", "message"),
+    [
+        ({}, "requires scenario value"),
+        (
+            {
+                "target_voltage_re_V": "bad",
+                "target_voltage_im_V": 0.0,
+                "target_current_re_A": 1.0,
+                "target_current_im_A": 0.0,
+            },
+            "must be numeric",
+        ),
+        (
+            {
+                "target_voltage_re_V": float("inf"),
+                "target_voltage_im_V": 0.0,
+                "target_current_re_A": 1.0,
+                "target_current_im_A": 0.0,
+            },
+            "must be finite",
+        ),
+        (
+            {
+                "target_voltage_re_V": 1.0,
+                "target_voltage_im_V": 0.0,
+                "target_current_re_A": 0.0,
+                "target_current_im_A": 0.0,
+            },
+            "must be nonzero",
+        ),
+    ],
+)
+def test_terminal_vi_fit_rejects_invalid_target_observations(values, message):
+    from pcd.metrics import _target_impedance
+
+    with pytest.raises(ValueError, match=message):
+        _target_impedance(values)
+
+
+@pytest.mark.parametrize(
+    ("target", "message"),
+    [
+        ({}, "requires target.impedance_scale_ohm"),
+        ({"impedance_scale_ohm": "bad"}, "must be numeric"),
+        ({"impedance_scale_ohm": 0.0}, "must be positive and finite"),
+        ({"impedance_scale_ohm": float("inf")}, "must be positive and finite"),
+    ],
+)
+def test_terminal_vi_fit_requires_a_positive_finite_scale(make_case, target, message):
+    from pcd.metrics import _target_impedance_scale
+
+    case = make_case({"case_id": "invalid_terminal_scale", "target": target})
+    with pytest.raises(ValueError, match=message):
+        _target_impedance_scale(case)
 
 
 def test_the_objective_ignores_waveform_row_order(tmp_path, rc_case):
@@ -264,7 +364,8 @@ def test_a_metric_may_return_a_named_objective_instead_of_loss(tmp_path, rc_case
     from pcd.sim_core import simulate_case
 
     @register("missing_loss")
-    def missing_loss(case, record, waveform):
+    def missing_loss(case, params, response):
+        del case, params, response
         return {"something_else": 1.0}
 
     rec = simulate_case(rc_case, run_root=tmp_path, solver_override="test_fake")
@@ -311,7 +412,8 @@ def test_a_non_finite_loss_is_a_failed_measurement_not_a_store_error(tmp_path, r
     from pcd.sim_core import simulate_case
 
     @register("nonfinite_loss")
-    def nonfinite_loss(case, record, waveform):
+    def nonfinite_loss(case, params, response):
+        del case, params, response
         return {"loss": float("inf")}
 
     rec = simulate_case(rc_case, run_root=tmp_path, solver_override="test_fake")
@@ -323,7 +425,7 @@ def test_a_non_finite_loss_is_a_failed_measurement_not_a_store_error(tmp_path, r
 def test_total_reflection_keeps_a_finite_loss_and_null_unbounded_values(tmp_path, make_case):
     from pcd.metrics import impedance_match
 
-    np.savetxt(tmp_path / "ac.csv", [[13.56e6, 1.0, 0.0, 13.56e6, 0.0, 0.0]])
+    del tmp_path
     case = make_case(
         {
             "case_id": "open_match",
@@ -332,8 +434,22 @@ def test_total_reflection_keeps_a_finite_loss_and_null_unbounded_values(tmp_path
             "target": {"objective": "impedance_match"},
         }
     )
-    record = {"run_dir": str(tmp_path), "artifacts": {"frequency_response": "ac.csv"}, "params": {}}
-    metrics = impedance_match(case, record, pd.DataFrame())
+    from pcd.simulation import SimulationResult
+
+    response = SimulationResult(
+        time_s=np.asarray([]),
+        voltage_V=np.asarray([]),
+        frequency_response=pd.DataFrame(
+            {
+                "frequency_Hz": [13.56e6],
+                "voltage_re": [1.0],
+                "voltage_im": [0.0],
+                "current_re": [0.0],
+                "current_im": [0.0],
+            }
+        ),
+    )
+    metrics = impedance_match(case, {}, response)
 
     assert metrics["loss"] == pytest.approx(1.0)
     assert metrics["vswr"] is None
@@ -487,10 +603,10 @@ def test_grid_optimizer_enumerates_each_discrete_candidate_once(make_case):
     candidates = [optimizer.ask() for _ in range(4)]
 
     assert candidates == [
-        {"fixed": 10.0, "C1": 1.0, "L1": 3.0},
-        {"fixed": 10.0, "C1": 1.0, "L1": 4.0},
-        {"fixed": 10.0, "C1": 2.0, "L1": 3.0},
-        {"fixed": 10.0, "C1": 2.0, "L1": 4.0},
+        {"C1": 1.0, "L1": 3.0},
+        {"C1": 1.0, "L1": 4.0},
+        {"C1": 2.0, "L1": 3.0},
+        {"C1": 2.0, "L1": 4.0},
     ]
     with pytest.raises(RuntimeError, match="exhausted its 4"):
         optimizer.ask()
@@ -546,12 +662,42 @@ def test_differential_evolution_is_seeded_bounded_and_traceable(make_case):
     second = _evolution_trace(case, seed=17, trials=16)
 
     assert first == second
-    assert first[0][0] == {"x": 2.0, "gain": 10.0, "fixed": "pi"}
+    assert first[0][0] == {"x": 2.0, "gain": 10.0}
     assert all(-5.0 <= row[0]["x"] <= 5.0 and 1.0 <= row[0]["gain"] <= 100.0 for row in first)
     assert first[0][1] == {"phase": "initialization", "generation": 0, "population_index": 0, "accepted": True}
     assert first[8][1]["phase"] == "evolution"
     assert first[8][1]["strategy"] == "DE/rand/1/bin"
     assert len(first[8][1]["parents"]) == 3
+
+
+def test_differential_evolution_does_not_spend_trials_on_duplicate_points(make_case):
+    case = make_case(
+        {
+            "case_id": "unique_continuous",
+            "run": {"trials": 24},
+            "variables": {"c": {"bounds": [1e-10, 1e-7], "scale": "log", "default": 1e-9}},
+        }
+    )
+    optimizer = create_optimizer(case, optimizer_name="differential_evolution", seed=3)
+    proposals = []
+    metadata = []
+    for _index in range(24):
+        params = optimizer.ask()
+        value = float(params["c"])
+        proposals.append(value)
+        feasible = value >= 5.1e-10
+        rank = (
+            0.0 if feasible else 1.0,
+            0.0,
+            0.0,
+            max(0.0, 5.1e-10 - value) / 5.1e-10,
+            abs(np.log(value / 3e-10)),
+        )
+        optimizer.tell(params, {"rank": rank})
+        metadata.append(optimizer.proposal_metadata())
+
+    assert len(set(proposals)) == len(proposals)
+    assert any(row.get("duplicate_fallback") == "uniform_resample" for row in metadata)
 
 
 def test_differential_evolution_uses_feasibility_first_replacement(make_case):

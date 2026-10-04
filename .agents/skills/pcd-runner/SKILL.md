@@ -1,6 +1,6 @@
 ---
 name: pcd-runner
-description: "Run, validate, inspect, and reproduce this repository's PCD RF circuit studies. Use only in this repository for requests involving PCD cases, ngspice simulations, design studies, benchmarks, result summaries, plots, or ML-ready evaluation data; do not use for unrelated circuit projects or ordinary source-code editing."
+description: "Run, validate, inspect, and reproduce this repository's PCD RF circuit studies. Use only in this repository for requests involving PCD cases, ngspice simulations, design studies, benchmarks, result summaries, or plots; do not use for unrelated circuit projects or ordinary source-code editing."
 ---
 
 # PCD Runner
@@ -29,13 +29,13 @@ running a command. Select one mode from the user's requested outcome:
 - validation or netlist inspection without solver execution;
 - one simulation without objective scoring;
 - a complete scenario-aware design study;
+- bounded effective-terminal identification with fit/holdout evidence;
 - inspection, visualization, or export of an existing result;
 - explicit full benchmark/report reproduction.
 
 For PCD v1 release closure, use the dedicated `bench/release/run_suite.py`
-workflow documented in the execution modes. Report its circuit, ML, and full-
-scope decisions separately; a workflow PASS does not override a failed ML
-gate.
+workflow documented in the execution modes. Report its circuit decision and
+physical scope boundary; machine learning is not part of that gate.
 
 If the user asks only to smoke-test the platform and provides no case, use
 `bench/cases/topology_l_match_golden.yaml`. It is a one-evaluation engine
@@ -72,28 +72,13 @@ conflicts from shared nodes.
 
 ## Read and report results
 
-Use paths recorded in `study_result.json`, a simulation `summary.json`, or its
-`debug/manifest.json`; do not assume that active files live directly under a study root. In a study, follow
+Use paths recorded in `study_result.json`, `identification_result.json`, a
+simulation `summary.json`, or its `debug/manifest.json`; do not assume that
+active files live directly under a study root. In a study, follow
 `artifacts.generation` to the immutable generation and use its
-`evaluations.csv` as the complete audit/source table. For ML work, run
-`ml-prepare` and use the role-limited `dataset.csv` with its `manifest.json`;
-use `ml-evaluate` for the fixed baseline comparison. Its optional
-`--constraint-validation` input must be a separate prepared dataset with no
-reused fixed-design values and is constraint evidence only. Never describe
-either mode as proof that Bayesian optimization or saved ngspice calls are
-already available.
-For topology-aware AC response work, use `ml-corpus` on completed study roots.
-Read its `manifest.json` before consuming `graphs.jsonl`, `samples.csv`, or
-`component_responses.csv`; report unavailable design/condition/topology splits
-as missing evidence. The export does not run ngspice, train a model, or enable
-candidate proposal.
-Use `ml-corpus-evaluate` only after those split states are known. Report the
-constant, ridge, MLP, and relational-GNN results on the same split, including a
-constant-baseline winner as a negative result. The command does not save a
-deployable model, propose candidates, or authorize M3/M4.
-The preregistered fixed-pool ranking workflow is documented in
-`references/execution-modes.md`; its failed 30% gate is evidence against, not
-authorization for, an online ML proposal workflow.
+`evaluations.csv` as the complete audit/source table. There is currently no
+public ML export, training, or candidate-proposal command. Do not infer such a
+contract from saved result columns.
 
 Report only the evidence produced by the selected mode. Include:
 
@@ -101,7 +86,9 @@ Report only the evidence produced by the selected mode. Include:
 - run/study root and immutable generation or manifest path;
 - best fixed candidate, scenario coverage, acceptance outcome, failed limits,
   and failed evaluations when applicable;
-- dataset ID plus runtime and solver fingerprints when handing data to ML;
+- fitted latent values, unseen-scenario holdout error, local sensitivity rank,
+  and condition number for identification;
+- dataset ID plus runtime and solver fingerprints when comparing studies;
 - whether results came from cache;
 - the relevant physical-model boundary.
 

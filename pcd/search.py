@@ -1,7 +1,8 @@
-"""Candidate generators for case studies.
+"""Candidate generators for design studies and terminal identification.
 
-Search proposes fixed designs only. Scenario values and per-scenario controls
-are owned by the StudyRunner and can never leak into this parameter space.
+Search proposes exactly one declared candidate role: ``design`` for hardware
+sizing or ``latent`` for identification. Scenario values and per-scenario
+controls are owned by the StudyRunner and cannot leak into this space.
 """
 
 from __future__ import annotations
@@ -16,7 +17,8 @@ from typing import Any
 
 import numpy as np
 
-from .case import Case, default_params, variable_specs
+from .case import Case
+from .problem import candidate_role, project_candidate_case, resolve_parameter_set
 from .search_registry import get as get_optimizer
 from .search_registry import load_plugins, register
 
@@ -62,8 +64,18 @@ def sample_param(rng: np.random.Generator, spec: dict[str, Any]) -> Any:
     return float(rng.uniform(float(lo), float(hi)))
 
 
+def candidate_specs(case: Case) -> dict[str, dict[str, Any]]:
+    """Return the only parameter space an optimizer is allowed to propose."""
+
+    return resolve_parameter_set(case).specs(candidate_role(case))
+
+
+def candidate_defaults(case: Case) -> dict[str, Any]:
+    return {name: spec["default"] for name, spec in candidate_specs(case).items() if "default" in spec}
+
+
 def validate_proposal(case: Case, proposal: Any) -> dict[str, Any]:
-    """Normalize one optimizer proposal and enforce the declared design space.
+    """Normalize one optimizer proposal and enforce the declared candidate space.
 
     Optimizers may omit variables that have defaults, but may not introduce
     undeclared axes or return values outside a variable's type/domain.  This is
@@ -72,14 +84,14 @@ def validate_proposal(case: Case, proposal: Any) -> dict[str, Any]:
 
     if not isinstance(proposal, Mapping):
         raise TypeError("optimizer.ask() must return a mapping")
-    specs = variable_specs(case)
+    specs = candidate_specs(case)
     extras = sorted(str(name) for name in proposal if name not in specs)
     if extras:
-        raise ValueError(f"optimizer proposed undeclared design variables: {extras}")
-    values = {**default_params(case), **dict(proposal)}
+        raise ValueError(f"optimizer proposed undeclared candidate variables: {extras}")
+    values = {**candidate_defaults(case), **dict(proposal)}
     missing = sorted(name for name in specs if name not in values)
     if missing:
-        raise ValueError(f"optimizer proposal is missing design variables without defaults: {missing}")
+        raise ValueError(f"optimizer proposal is missing candidate variables without defaults: {missing}")
     return {name: _validate_proposed_value(name, values[name], spec) for name, spec in specs.items()}
 
 
@@ -155,7 +167,7 @@ def create_optimizer(case: Case, optimizer_name: str | None = None, seed: int | 
     config = case.data.get("optimizer", {}) or {}
     name = optimizer_name or str(config.get("name", "random"))
     factory = get_optimizer(name)
-    return factory(case.detached(), seed=seed)
+    return factory(project_candidate_case(case), seed=seed)
 
 
 class RandomOptimizer(BaseOptimizer):
@@ -163,10 +175,10 @@ class RandomOptimizer(BaseOptimizer):
         super().__init__(case=case, seed=seed)
         configured_seed = (case.data.get("optimizer", {}) or {}).get("seed", 0)
         self.rng = np.random.default_rng(seed if seed is not None else configured_seed)
-        self.specs = variable_specs(case)
+        self.specs = candidate_specs(case)
 
     def ask(self) -> dict[str, Any]:
-        params = default_params(self.case)
+        params = candidate_defaults(self.case)
         for name, spec in self.specs.items():
             params[name] = sample_param(self.rng, spec)
         return params
@@ -188,7 +200,7 @@ class GridOptimizer(BaseOptimizer):
     def __init__(self, case: Case, seed: int | None = None) -> None:
         super().__init__(case=case, seed=seed)
         axes: list[tuple[str, list[Any]]] = []
-        for name, spec in variable_specs(case).items():
+        for name, spec in candidate_specs(case).items():
             if "choices" in spec:
                 choices = list(spec["choices"])
             elif "default" in spec and "bounds" not in spec:
@@ -211,7 +223,10 @@ class GridOptimizer(BaseOptimizer):
         except StopIteration as exc:
             raise RuntimeError(f"grid optimizer exhausted its {self.n_points} unique candidates") from exc
         self._asked += 1
-        return {**default_params(self.case), **dict(zip((name for name, _choices in self.axes), values, strict=True))}
+        return {
+            **candidate_defaults(self.case),
+            **dict(zip((name for name, _choices in self.axes), values, strict=True)),
+        }
 
     def state(self) -> dict[str, Any]:
         return {

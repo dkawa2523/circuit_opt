@@ -44,7 +44,7 @@ def test_fixed_table_input_resolves_roles_defaults_and_acceptance():
     assert case.authored_data["network"]["fixed"] == {"L1": 6.43146488676e-7}
     assert case.data["source"]["frequency_Hz"] == 13.56e6
     assert case.data["load"]["resistance_ohm"] == "load_resistance_ohm"
-    assert case.data["study"]["design_variables"] == ["L1"]
+    assert case.data["study"]["design_variables"] == []
     assert case.data["study"]["controls"]["budget"] == 49
     assert case.data["study"]["control_margin_min"] == 0.2
     assert case.data["target"]["constraints"]["metric_bounds"]["reflection_magnitude"]["max"] == pytest.approx(
@@ -152,7 +152,6 @@ def test_absolute_drive_exposes_every_named_matching_component():
     components = {item["ref"]: item for item in case.data["circuit"]["components"]}
 
     assert case.data["circuit"]["builder"] == "from_yaml"
-    assert case.data["circuit"]["topology_family"] == "pi_match"
     assert {ref for ref, item in components.items() if item.get("observe")} == {"C1", "L1", "C2"}
     assert components["L1"]["series_resistance_ohm"] == 0.5
     assert case.data["source"]["amplitude_V"] == "drive_amplitude_V"
@@ -166,7 +165,6 @@ def test_explicit_drive_without_limits_still_reports_named_component_stress():
 
     components = {item["ref"]: item for item in plan.case["circuit"]["components"]}
     assert plan.case["circuit"]["builder"] == "from_yaml"
-    assert plan.case["circuit"]["topology_family"] == "pi_match"
     assert all(item.get("observe") is True for item in components.values())
     assert "load_current" in plan.case["measurement"]
 

@@ -7,6 +7,7 @@ from typing import Any
 
 from .case import NO_SOURCE_WARNING, Case, default_params, resolve_path, variable_specs
 from .netlist import NetlistInputs, build_netlist_inputs, load_config
+from .problem import resolve_parameter_set
 from .simulation_input import ResolvedSimulationCase, resolve_simulation_case
 from .spice import fundamental_hz
 
@@ -57,25 +58,35 @@ def validate_case(case: Case, strict: bool = False) -> ValidationReport:
 
     if data.get("source") is None and not data.get("sources"):
         report.add("warning", "case.no_source", NO_SOURCE_WARNING)
-    _validate_variables(case, report)
+    parameters_ok = _validate_variables(case, report)
     plugins_ok = _validate_plugins(case, report)
-    simulation = _validate_simulation_input(case, report)
+    simulation = _validate_simulation_input(case, report) if parameters_ok else None
     netlist_inputs = _validate_netlist_inputs(case, report) if plugins_ok and simulation is not None else None
     _validate_load_applicability(case, report, simulation, netlist_inputs)
     _validate_measurement(case, report, simulation)
     _validate_target(case, report)
-    _validate_study(case, report)
+    if data.get("identification") is not None:
+        _validate_identification(case, report)
+    if parameters_ok:
+        _validate_study(case, report)
     return report
 
 
-def _validate_variables(case: Case, report: ValidationReport) -> None:
-    for name, spec in variable_specs(case).items():
+def _validate_variables(case: Case, report: ValidationReport) -> bool:
+    try:
+        specs = variable_specs(case)
+        resolve_parameter_set(case)
+    except (TypeError, ValueError) as exc:
+        report.add("error", "parameter.invalid_roles", str(exc), "$.study")
+        return False
+    for name, spec in specs.items():
         path = f"$.variables.{name}"
         if not isinstance(spec, dict):
             report.add("error", "variable.spec_not_mapping", "variable spec must be a mapping", path)
             continue
         _validate_variable_choices(spec, report, path)
         _validate_variable_bounds(spec, report, path)
+    return True
 
 
 def _validate_variable_choices(spec: dict[str, Any], report: ValidationReport, path: str) -> None:
@@ -373,11 +384,11 @@ def _validate_target(case: Case, report: ValidationReport) -> None:
         return
     objective = str(target.get("objective", "waveform_l2"))
     solver = _mapping_or_empty(case.data.get("solver"))
-    if objective == "impedance_match" and "ac" not in solver:
+    if objective in {"impedance_match", "terminal_vi_fit"} and "ac" not in solver:
         report.add(
             "error",
             "target.impedance_without_ac",
-            "impedance_match requires solver.ac",
+            f"{objective} requires solver.ac",
             "$.target.objective",
         )
     if objective == "rf_load":
@@ -392,6 +403,16 @@ def _validate_target(case: Case, report: ValidationReport) -> None:
                 "$.measurement.load_current",
             )
     _validate_target_waveform(case, target, objective, report)
+
+
+def _validate_identification(case: Case, report: ValidationReport) -> None:
+    try:
+        from .identification import IdentificationSettings, _bounded_latent_specs
+
+        IdentificationSettings.from_case(case)
+        _bounded_latent_specs(case)
+    except (TypeError, ValueError) as exc:
+        report.add("error", "identification.invalid", str(exc), "$.identification")
 
 
 def _validate_target_waveform(

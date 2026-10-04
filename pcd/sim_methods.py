@@ -20,6 +20,7 @@ from .simulation import SimulationResult
 from .simulation_input import SolverRunRequest, resolve_source_specs
 from .solver import ngspice_cli
 from .spice import fundamental_hz, pick_value, resolve_value, spice_value
+from .topology_catalog import matching_topology
 
 # -----------------------------------------------------------------------------
 # Circuit builders
@@ -70,63 +71,45 @@ def _add_declared_component(case: Case, circuit: Circuit, item: dict[str, Any], 
     start = n1
     if item.get("observe"):
         observed_node = meter_node(reference)
-        circuit.raw(f"{meter_reference(reference)} {n1} {observed_node} DC 0", graph_neutral=True)
+        circuit.raw(f"{meter_reference(reference)} {n1} {observed_node} DC 0")
         start = observed_node
 
     resistance = series_resistance_ohm(item, params)
     if resistance is not None and resistance > 0:
         internal = core_node(reference)
-        circuit.raw(
-            f"{loss_reference(reference)} {start} {internal} {spice_value(resistance)}",
-            graph_neutral=True,
-        )
+        circuit.raw(f"{loss_reference(reference)} {start} {internal} {spice_value(resistance)}")
         start = internal
     profiled = profiled_resistor_line(case, params, reference, start, n2, item["value"])
     if profiled is None:
-        circuit.add_graph_component(
-            reference,
-            n1,
-            n2,
-            item["value"],
-            series_resistance_ohm=resistance if resistance and resistance > 0 else None,
-        )
-        circuit.add(reference, start, n2, item["value"], include_in_graph=False)
+        circuit.add(reference, start, n2, item["value"])
     else:
-        circuit.raw(profiled, graph_neutral=True)
-        circuit.mark_graph_unsupported(
-            f"time-varying component {reference!r} requires the future transient graph contract"
-        )
+        circuit.raw(profiled)
 
 
 @register("circuit", "l_match")
 def circuit_l_match(case: Case, params: dict[str, Any]) -> Circuit:
-    out = str(circuit_config(case).get("output_node", "electrode"))
-    c = Circuit(output_node=out)
-    c.params.update(params)
-    c.add("L1", "src", out, "L1")
-    c.add("C1", out, "0", "C1")
-    return c
+    return _matching_circuit(case, params, "l_match")
 
 
 @register("circuit", "pi_match")
 def circuit_pi_match(case: Case, params: dict[str, Any]) -> Circuit:
-    out = str(circuit_config(case).get("output_node", "electrode"))
-    c = Circuit(output_node=out)
-    c.params.update(params)
-    c.add("C1", "src", "0", "C1")
-    c.add("L1", "src", out, "L1")
-    c.add("C2", out, "0", "C2")
-    return c
+    return _matching_circuit(case, params, "pi_match")
 
 
 @register("circuit", "pi_match_harmonic")
 def circuit_pi_match_harmonic(case: Case, params: dict[str, Any]) -> Circuit:
-    c = circuit_pi_match(case, params)
-    out = c.output_node
-    c.add("Lh", out, "harmonic_mid", "Lh")
-    c.add("Ch", "harmonic_mid", "0", "Ch")
-    c.notes.append("series LC shunt branch for harmonic shaping")
-    return c
+    return _matching_circuit(case, params, "pi_match_harmonic")
+
+
+def _matching_circuit(case: Case, params: dict[str, Any], name: str) -> Circuit:
+    out = str(circuit_config(case).get("output_node", "electrode"))
+    circuit = Circuit(output_node=out)
+    circuit.params.update(params)
+    for reference, n1, n2 in matching_topology(name).connections(out):
+        circuit.add(reference, n1, n2, reference)
+    if name == "pi_match_harmonic":
+        circuit.notes.append("series LC shunt branch for harmonic shaping")
+    return circuit
 
 
 # -----------------------------------------------------------------------------

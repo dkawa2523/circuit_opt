@@ -97,17 +97,17 @@ def quality_pr(session: nox.Session) -> None:
     # Note: on Windows, lint-imports exits 1 if its stdout is the NUL device,
     # so redirect this session to a file rather than /dev/null when scripting it.
     session.run("lint-imports", "--config", ".importlinter", external=True)
-    session.run("bandit", "-c", "pyproject.toml", "-q", "-r", "pcd", external=True)
-    # The pip-audit console-script shim can be blocked by Windows application
-    # policy even when the installed module is allowed.  Running the same
-    # entry point through this environment's interpreter is portable.
+    # Some Windows application policies block generated console-script shims
+    # even when the installed module is allowed. Run these Python entry points
+    # through this environment's interpreter.
+    session.run(sys.executable, "-m", "bandit", "-c", "pyproject.toml", "-q", "-r", "pcd", external=True)
     # Audit dependencies declared by this project, not unrelated packages in
     # whichever host/runtime happens to launch nox.
     session.run(sys.executable, "-m", "pip_audit", ".", "--strict", "--progress-spinner=off", external=True)
-    session.run("vulture", external=True)
+    session.run(sys.executable, "-m", "vulture", external=True)
     # Scoped to source: runs/ holds generated artifacts whose provenance SHA-256
     # digests are not secrets, and scanning them would need a large allowlist.
-    session.run("detect-secrets-hook", *SOURCES, external=True)
+    session.run(sys.executable, "-m", "detect_secrets.pre_commit_hook", *SOURCES, external=True)
     session.run(sys.executable, "-m", "pytest", "-q", "--cov=pcd", "--cov-branch", "--cov-report=", external=True)
     # Checked with `coverage report`, not pytest's --cov-fail-under: the latter
     # compares the *rounded* percentage, so 90.53% would pass a 91% floor while

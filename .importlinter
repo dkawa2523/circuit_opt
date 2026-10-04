@@ -16,6 +16,7 @@ forbidden_modules =
     pcd.artifacts
     pcd.spice
     pcd.study
+    pcd.evaluation
     pcd.netlist
     pcd.solver
     pcd.sim_core
@@ -39,6 +40,7 @@ forbidden_modules =
     pcd.artifacts
     pcd.spice
     pcd.study
+    pcd.evaluation
     pcd.analysis
     pcd.netlist
     pcd.solver
@@ -73,32 +75,14 @@ source_modules =
     pcd.records
     pcd.validation
     pcd.reporting
-    pcd.ml
-    pcd.corpus
-    pcd.corpus_evaluation
+    pcd.evaluation
 forbidden_modules =
-    pcd.cli
-
-[importlinter:contract:corpus-is-offline]
-name = AC graph corpus export/evaluation must not execute studies, solvers, search, or reports
-type = forbidden
-source_modules =
-    pcd.corpus
-    pcd.corpus_evaluation
-forbidden_modules =
-    pcd.solver
-    pcd.sim_core
-    pcd.study
-    pcd.search
-    pcd.search_registry
-    pcd.reporting
     pcd.cli
 
 [importlinter:contract:simulation-is-independent]
 name = Simulation preparation and execution stay below measurement, study, search, and reporting
 type = forbidden
 source_modules =
-    pcd.circuit_graph
     pcd.simulation
     pcd.simulation_input
     pcd.probes
@@ -112,13 +96,13 @@ forbidden_modules =
     pcd.analysis
     pcd.metrics
     pcd.metric_registry
+    pcd.evaluation
     pcd.study
     pcd.study_config
     pcd.search
     pcd.search_registry
     pcd.results
     pcd.reporting
-    pcd.ml
     pcd.figures
     pcd.cli
 
@@ -147,35 +131,13 @@ forbidden_modules =
     pcd.simulation_input
     pcd.metrics
     pcd.metric_registry
+    pcd.evaluation
     pcd.study
     pcd.study_config
     pcd.search
     pcd.search_registry
     pcd.results
     pcd.reporting
-    pcd.ml
     pcd.figures
     pcd.rf_loads
-    pcd.cli
-
-[importlinter:contract:ml-is-model-and-persistence-independent]
-name = ML preparation, evaluation, and ranking must not depend on a concrete solver, study orchestration, or persistence
-type = forbidden
-source_modules =
-    pcd.ml
-forbidden_modules =
-    pcd.case
-    pcd.artifacts
-    pcd.records
-    pcd.results
-    pcd.study
-    pcd.study_config
-    pcd.search
-    pcd.search_registry
-    pcd.netlist
-    pcd.solver
-    pcd.sim_core
-    pcd.sim_methods
-    pcd.sim_registry
-    pcd.reporting
     pcd.cli

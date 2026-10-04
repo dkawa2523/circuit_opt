@@ -74,7 +74,7 @@ def _require_id(value: str, kind: str) -> None:
 
 @dataclass(frozen=True, slots=True)
 class Candidate:
-    """A manufactured or otherwise fixed design choice."""
+    """A design choice held constant while its scenarios are evaluated."""
 
     candidate_id: str
     values: Mapping[str, Any] = field(default_factory=dict)

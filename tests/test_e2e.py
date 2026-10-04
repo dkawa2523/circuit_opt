@@ -256,8 +256,8 @@ def test_quasi_static_profile_matches_the_pi_network_closed_form(tmp_path):
         omega = 2.0 * math.pi * row["frequency_Hz"]
         load = complex(row["load_resistance_ohm"], row["load_reactance_ohm"])
         load_parallel_c2 = 1.0 / (1.0 / load + 1j * omega * row["control.C2"])
-        series_branch = 1j * omega * row["design.L1"] + load_parallel_c2
-        expected_input = 1.0 / (1j * omega * row["design.C1"] + 1.0 / series_branch)
+        series_branch = 1j * omega * row["fixed.L1"] + load_parallel_c2
+        expected_input = 1.0 / (1j * omega * row["fixed.C1"] + 1.0 / series_branch)
         expected_gamma = abs((expected_input - 50.0) / (expected_input + 50.0))
 
         assert row["input_resistance_ohm"] == pytest.approx(expected_input.real, rel=2e-6)

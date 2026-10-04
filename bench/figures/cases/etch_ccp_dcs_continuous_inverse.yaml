@@ -15,7 +15,6 @@ sources:
 
 circuit:
   builder: from_yaml
-  topology_family: dual_rf_dc_superposed_etch_ccp
   output_node: wafer
   variables:
     Rp_on_ohm: {bounds: [12.0, 18.0], scale: linear}

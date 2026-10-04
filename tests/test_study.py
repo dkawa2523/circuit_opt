@@ -4,6 +4,7 @@ import copy
 import json
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -34,6 +35,8 @@ from pcd.results import (
 )
 from pcd.results import store as store_module
 from pcd.sim_core import archive_case_bundle
+from pcd.sim_registry import register_solver
+from pcd.simulation import SimulationResult
 from pcd.study import (
     _feasibility_first_loss,
     _runtime_fingerprint,
@@ -80,6 +83,14 @@ def test_case_study_runs_through_the_generic_pipeline(tmp_path, topology_case):
     assert result["schema"] == "study_result.v1"
     assert result["n_candidates"] == 2
     assert result["n_evaluations"] == 2
+    assert result["verification"] == {
+        "schema": "final_candidate_verification.v1",
+        "cache_reused": False,
+        "candidate_id": result["best"]["candidate"]["candidate_id"],
+        "n_evaluations": 1,
+        "n_failed_evaluations": 0,
+        "status": "verified",
+    }
     assert result["best"]["candidate"]["candidate_id"].startswith("trial_")
     assert result["best"]["status"] == "meets_declared_acceptance"
     assert result["best"]["limitation"] == "none"
@@ -139,7 +150,51 @@ def test_case_study_runs_through_the_generic_pipeline(tmp_path, topology_case):
     candidate = read_best_candidate(study_root)
     assert candidate["schema"] == "candidate_result.v2"
     assert "selected" not in candidate["scenarios"][0]
-    assert selected_evaluation(candidate["scenarios"][0])["metrics"]["loss"] >= 0.0
+    selected = selected_evaluation(candidate["scenarios"][0])
+    assert selected["metrics"]["loss"] >= 0.0
+    assert selected["from_cache"] is False
+
+
+def test_study_results_keep_fixed_inputs_out_of_optimizer_candidates(tmp_path, topology_case):
+    data = copy.deepcopy(topology_case.data)
+    data["variables"]["fixture_gain"] = {"default": 1.0}
+    case = Case(topology_case.path, data)
+
+    result = run_case_study(
+        case,
+        n_trials=1,
+        run_root=tmp_path,
+        optimizer_name="random",
+        solver_override="test_fake",
+        seed=3,
+    )
+    table = pd.read_csv(Path(result["run_root"]) / result["artifacts"]["evaluation_table"])
+
+    assert "fixture_gain" not in result["best"]["candidate"]["values"]
+    assert "fixture_gain" in result["parameters"]["roles"]["fixed"]
+    assert result["parameters"]["constant_values"]["fixed"] == {"fixture_gain": 1.0}
+    assert table["fixed.fixture_gain"].tolist() == [1.0]
+
+
+def test_final_verification_replays_only_the_selected_control_per_scenario(tmp_path, topology_case):
+    data = copy.deepcopy(topology_case.data)
+    data["study"] = {
+        "design_variables": [],
+        "scenarios": [
+            {"id": "low", "values": {"condition": 1.0}},
+            {"id": "high", "values": {"condition": 2.0}},
+        ],
+        "controls": {"variables": {"tune": {"values": [1.0, 2.0]}}, "budget": 2},
+    }
+    case = Case(topology_case.path, data)
+
+    result = run_case_study(case, n_trials=1, run_root=tmp_path, optimizer_name="grid", solver_override="test_fake")
+    selected = read_best_candidate(result["run_root"])
+
+    assert result["n_evaluations"] == 4
+    assert result["verification"]["n_evaluations"] == 2
+    assert all(len(scenario["trials"]) == 1 for scenario in selected["scenarios"])
+    assert all(selected_evaluation(scenario)["from_cache"] is False for scenario in selected["scenarios"])
 
 
 def test_continuous_study_persists_reproducible_search_evidence(tmp_path, rc_case):
@@ -190,11 +245,11 @@ def test_continuous_study_persists_reproducible_search_evidence(tmp_path, rc_cas
         "dataset_id",
         "candidate_id",
         "selected",
-        "design.R1",
         "design.C1",
         "objective.normalized_rmse",
         "objective.peak_abs_voltage_V",
     } <= set(pareto)
+    assert evaluations["fixed.R1"].tolist() == [1000] * len(evaluations)
     assert set(pareto["table_schema"]) == {"pareto_front.v1"}
     assert set(pareto["dataset_id"]) == {result["dataset"]["dataset_id"]}
     assert result["best"]["candidate"]["candidate_id"] in set(pareto["candidate_id"])
@@ -469,6 +524,87 @@ def test_study_archives_external_data_once_at_the_study_root(tmp_path):
     assert (Path(evaluation_manifest["run_dir"]) / shared_manifest).resolve() == (
         root / "input_manifest.json"
     ).resolve()
+
+
+def test_fresh_study_evaluation_measures_the_in_memory_solver_response(tmp_path, rc_case, monkeypatch):
+    import pcd.evaluation as evaluation_module
+
+    def unexpected_reload(*_args, **_kwargs):
+        raise AssertionError("a fresh response must not be re-read from CSV")
+
+    monkeypatch.setattr(evaluation_module, "load_simulation_result", unexpected_reload)
+    _spec, runner, _store = build_case_runner(rc_case, tmp_path, solver_override="test_fake")
+
+    result = runner.evaluate_candidate(Candidate("defaults"))
+
+    assert result.evaluations[0].raw.ok
+    assert "normalized_rmse" in result.evaluations[0].metrics.values
+
+
+def test_cached_case_evaluation_restores_the_canonical_response(tmp_path, rc_case):
+    _spec, runner, _store = build_case_runner(rc_case, tmp_path, solver_override="test_fake")
+    candidate = Candidate("defaults")
+
+    first = runner.evaluate_candidate(candidate)
+    second = runner.evaluate_candidate(candidate)
+
+    assert not any(item.from_cache for item in first.evaluations)
+    assert all(item.from_cache for item in second.evaluations)
+    assert first.aggregates.keys() == second.aggregates.keys()
+    for name, value in first.aggregates.items():
+        assert value == pytest.approx(second.aggregates[name], rel=1e-14)
+
+
+def test_final_candidate_replay_bypasses_the_search_cache(tmp_path, rc_case):
+    _spec, runner, _store = build_case_runner(rc_case, tmp_path, solver_override="test_fake")
+    candidate = Candidate("defaults")
+
+    search = runner.evaluate_candidate(candidate)
+    cached = runner.evaluate_candidate(candidate)
+    replay = runner.evaluate_candidate(candidate, reuse_cached=False)
+
+    assert all(item.from_cache for item in cached.evaluations)
+    assert not any(item.from_cache for item in replay.evaluations)
+    assert replay.evaluations[0].raw.artifacts["manifest"] != search.evaluations[0].raw.artifacts["manifest"]
+
+
+def test_case_evaluation_keeps_a_successful_ac_response_canonical(tmp_path):
+    @register_solver("test_successful_ac_response")
+    def successful_ac(request):
+        ac = request.simulation.analysis.ac
+        assert ac is not None
+        response = pd.DataFrame(
+            {
+                "frequency_Hz": [ac.start_hz],
+                "voltage_re": [1.0],
+                "voltage_im": [0.0],
+                "current_re": [-0.02],
+                "current_im": [0.0],
+                "load_voltage_V_re": [0.8],
+                "load_voltage_V_im": [0.0],
+                "load_current_A_re": [0.02],
+                "load_current_A_im": [0.0],
+            }
+        )
+        return SimulationResult(
+            time_s=np.asarray([]),
+            voltage_V=np.asarray([]),
+            status="ok",
+            frequency_response=response,
+        )
+
+    case_path = Path(__file__).resolve().parents[1] / "bench" / "cases" / "match_fixed_nominal.yaml"
+    _spec, runner, _store = build_case_runner(
+        load_case(case_path),
+        tmp_path,
+        solver_override="test_successful_ac_response",
+    )
+
+    result = runner.evaluate_candidate(Candidate("fixed"))
+
+    assert all(item.raw.ok for item in result.evaluations)
+    assert all("frequency_response" in item.raw.artifacts for item in result.evaluations)
+    assert result.aggregates["reflection_magnitude"] == pytest.approx(0.0)
 
 
 def test_deep_windows_workspace_keeps_internal_artifacts_below_legacy_limit(tmp_path, topology_case):

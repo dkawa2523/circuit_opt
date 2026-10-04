@@ -2,7 +2,7 @@
 
 The implementation is deliberately limited to bounded numeric design axes.
 Scenarios, controls, simulation, and engineering constraints remain owned by
-the study pipeline; this module only proposes fixed candidate values and uses
+the study pipeline; this module only proposes candidate design values and uses
 the pipeline's feasibility-first rank for selection.
 """
 
@@ -14,11 +14,17 @@ from typing import Any
 
 import numpy as np
 
-from .case import Case, default_params, variable_specs
-from .search import BaseOptimizer, feedback_rank
+from .case import Case
+from .search import BaseOptimizer, candidate_defaults, candidate_specs, feedback_rank
 
 _MUTATION = 0.8
 _CROSSOVER = 0.7
+
+
+def _reflect_unit(values: np.ndarray) -> np.ndarray:
+    """Reflect out-of-range coordinates into [0, 1] without endpoint piling."""
+
+    return 1.0 - np.abs(np.mod(values, 2.0) - 1.0)
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,8 +54,8 @@ class _Axis:
 
 def _continuous_space(case: Case) -> tuple[tuple[_Axis, ...], dict[str, Any]]:
     axes: list[_Axis] = []
-    fixed = default_params(case)
-    for name, spec in variable_specs(case).items():
+    fixed = candidate_defaults(case)
+    for name, spec in candidate_specs(case).items():
         choices = spec.get("choices")
         if choices is not None:
             fixed[name] = _single_choice(name, choices)
@@ -124,6 +130,7 @@ class DifferentialEvolutionOptimizer(BaseOptimizer):
         self._next_population: np.ndarray | None = None
         self._next_ranks: list[tuple[float, ...] | None] | None = None
         self._last_metadata: dict[str, Any] = {}
+        self._seen: set[tuple[float, ...]] = set()
 
     def _initial_population(self) -> np.ndarray:
         population = np.empty((self.population_size, len(self.axes)), dtype=float)
@@ -146,25 +153,29 @@ class DifferentialEvolutionOptimizer(BaseOptimizer):
             raise RuntimeError("differential_evolution.ask() requires tell() for the previous proposal")
         if self.generation == 0:
             vector = self.population[self._target].copy()
+            vector, resampled = self._without_duplicate(vector)
+            if resampled:
+                self.population[self._target] = vector
             self._pending = ("initialization", self._target, vector)
             self._last_metadata = {
                 "phase": "initialization",
                 "generation": 0,
                 "population_index": self._target,
             }
+            if resampled:
+                self._last_metadata["duplicate_fallback"] = "uniform_resample"
             return self._decode(vector)
 
         target = self._target
         candidates = np.delete(np.arange(self.population_size), target)
         first, second, third = self.rng.choice(candidates, size=3, replace=False)
-        mutant = np.clip(
+        mutant = _reflect_unit(
             self.population[first] + _MUTATION * (self.population[second] - self.population[third]),
-            0.0,
-            1.0,
         )
         crossover = self.rng.random(len(self.axes)) < _CROSSOVER
         crossover[int(self.rng.integers(len(self.axes)))] = True
         vector = np.where(crossover, mutant, self.population[target])
+        vector, resampled = self._without_duplicate(vector)
         self._pending = ("evolution", target, vector)
         self._last_metadata = {
             "phase": "evolution",
@@ -173,7 +184,24 @@ class DifferentialEvolutionOptimizer(BaseOptimizer):
             "population_index": target,
             "parents": [int(first), int(second), int(third)],
         }
+        if resampled:
+            self._last_metadata["duplicate_fallback"] = "uniform_resample"
         return self._decode(vector)
+
+    def _without_duplicate(self, vector: np.ndarray) -> tuple[np.ndarray, bool]:
+        """Keep an ask/tell solver budget from repeating an identical point."""
+
+        key = tuple(float(value) for value in vector)
+        if key not in self._seen:
+            self._seen.add(key)
+            return vector, False
+        for _attempt in range(32):
+            replacement = self.rng.random(len(self.axes))
+            key = tuple(float(value) for value in replacement)
+            if key not in self._seen:
+                self._seen.add(key)
+                return replacement, True
+        raise RuntimeError("differential_evolution could not produce a unique proposal")
 
     def tell(self, params: dict[str, Any], feedback: dict[str, Any]) -> None:
         if self._pending is None:

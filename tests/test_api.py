@@ -11,10 +11,14 @@ from pcd.api import (
     ProbePlan,
     ResolvedSimulationCase,
     SimulationResult,
+    SimulationRun,
     SolverRunRequest,
     SolverSettings,
+    execute_case,
+    measure_response,
     register_simulation,
     register_solver,
+    run_identification,
 )
 from pcd.netlist import build_circuit
 
@@ -27,10 +31,14 @@ def test_public_api_exposes_core_extension_types():
     assert ProbePlan.__name__ == "ProbePlan"
     assert AnalysisRequest.__name__ == "AnalysisRequest"
     assert SimulationResult.__name__ == "SimulationResult"
+    assert SimulationRun.__name__ == "SimulationRun"
     assert ResolvedSimulationCase.__name__ == "ResolvedSimulationCase"
     assert SolverRunRequest.__name__ == "SolverRunRequest"
     assert SolverSettings.__name__ == "SolverSettings"
+    assert callable(execute_case)
+    assert callable(measure_response)
     assert callable(register_solver)
+    assert callable(run_identification)
 
 
 def test_a_case_owns_the_mapping_passed_to_its_constructor(tmp_path):

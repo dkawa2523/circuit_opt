@@ -52,6 +52,15 @@ def _add_study_commands(sub: argparse._SubParsersAction) -> None:
     )
     p.add_argument("--json", action="store_true", help="print the complete machine-readable result")
 
+    p = sub.add_parser("identify", help="fit declared latent circuit parameters and verify held-out observations")
+    p.add_argument("case")
+    p.add_argument("--output", default="runs", help="directory that receives the identification; default: runs")
+    p.add_argument("--solver")
+    p.add_argument("--optimizer", help="bounded latent-parameter optimizer override")
+    p.add_argument("--trials", type=int, help="latent-parameter trial count override")
+    p.add_argument("--seed", type=int, help="optimizer seed override")
+    p.add_argument("--json", action="store_true", help="print the complete machine-readable result")
+
     p = sub.add_parser("result-summary", help="summarize candidates from a completed study")
     p.add_argument("study_root")
     p.add_argument("--out")
@@ -60,39 +69,6 @@ def _add_study_commands(sub: argparse._SubParsersAction) -> None:
     p.add_argument("study_root")
     p.add_argument("--keep", type=int, default=3, help="number of newest generations to retain; default: 3")
     p.add_argument("--apply", action="store_true", help="remove the listed generations; default is dry-run")
-    p.add_argument("--json", action="store_true")
-
-    p = sub.add_parser("ml-prepare", help="prepare a leakage-aware holdout dataset from one completed study")
-    p.add_argument("study_root")
-    p.add_argument("--out", required=True, help="output directory for dataset.csv and manifest.json")
-    p.add_argument(
-        "--test-fraction", type=float, default=0.2, help="fixed-design groups assigned to test; default: 0.2"
-    )
-    p.add_argument("--seed", type=int, default=0, help="deterministic group split seed; default: 0")
-    p.add_argument("--json", action="store_true")
-
-    p = sub.add_parser("ml-corpus", help="export graph-linked AC responses from completed studies")
-    p.add_argument("study_roots", nargs="+", help="one or more completed study roots")
-    p.add_argument("--out", required=True, help="output directory for the corpus artifacts")
-    p.add_argument(
-        "--test-fraction", type=float, default=0.2, help="whole design/condition groups assigned to test; default: 0.2"
-    )
-    p.add_argument("--seed", type=int, default=0, help="deterministic group split seed; default: 0")
-    p.add_argument("--json", action="store_true")
-
-    p = sub.add_parser("ml-corpus-evaluate", help="compare fixed AC response models on declared corpus splits")
-    p.add_argument("corpus_root", help="directory containing an ac_graph_corpus.v1 manifest")
-    p.add_argument("--out", required=True, help="output directory for predictions.csv and evaluation.json")
-    p.add_argument("--seed", type=int, default=0, help="deterministic neural initialization seed; default: 0")
-    p.add_argument("--json", action="store_true")
-
-    p = sub.add_parser("ml-evaluate", help="compare a minimal surrogate with constant holdout baselines")
-    p.add_argument("dataset_root", help="directory containing dataset.csv and manifest.json")
-    p.add_argument("--out", required=True, help="output directory for predictions.csv and evaluation.json")
-    p.add_argument(
-        "--constraint-validation",
-        help="separate prepared dataset used only for independent constraint classification",
-    )
     p.add_argument("--json", action="store_true")
 
     p = sub.add_parser("validate-case", help="validate a case file without simulation or metric evaluation")
@@ -202,9 +178,45 @@ def _cmd_run(args: argparse.Namespace) -> int:
         _dump(result)
     else:
         _print_run_summary(result)
-    failed = bool(result.get("n_failed_evaluations", 0))
+    verification = result.get("verification") or {}
+    failed = bool(result.get("n_failed_evaluations", 0)) or bool(verification.get("n_failed_evaluations", 0))
     rejected = args.require_acceptance and (result.get("best") or {}).get("status") != "meets_declared_acceptance"
     return 1 if failed or rejected else 0
+
+
+def _cmd_identify(args: argparse.Namespace) -> int:
+    from .case import load_case
+    from .identification import run_identification
+
+    result = run_identification(
+        load_case(args.case),
+        run_root=args.output,
+        n_trials=args.trials,
+        optimizer_name=args.optimizer,
+        solver_override=args.solver,
+        seed=args.seed,
+    )
+    if args.json:
+        _dump(result)
+    else:
+        print(f"Identification: {result['case_id']}")
+        print(f"Status: {result['status']}")
+        print(
+            "Estimated latent parameters: "
+            + json.dumps(result["estimated_latent"], ensure_ascii=False, separators=(",", ":"), default=str)
+        )
+        fit, holdout = result["fit"], result["holdout"]
+        print(f"Fit: {fit['metric']}={float(fit['value']):.6g} (limit {float(fit['limit']):.6g})")
+        print(f"Holdout: {holdout['metric']}={float(holdout['value']):.6g} (limit {float(holdout['limit']):.6g})")
+        identifiable = result["identifiability"]
+        condition = identifiable.get("condition_number")
+        condition_text = "unavailable" if condition is None else f"{float(condition):.6g}"
+        print(
+            f"Local sensitivity: rank {identifiable['rank']}/{identifiable['required_rank']}, "
+            f"condition={condition_text}"
+        )
+        print(f"Results: {result['run_root']}")
+    return 0 if result.get("status") == "identified" else 1
 
 
 def _print_condition_summaries(conditions: list[dict]) -> None:
@@ -258,6 +270,29 @@ def _print_electrical_context(study: Mapping[str, Any]) -> None:
         print("Electrical context: " + ", ".join(parts))
 
 
+def _print_constant_inputs(parameters: Any) -> None:
+    if not isinstance(parameters, Mapping):
+        return
+    constants = parameters.get("constant_values")
+    if not isinstance(constants, Mapping):
+        return
+    for role in ("fixed", "calibration", "latent"):
+        values = constants.get(role)
+        if isinstance(values, Mapping) and values:
+            label = role.replace("_", " ").capitalize()
+            print(f"{label} inputs: {json.dumps(dict(values), ensure_ascii=False, separators=(',', ':'), default=str)}")
+
+
+def _print_final_verification(verification: object) -> None:
+    if not isinstance(verification, Mapping) or not verification:
+        return
+    print(
+        "Final candidate replay: "
+        f"{verification.get('status', 'unknown')} "
+        f"({int(verification.get('n_evaluations', 0))} fresh solve(s), cache reused=no)"
+    )
+
+
 def _print_run_summary(result: dict) -> None:
     best = result["best"]
     aggregates = best.get("aggregates") or {}
@@ -290,10 +325,12 @@ def _print_run_summary(result: dict) -> None:
         else ""
     )
     print(f"Selected candidate: {candidate_id}{candidate_suffix}")
+    _print_constant_inputs(result.get("parameters"))
     print(
         f"Candidates: {result.get('n_candidates', 0)}  Conditions: {len(scenarios)}  "
         f"Electrical solves: {result.get('n_evaluations', 0)}"
     )
+    _print_final_verification(result.get("verification"))
     coverage = best.get("coverage") or {}
     if coverage:
         total = int(coverage.get("conditions", 0))
@@ -351,259 +388,6 @@ def _cmd_result_prune(args: argparse.Namespace) -> int:
             print(f"  {path}")
         if not args.apply and result["removed"]:
             print("Re-run with --apply to remove them.")
-    return 0
-
-
-def _feature_transforms_from_case(case_path: Path, columns: set[str]) -> dict[str, str]:
-    from .case import load_case, variable_specs
-    from .study_config import candidate_case
-
-    case = load_case(case_path)
-    all_specs = variable_specs(case)
-    design_specs = variable_specs(candidate_case(case))
-    transforms: dict[str, str] = {}
-    for column in sorted(columns):
-        prefix, separator, name = column.partition(".")
-        if not separator or prefix not in {"design", "scenario", "control"}:
-            continue
-        spec = (design_specs if prefix == "design" else all_specs).get(name, {})
-        scale = str(spec.get("scale", "linear"))
-        if scale not in {"linear", "log"}:
-            raise ValueError(f"feature {column!r} scale must be linear or log")
-        transforms[column] = "log10" if scale == "log" else "linear"
-    return transforms
-
-
-def _cmd_ml_prepare(args: argparse.Namespace) -> int:
-    import pandas as pd
-
-    from .artifacts import atomic_write_text, file_sha256, read_json, write_json
-    from .ml import prepare_evaluation_dataset
-    from .results import study_artifact_path
-
-    study_root = Path(args.study_root)
-    result_path = study_root / "study_result.json"
-    if not result_path.is_file():
-        raise ValueError(f"completed study result not found: {result_path}")
-    result = read_json(result_path)
-    if not isinstance(result, dict):
-        raise ValueError("study_result.json must contain a mapping")
-    result_artifacts = result.get("artifacts")
-    if not isinstance(result_artifacts, dict):
-        raise ValueError("study_result.json must contain an artifacts mapping")
-    evaluation_path = study_artifact_path(study_root, "evaluation_table")
-    if evaluation_path is None or not evaluation_path.is_file():
-        raise ValueError("committed study does not contain an evaluation table")
-    case_path = study_artifact_path(study_root, "case")
-    if case_path is None or not case_path.is_file():
-        raise ValueError("committed study does not contain its executable case")
-
-    output_dir = Path(args.out)
-    resolved_output = output_dir.resolve()
-    generation_root = evaluation_path.parent.resolve()
-    if resolved_output == generation_root or generation_root in resolved_output.parents:
-        raise ValueError("ML export must not modify the immutable study generation")
-
-    evaluations = pd.read_csv(evaluation_path)
-    prepared = prepare_evaluation_dataset(
-        evaluations,
-        result,
-        test_fraction=args.test_fraction,
-        seed=args.seed,
-        feature_transforms=_feature_transforms_from_case(case_path, set(evaluations.columns)),
-    )
-    dataset_path = output_dir / "dataset.csv"
-    manifest_path = output_dir / "manifest.json"
-    atomic_write_text(dataset_path, prepared.frame.to_csv(index=False))
-
-    declared_table = str(result_artifacts.get("evaluation_table", ""))
-    manifest: dict[str, Any] = {
-        **prepared.manifest,
-        "source_artifacts": {
-            "study_result": {"path": "study_result.json", "sha256": file_sha256(result_path)},
-            "evaluation_table": {"path": declared_table, "sha256": file_sha256(evaluation_path)},
-        },
-        "artifacts": {
-            "dataset": {"path": "dataset.csv", "sha256": file_sha256(dataset_path)},
-            "manifest": "manifest.json",
-        },
-    }
-    write_json(manifest_path, manifest)
-    if args.json:
-        _dump(manifest)
-    else:
-        rows = manifest["split"]["rows"]
-        groups = manifest["split"]["groups"]
-        print(f"ML dataset: {output_dir}")
-        print(f"Rows: train={rows['train']}, test={rows['test']}, total={rows['total']}")
-        print(f"Fixed-design groups: train={groups['train']}, test={groups['test']}, total={groups['total']}")
-        print("Features: " + ", ".join(manifest["roles"]["features"]))
-        print("Objectives: " + ", ".join(manifest["roles"]["objective_targets"]))
-    return 0
-
-
-def _cmd_ml_corpus(args: argparse.Namespace) -> int:
-    from .corpus import export_ac_graph_corpus
-
-    manifest = export_ac_graph_corpus(
-        args.study_roots,
-        args.out,
-        test_fraction=args.test_fraction,
-        seed=args.seed,
-    )
-    if args.json:
-        _dump(manifest)
-    else:
-        counts = manifest["counts"]
-        print(f"AC graph corpus: {Path(args.out).resolve()}")
-        print(
-            f"Studies: {counts['source_studies']}  Graphs: {counts['graphs']}  "
-            f"Samples: {counts['samples']}  Component responses: {counts['component_response_rows']}"
-        )
-        if counts["skipped_evaluations"]:
-            details = ", ".join(f"{name}={count}" for name, count in counts["skipped_by_reason"].items())
-            print(f"Skipped evaluations: {counts['skipped_evaluations']} ({details})")
-        print("Artifacts: graphs.jsonl, samples.csv, component_responses.csv, manifest.json")
-    return 0
-
-
-def _cmd_ml_corpus_evaluate(args: argparse.Namespace) -> int:
-    from .corpus_evaluation import evaluate_ac_graph_corpus
-
-    result = evaluate_ac_graph_corpus(args.corpus_root, args.out, seed=args.seed)
-    if args.json:
-        _dump(result)
-    else:
-        print(f"AC model comparison: {Path(args.out).resolve()}")
-        for name, protocol in result["protocols"].items():
-            if protocol["status"] in {"evaluated", "partial"}:
-                print(f"{name}: {protocol['status']} winner={protocol['winner']}")
-            else:
-                print(f"{name}: unavailable ({protocol.get('reason', 'insufficient evidence')})")
-        decision = result["decision"]
-        print(f"Decision: {decision['status']}")
-    return 0
-
-
-def _read_ml_dataset(root: Path) -> tuple[Any, dict[str, Any], Path, Path, str]:
-    import pandas as pd
-
-    from .artifacts import file_sha256, read_json
-
-    manifest_path = root / "manifest.json"
-    if not manifest_path.is_file():
-        raise ValueError(f"ML dataset manifest not found: {manifest_path}")
-    manifest = read_json(manifest_path)
-    if not isinstance(manifest, dict):
-        raise ValueError("manifest.json must contain a mapping")
-    artifacts = manifest.get("artifacts")
-    if not isinstance(artifacts, dict):
-        raise ValueError("manifest.json must contain an artifacts mapping")
-    dataset_artifact = artifacts.get("dataset")
-    if not isinstance(dataset_artifact, dict):
-        raise ValueError("manifest dataset artifact must be a mapping")
-    declared_path = dataset_artifact.get("path")
-    if not isinstance(declared_path, str) or not declared_path:
-        raise ValueError("manifest dataset artifact must declare a path")
-    dataset_path = (root / declared_path).resolve()
-    if root != dataset_path.parent and root not in dataset_path.parents:
-        raise ValueError("manifest dataset artifact must remain inside the dataset directory")
-    if not dataset_path.is_file():
-        raise ValueError(f"prepared dataset not found: {dataset_path}")
-    actual_hash = file_sha256(dataset_path)
-    if actual_hash != dataset_artifact.get("sha256"):
-        raise ValueError("dataset.csv SHA-256 does not match manifest.json")
-    return pd.read_csv(dataset_path), manifest, manifest_path, dataset_path, str(actual_hash)
-
-
-def _separate_derived_output(source: Path, destination: Path) -> None:
-    if destination == source or source in destination.parents or destination in source.parents:
-        raise ValueError("surrogate evaluation output must not overlap the prepared dataset directory")
-
-
-def _print_ml_evaluation(output_dir: Path, summary: Mapping[str, Any]) -> None:
-    print(f"Surrogate evaluation: {output_dir}")
-    for name, result in summary["regression"].items():
-        if result["status"] != "evaluated":
-            print(f"Objective {name}: {result['status']}")
-            continue
-        improvement = 100.0 * float(result["relative_rmse_improvement"])
-        print(f"Objective {name}: RMSE improvement over mean={improvement:.1f}%")
-    for name, result in summary["classification"].items():
-        print(f"Classification {name}: {result['status']}")
-    independent = summary["independent_constraint_validation"]
-    if independent["status"] == "evaluated":
-        for name, result in independent["classification"].items():
-            print(f"Independent classification {name}: {result['status']}")
-    print(f"Next evidence step: {summary['evidence_gate']['recommendation']}")
-
-
-def _cmd_ml_evaluate(args: argparse.Namespace) -> int:
-    from .artifacts import atomic_write_text, file_sha256, write_json
-    from .ml import evaluate_surrogate_dataset
-
-    dataset_root = Path(args.dataset_root).resolve()
-    dataset, manifest, manifest_path, dataset_path, dataset_hash = _read_ml_dataset(dataset_root)
-    output_dir = Path(args.out).resolve()
-    _separate_derived_output(dataset_root, output_dir)
-    validation_dataset = None
-    validation_manifest = None
-    validation_artifacts: dict[str, Any] | None = None
-    if args.constraint_validation:
-        validation_root = Path(args.constraint_validation).resolve()
-        (
-            validation_dataset,
-            validation_manifest,
-            validation_manifest_path,
-            validation_dataset_path,
-            validation_dataset_hash,
-        ) = _read_ml_dataset(validation_root)
-        _separate_derived_output(validation_root, output_dir)
-        validation_artifacts = {
-            "manifest": {
-                "path": str(validation_manifest_path),
-                "sha256": file_sha256(validation_manifest_path),
-            },
-            "dataset": {"path": str(validation_dataset_path), "sha256": validation_dataset_hash},
-        }
-    evaluated = evaluate_surrogate_dataset(
-        dataset,
-        manifest,
-        constraint_validation_dataset=validation_dataset,
-        constraint_validation_manifest=validation_manifest,
-    )
-    predictions_path = output_dir / "predictions.csv"
-    evaluation_path = output_dir / "evaluation.json"
-    atomic_write_text(predictions_path, evaluated.predictions.to_csv(index=False))
-    source_artifacts: dict[str, Any] = {
-        "manifest": {"path": str(manifest_path), "sha256": file_sha256(manifest_path)},
-        "dataset": {"path": str(dataset_path), "sha256": dataset_hash},
-    }
-    artifacts: dict[str, Any] = {
-        "predictions": {"path": "predictions.csv", "sha256": file_sha256(predictions_path)},
-        "evaluation": "evaluation.json",
-    }
-    if validation_artifacts is not None and evaluated.constraint_validation_predictions is not None:
-        validation_predictions_path = output_dir / "constraint_validation_predictions.csv"
-        atomic_write_text(
-            validation_predictions_path,
-            evaluated.constraint_validation_predictions.to_csv(index=False),
-        )
-        source_artifacts["constraint_validation"] = validation_artifacts
-        artifacts["constraint_validation_predictions"] = {
-            "path": "constraint_validation_predictions.csv",
-            "sha256": file_sha256(validation_predictions_path),
-        }
-    summary: dict[str, Any] = {
-        **evaluated.summary,
-        "source_artifacts": source_artifacts,
-        "artifacts": artifacts,
-    }
-    write_json(evaluation_path, summary)
-    if args.json:
-        _dump(summary)
-    else:
-        _print_ml_evaluation(output_dir, summary)
     return 0
 
 
@@ -725,12 +509,9 @@ HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
     "solver-diagnose": _cmd_solver_diagnose,
     "validate-case": _cmd_validate_case,
     "run": _cmd_run,
+    "identify": _cmd_identify,
     "result-summary": _cmd_result_summary,
     "result-prune": _cmd_result_prune,
-    "ml-prepare": _cmd_ml_prepare,
-    "ml-corpus": _cmd_ml_corpus,
-    "ml-corpus-evaluate": _cmd_ml_corpus_evaluate,
-    "ml-evaluate": _cmd_ml_evaluate,
     "sim-run": _cmd_sim_run,
     "sim-netlist": _cmd_sim_netlist,
     "visualize-netlist": _cmd_visualize_netlist,

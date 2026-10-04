@@ -215,6 +215,21 @@ def test_the_harmonic_topology_adds_a_shunt_trap(make_case):
     assert any("harmonic" in note for note in circuit.notes)
 
 
+def test_topology_catalog_is_the_single_connectivity_source():
+    from pcd.topology_catalog import MATCHING_TOPOLOGIES
+
+    assert set(MATCHING_TOPOLOGIES) == {"l_match", "pi_match", "pi_match_harmonic"}
+    assert MATCHING_TOPOLOGIES["pi_match"].references == ("C1", "L1", "C2")
+    assert MATCHING_TOPOLOGIES["pi_match_harmonic"].connections()[-2:] == (
+        ("Lh", "electrode", "harmonic_mid"),
+        ("Ch", "harmonic_mid", "0"),
+    )
+    assert [element.role for element in MATCHING_TOPOLOGIES["l_match"].elements] == [
+        "series_match",
+        "load_shunt",
+    ]
+
+
 def test_every_registered_method_is_reachable_by_name():
     methods = available()
     assert set(methods["load"]) == {

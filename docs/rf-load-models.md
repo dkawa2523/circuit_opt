@@ -105,7 +105,7 @@ study:
 
 The same scenario value therefore sets the source frequency, the exact
 R+jX realization frequency, and the solver frequency. No R-L-C fit, frequency
-interpolation, or out-of-range extrapolation is performed. A fixed candidate
+interpolation, or out-of-range extrapolation is performed. One candidate design
 network can be evaluated across all rows and aggregated by worst case or a
 declared weighting.
 

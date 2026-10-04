@@ -10,10 +10,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pandas as pd
 import pytest
 
-from pcd.artifacts import file_sha256
 from pcd.cli import _print_sim_summary, main
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -22,6 +20,7 @@ FIXTURES = ROOT / "tests" / "fixtures"
 RC_CASE = str(EXAMPLES / "advanced" / "generic_rc_filter.yaml")
 ADVANCED_CASE = str(FIXTURES / "advanced_case.yaml")
 GRID_CASE = str(ROOT / "bench" / "cases" / "match_discrete_hardware_search.yaml")
+IDENTIFICATION_CASE = str(EXAMPLES / "advanced" / "ccp_terminal_identification.yaml")
 
 
 def _stdout_json(capsys) -> dict:
@@ -280,6 +279,7 @@ def test_run_is_the_simple_human_readable_study_entry_point(tmp_path, capsys):
     assert "Worst constraint margins (positive=reserve): max_peak_abs_voltage_V=" in output
     assert "Condition nominal: accepted, control={}" in output
     assert "Candidates: 24" in output
+    assert "Final candidate replay: verified (1 fresh solve(s), cache reused=no)" in output
     assert "Results:" in output
     assert "Selected evidence:" in output
     assert len(list(tmp_path.rglob("study_result.json"))) == 1
@@ -299,6 +299,47 @@ def test_run_can_gate_automation_on_declared_acceptance(monkeypatch, capsys):
 
     assert excinfo.value.code == 1
     assert _stdout_json(capsys)["best"]["status"] == "does_not_meet_declared_acceptance"
+
+
+def test_run_exits_nonzero_when_final_candidate_replay_fails(monkeypatch, capsys):
+    monkeypatch.setattr(
+        "pcd.study.run_case_study",
+        lambda *args, **kwargs: {
+            "best": {"status": "incomplete_evidence"},
+            "n_failed_evaluations": 0,
+            "verification": {"n_failed_evaluations": 1, "status": "failed"},
+        },
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        main(["run", RC_CASE, "--json"])
+
+    assert excinfo.value.code == 1
+    assert _stdout_json(capsys)["verification"]["status"] == "failed"
+
+
+def test_identify_reports_a_completed_latent_fit(monkeypatch, capsys):
+    monkeypatch.setattr(
+        "pcd.identification.run_identification",
+        lambda *args, **kwargs: {"status": "identified", "case_id": "fit"},
+    )
+
+    main(["identify", IDENTIFICATION_CASE, "--json"])
+
+    assert _stdout_json(capsys)["status"] == "identified"
+
+
+def test_identify_exits_nonzero_when_holdout_or_rank_fails(monkeypatch, capsys):
+    monkeypatch.setattr(
+        "pcd.identification.run_identification",
+        lambda *args, **kwargs: {"status": "not_identified", "case_id": "fit"},
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        main(["identify", IDENTIFICATION_CASE, "--json"])
+
+    assert excinfo.value.code == 1
+    assert _stdout_json(capsys)["status"] == "not_identified"
 
 
 def test_run_reports_a_public_input_typo_without_a_traceback(tmp_path, capsys):
@@ -359,126 +400,6 @@ def test_run_uses_the_unified_pipeline_for_an_advanced_case(tmp_path, capsys):
     study_root = Path(payload["run_root"])
     assert (study_root / "study_result.json").exists()
     assert (study_root / payload["artifacts"]["history"]).exists()
-
-
-def test_ml_prepare_exports_explicit_roles_and_a_group_holdout(tmp_path, capsys):
-    main(
-        [
-            "run",
-            RC_CASE,
-            "--optimizer",
-            "random",
-            "--solver",
-            "test_fake",
-            "--trials",
-            "4",
-            "--seed",
-            "7",
-            "--output",
-            str(tmp_path / "runs"),
-            "--json",
-        ]
-    )
-    study = _stdout_json(capsys)
-    export = tmp_path / "ml"
-
-    main(
-        [
-            "ml-prepare",
-            study["run_root"],
-            "--out",
-            str(export),
-            "--test-fraction",
-            "0.25",
-            "--seed",
-            "11",
-            "--json",
-        ]
-    )
-    manifest = _stdout_json(capsys)
-    dataset = pd.read_csv(export / "dataset.csv")
-
-    assert manifest["schema"] == "ml_evaluation_dataset.v1"
-    assert manifest["split"]["groups"] == {"total": 4, "train": 3, "test": 1}
-    assert manifest["source_artifacts"]["evaluation_table"]["sha256"]
-    assert manifest["artifacts"]["dataset"]["sha256"]
-    assert manifest["feature_transforms"]["design.C1"] == "log10"
-    assert manifest["feature_transforms"]["design.R1"] == "log10"
-    assert manifest["source_evaluation_cost_s"]["status"] == "available"
-    assert (export / "manifest.json").is_file()
-    assert "selected_control" not in dataset
-    assert dataset.groupby("candidate_id")["split"].nunique().eq(1).all()
-    assert set(dataset["split"]) == {"train", "test"}
-
-    evaluation = tmp_path / "ml-evaluation"
-    main(["ml-evaluate", str(export), "--out", str(evaluation), "--json"])
-    evidence = _stdout_json(capsys)
-    assert evidence["schema"] == "ml_surrogate_evaluation.v1"
-    assert evidence["source_artifacts"]["dataset"]["sha256"] == manifest["artifacts"]["dataset"]["sha256"]
-    assert evidence["evidence_gate"]["bayesian_optimization_ready"] is False
-    assert (evaluation / "predictions.csv").is_file()
-    assert (evaluation / "evaluation.json").is_file()
-
-    text_evaluation = tmp_path / "ml-evaluation-text"
-    main(["ml-evaluate", str(export), "--out", str(text_evaluation)])
-    output = capsys.readouterr().out
-    assert "Surrogate evaluation:" in output
-    assert "RMSE improvement over mean=" in output
-    assert "Next evidence step:" in output
-
-    validation_export = tmp_path / "ml-validation"
-    validation_export.mkdir()
-    validation_dataset = dataset.copy()
-    validation_dataset["dataset_id"] = "validation/generation"
-    validation_dataset["study_id"] = "validation"
-    validation_dataset["design.C1"] *= 1.01
-    validation_dataset["design.R1"] *= 1.01
-    validation_dataset["design_group_id"] = "validation_" + validation_dataset["design_group_id"].astype(str)
-    validation_dataset_path = validation_export / "dataset.csv"
-    validation_dataset_path.write_text(validation_dataset.to_csv(index=False), encoding="utf-8")
-    validation_manifest = json.loads(json.dumps(manifest))
-    validation_manifest["source"]["dataset_id"] = "validation/generation"
-    validation_manifest["source"]["study_id"] = "validation"
-    validation_manifest["artifacts"]["dataset"]["sha256"] = file_sha256(validation_dataset_path)
-    (validation_export / "manifest.json").write_text(
-        json.dumps(validation_manifest),
-        encoding="utf-8",
-    )
-    validated_evaluation = tmp_path / "ml-evaluation-validated"
-    main(
-        [
-            "ml-evaluate",
-            str(export),
-            "--constraint-validation",
-            str(validation_export),
-            "--out",
-            str(validated_evaluation),
-            "--json",
-        ]
-    )
-    validated = _stdout_json(capsys)
-    assert validated["independent_constraint_validation"]["status"] == "evaluated"
-    assert validated["source_artifacts"]["constraint_validation"]["dataset"]["sha256"]
-    assert (validated_evaluation / "constraint_validation_predictions.csv").is_file()
-
-    with pytest.raises(SystemExit) as excinfo:
-        main(["ml-evaluate", str(export), "--out", str(export / "nested"), "--json"])
-    assert excinfo.value.code == 2
-    assert "must not overlap" in _stdout_json(capsys)["error"]
-
-    (export / "dataset.csv").write_text((export / "dataset.csv").read_text(encoding="utf-8") + "\n", encoding="utf-8")
-    with pytest.raises(SystemExit) as excinfo:
-        main(["ml-evaluate", str(export), "--out", str(tmp_path / "tampered"), "--json"])
-    assert excinfo.value.code == 2
-    assert "SHA-256 does not match" in _stdout_json(capsys)["error"]
-
-    broken = tmp_path / "broken-study"
-    broken.mkdir()
-    (broken / "study_result.json").write_text('{"artifacts": []}', encoding="utf-8")
-    with pytest.raises(SystemExit) as excinfo:
-        main(["ml-prepare", str(broken), "--out", str(tmp_path / "unused"), "--json"])
-    assert excinfo.value.code == 2
-    assert _stdout_json(capsys)["error"] == "study_result.json must contain an artifacts mapping"
 
 
 def test_unknown_command_is_rejected():

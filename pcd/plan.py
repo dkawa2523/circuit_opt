@@ -19,26 +19,11 @@ from pathlib import Path
 from typing import Any
 
 from .rf_loads import ccp_lumped_impedance, icp_effective_impedance, impedance_point
+from .topology_catalog import MATCHING_TOPOLOGIES, matching_topology
 
 PUBLIC_SCHEMA = "pcd.rf.v1"
 RESOLVED_SCHEMA = "resolved_rf_plan.v1"
 EXECUTABLE_SCHEMA = "case_yaml.v1"
-
-_TOPOLOGY_COMPONENTS: dict[str, tuple[tuple[str, str, str], ...]] = {
-    "l_match": (("L1", "src", "electrode"), ("C1", "electrode", "0")),
-    "pi_match": (
-        ("C1", "src", "0"),
-        ("L1", "src", "electrode"),
-        ("C2", "electrode", "0"),
-    ),
-    "pi_match_harmonic": (
-        ("C1", "src", "0"),
-        ("L1", "src", "electrode"),
-        ("C2", "electrode", "0"),
-        ("Lh", "electrode", "harmonic_mid"),
-        ("Ch", "harmonic_mid", "0"),
-    ),
-}
 
 _COMPONENT_LIMIT_METRICS = {
     "current_rms_A_max": "current_rms_A",
@@ -211,7 +196,7 @@ def _resolved_study(
     quasi_static: bool,
 ) -> dict[str, Any]:
     study: dict[str, Any] = {
-        "design_variables": list(network.variables),
+        "design_variables": list(network.search_variables),
         "candidate_enumeration": "exact",
         "objectives": [{"metric": "reflection_magnitude", "direction": "minimize", "aggregation": "worst"}],
     }
@@ -255,9 +240,9 @@ def _network_plan(
     network = _mapping(raw_network, "network", required=True)
     _reject_unknown(network, {"type", "fixed", "search", "tuning", "loss_ohm"}, "network")
     topology = str(network.get("type", ""))
-    if topology not in _TOPOLOGY_COMPONENTS:
-        raise ValueError(f"network.type must be one of {sorted(_TOPOLOGY_COMPONENTS)}, got {topology!r}")
-    required_refs = {ref for ref, _n1, _n2 in _TOPOLOGY_COMPONENTS[topology]}
+    if topology not in MATCHING_TOPOLOGIES:
+        raise ValueError(f"network.type must be one of {sorted(MATCHING_TOPOLOGIES)}, got {topology!r}")
+    required_refs = set(matching_topology(topology).references)
     fixed, search, tuning = _network_roles(network, topology, required_refs)
     variables = {name: _fixed_spec(name, value) for name, value in fixed.items()}
     search_variables = {name: _search_spec(name, spec) for name, spec in search.items()}
@@ -290,7 +275,7 @@ def _observe_absolute_stress(network: _NetworkPlan, has_absolute_drive: bool, in
 
     if not has_absolute_drive:
         return network
-    all_refs = {ref for ref, _n1, _n2 in _TOPOLOGY_COMPONENTS[network.topology]}
+    all_refs = set(matching_topology(network.topology).references)
     if all_refs <= network.observed_refs:
         return network
     observed = set(network.observed_refs) | all_refs
@@ -892,9 +877,9 @@ def _effective_load_parameters(load_type: str, load: Mapping[str, Any]) -> dict[
 
 def _resolved_circuit(topology: str, loss_ohm: Mapping[str, Any], observed_refs: set[str]) -> dict[str, Any]:
     if not observed_refs:
-        return {"builder": topology, "topology_family": topology, "output_node": "electrode"}
+        return {"builder": topology, "output_node": "electrode"}
     components = []
-    for ref, n1, n2 in _TOPOLOGY_COMPONENTS[topology]:
+    for ref, n1, n2 in matching_topology(topology).connections():
         item: dict[str, Any] = {"ref": ref, "n1": n1, "n2": n2, "value": ref}
         if ref in loss_ohm:
             item["series_resistance_ohm"] = loss_ohm[ref]
@@ -903,7 +888,6 @@ def _resolved_circuit(topology: str, loss_ohm: Mapping[str, Any], observed_refs:
         components.append(item)
     return {
         "builder": "from_yaml",
-        "topology_family": topology,
         "output_node": "electrode",
         "components": components,
     }

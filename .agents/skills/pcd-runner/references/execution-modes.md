@@ -104,7 +104,7 @@ Important fields are:
 - `study`: scenarios, objectives, and model metadata;
 - `dataset`: dataset ID, table schema, and runtime/solver fingerprints;
 - `artifacts.generation`: active immutable generation;
-- `artifacts.evaluation_table`: generation-relative ML table;
+- `artifacts.evaluation_table`: complete generation-relative audit table;
 - `artifacts.pareto_front`: optional complete-evidence nondominated candidates
   for a study with two or more objectives;
 - `artifacts.snapshot_response`: optional selected-candidate time table for an
@@ -123,88 +123,28 @@ Use `pcd.results.selected_evaluation` when reading `best_candidate.json`. Use
 Candidate x Scenario x Control detail. The root `raw/` area is reusable
 physical cache, not a second published decision table.
 
+## Identify effective terminal parameters
+
+Use this only when the case declares bounded `latent` parameters, calibrated
+fixed circuitry, complex terminal V/I observations, disjoint fit and holdout
+scenarios, and identifiability limits:
+
+```text
+uv run --frozen python -m pcd identify {case.yaml} --output runs --json
+```
+
+Read `identification_result.json` first. It links separate `fit/` and
+`holdout/` studies, aligned observation tables, local-sensitivity evidence,
+and each phase's cache-free selected-candidate replay. An `identified` result
+means the declared electrical fit/holdout and local-rank checks passed. It does
+not identify plasma chemistry, density, sheath geometry, or process yield.
+`run` proposes only `design` values; `identify` proposes only `latent` values.
+
 Produce a compact tabular summary when requested:
 
 ```text
 uv run --frozen python -m pcd result-summary {study-root}
 ```
-
-Prepare an explicit, leakage-aware dataset before any surrogate-model work:
-
-```text
-uv run --frozen python -m pcd ml-prepare {study-root} --out runs/ml/{name} --seed 0 --json
-```
-
-Read `manifest.json` before using `dataset.csv`. Confirm the declared feature,
-objective, constraint, eligibility, and excluded-column roles. The holdout is
-by fixed-design values across all Scenario/Control rows and supports only an
-unseen-design claim within the same committed case. Do not describe it as
-cross-case or independent-measurement validation. Check the per-split class
-counts before claiming constraint calibration, and do not use
-`selected_control`, runtime duration, cache keys, or artifact paths as model
-features. A future proposed design must return through the complete ngspice
-study path.
-
-Prepare the topology-aware AC corpus from one or more completed studies:
-
-```text
-uv run --frozen python -m pcd ml-corpus {study-root-a} {study-root-b} --out runs/ml-corpus/{name} --seed 0 --json
-```
-
-Read `manifest.json` first. `graphs.jsonl` contains physical logical circuits,
-`samples.csv` contains context plus complex port targets, and
-`component_responses.csv` contains sample-by-component complex targets when
-the source study declared observations. Check every split `status`; an
-unavailable split is a dataset-coverage finding, not permission to reshuffle
-rows. This command neither calls ngspice nor trains or selects a model.
-
-Compare the fixed topology-aware reference models on that corpus:
-
-```text
-uv run --frozen python -m pcd ml-corpus-evaluate runs/ml-corpus/{name} --out runs/ml-comparison/{name} --seed 0 --json
-```
-
-Read `evaluation.json` first. Report design, external-condition, and topology
-protocols separately, and include the training mean, ridge, MLP, and relational
-GNN scores. An unavailable fold or constant-baseline winner is a stop result.
-This command performs no test-set tuning, model persistence, candidate
-proposal, ngspice call, or solver-saving claim.
-
-Evaluate the prepared holdout without running ngspice:
-
-```text
-uv run --frozen python -m pcd ml-evaluate runs/ml/{name} --out runs/ml-evaluation/{name} --json
-```
-
-Read `evaluation.json` and report the constant-baseline comparison separately
-from classification evidence. One-class train/test labels are explicitly not
-evaluable. `bayesian_optimization_ready` remains false because this mode does
-not measure uncertainty, candidate-ranking regret, or saved solver calls.
-
-When a separately executed, fixed candidate study was reserved before reading
-its outcomes, prepare it normally and attach it without changing the source
-holdout seed:
-
-```text
-uv run --frozen python -m pcd ml-evaluate runs/ml/{name} --constraint-validation runs/ml/{validation-name} --out runs/ml-evaluation/{name} --json
-```
-
-Confirm that `fixed_design_overlap` is zero. The model must still be fitted
-from `source_training_split_only`; the validation rows may only score the
-locked constraint classifier. Report its class counts, confusion, balanced
-accuracy, majority baseline, and same-circuit simulation limitation.
-
-The repository's only candidate-ranking evidence is the preregistered P3
-benchmark, not a user optimization command:
-
-```text
-uv run --frozen python bench/ml/run_ranking_benchmark.py --run-root runs/p3_ranking_20260930
-```
-
-Read `ranking_evaluation.json` and `ranking_trace.csv`. The fixed RC/RF run
-failed the required 30% saving, so never turn this benchmark into a claim that
-sequential ML proposal, Bayesian optimization, or saved ngspice calls are
-available. Do not change its pools, seeds, model, or threshold after the fact.
 
 ## Inspect or prune generations
 
@@ -233,19 +173,17 @@ Run these only when the user explicitly asks for the full benchmark,
 regression evidence, or publication artifacts. The core suite performs 411
 real-ngspice evaluations when no matching cache is available.
 
-PCD v1 user-workflow release acceptance uses a new root and performs 131
-real-ngspice evaluations. Attach a separately reproduced P3 result only when a
-full release-closure decision is requested:
+PCD v1 user-workflow release acceptance uses a new root and performs 353
+real-ngspice evaluations:
 
 ```text
 uv run --frozen python bench/release/run_suite.py --run-root runs/release_acceptance
-uv run --frozen python bench/release/run_suite.py --run-root runs/release_closure --ml-ranking-result runs/p3_ranking/ranking_evaluation.json
 ```
 
 Read `release_result.json` and `REPORT.md`. A suite PASS qualifies the expected
-circuit workflow reproduction; the separate `release_decision` may still keep
-ML proposal and the full requested scope at NO-GO. Never reuse an existing run
-root to turn cached evaluations into release evidence.
+circuit workflow reproduction only. Machine learning is outside this gate.
+Never reuse an existing run root to turn cached evaluations into release
+evidence.
 
 Core electrical suite:
 
@@ -290,6 +228,7 @@ user asks or source code changed as part of the same task.
 - Component stress and effective loss: `examples/rf_component_stress.yaml`.
 - Effective CCP one-port: `examples/rf_ccp_lumped.yaml`.
 - Effective ICP terminal fit: `examples/rf_icp_transformer.yaml`.
+- Effective CCP terminal-parameter identification: `examples/advanced/ccp_terminal_identification.yaml`.
 - Advanced constrained continuous sizing: `examples/advanced/generic_rc_filter.yaml`.
 - Advanced transient port measurement: `examples/advanced/rf_port_transient.yaml`.
 

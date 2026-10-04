@@ -22,12 +22,14 @@ from .core import (
     ScenarioResult,
     StudySpec,
 )
+from .identification import run_identification
 from .metric_registry import register as register_metric
+from .metrics import measure_response
 from .netlist import Circuit, Component
 from .probes import NamedProbe, ProbePlan
 from .search import BaseOptimizer
 from .search_registry import register as register_optimizer
-from .sim_core import SimRecord, prepare_case, simulate_case
+from .sim_core import SimRecord, SimulationRun, execute_case, prepare_case, simulate_case
 from .sim_registry import register as register_simulation
 from .sim_registry import register_solver
 from .simulation import AnalysisRequest, SimulationResult
@@ -57,15 +59,19 @@ __all__ = [
     "ScenarioResult",
     "SimRecord",
     "SimulationResult",
+    "SimulationRun",
     "SolverRunRequest",
     "SolverSettings",
     "StudySpec",
+    "execute_case",
     "load_case",
+    "measure_response",
     "prepare_case",
     "register_metric",
     "register_optimizer",
     "register_simulation",
     "register_solver",
     "run_case_study",
+    "run_identification",
     "simulate_case",
 ]

@@ -7,6 +7,7 @@ import json
 import math
 from collections.abc import Mapping
 from copy import deepcopy
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -16,94 +17,18 @@ from . import __version__
 from .artifacts import data_file_references, file_sha256, package_source_sha256, write_json
 from .case import Case, default_params
 from .core.aggregation import candidate_is_pareto_eligible, candidate_rank_key, pareto_front
-from .core.models import (
-    Candidate,
-    CandidateResult,
-    EvaluationRequest,
-    MetricSet,
-    RawResult,
-    StudySpec,
-)
+from .core.models import Candidate, CandidateResult, StudySpec
 from .core.pipeline import StudyRunner
-from .metrics import constraints_from_case, measure_record
+from .evaluation import CaseEvaluationBackend
+from .metrics import constraints_from_case
 from .netlist_import import flatten_netlist_file
+from .problem import ParameterRole, ParameterSet, candidate_role, resolve_parameter_set
 from .results import FileResultStore, best_decision_summary, pareto_front_table, quasi_static_snapshot_table
-from .search import create_optimizer, validate_proposal
-from .sim_core import DEBUG_MANIFEST_FILE, archive_case_bundle, simulate_case
+from .search import BaseOptimizer, create_optimizer, validate_proposal
+from .sim_core import archive_case_bundle
 from .simulation_input import resolve_solver_settings
 from .solver import solver_identity
-from .study_config import CaseControlPolicy, candidate_case, mapping, study_spec_from_case
-
-
-class CaseEvaluator:
-    """Run one declared electrical circuit evaluation."""
-
-    def __init__(
-        self,
-        case: Case,
-        study_root: Path,
-        solver_override: str | None = None,
-        *,
-        case_archive_root: Path | None = None,
-        artifact_namespace: str = "default",
-    ) -> None:
-        self.case = case
-        self.study_root = study_root
-        self.solver_override = solver_override
-        self.case_archive_root = case_archive_root or study_root
-        self.artifact_namespace = artifact_namespace
-
-    def evaluate(self, request: EvaluationRequest) -> RawResult:
-        digest = hashlib.sha256(
-            json.dumps(request.to_dict(), sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-        ).hexdigest()[:20]
-        solver_name = self.solver_override
-        record = simulate_case(
-            self.case,
-            params=request.merged_inputs(),
-            run_root=self.study_root / "artifacts",
-            run_id=f"e_{self.artifact_namespace}_{digest}",
-            solver_override=solver_name,
-            case_archive_root=self.case_archive_root,
-        )
-        return self._raw_from_manifest(record.manifest())
-
-    def _raw_from_manifest(
-        self,
-        manifest: Mapping[str, Any],
-    ) -> RawResult:
-        run_dir = Path(str(manifest["run_dir"])).resolve()
-        relative_run = run_dir.relative_to(self.study_root)
-        names = mapping(manifest.get("artifacts"), "simulation_record.artifacts")
-        artifacts = {
-            "manifest": str(relative_run / DEBUG_MANIFEST_FILE),
-            "waveform": str(relative_run / str(names["waveform"])),
-            "netlist": str(relative_run / str(names["netlist"])),
-            "solver_log": str(relative_run / str(names["solver_log"])),
-        }
-        if names.get("frequency_response"):
-            artifacts["frequency_response"] = str(relative_run / str(names["frequency_response"]))
-        effective_status = "ok" if manifest.get("status") == "ok" else "failed"
-        diagnostics = dict(manifest.get("diagnostics") or {})
-        return RawResult(
-            status=effective_status,
-            artifacts=artifacts,
-            diagnostics=diagnostics,
-            error=manifest.get("error"),
-        )
-
-
-class CaseMetrics:
-    """Measure immutable simulation artifacts through the selected case metric."""
-
-    def __init__(self, case: Case, study_root: Path) -> None:
-        self.case = case
-        self.study_root = study_root
-
-    def compute(self, request: EvaluationRequest, raw: RawResult) -> MetricSet:
-        del request
-        manifest = self.study_root / str(raw.artifacts["manifest"])
-        return MetricSet(measure_record(self.case, manifest))
+from .study_config import CaseControlPolicy, mapping, study_spec_from_case
 
 
 def _sha256_json(value: Any) -> str:
@@ -234,16 +159,17 @@ def build_case_runner(
     archive_root = store.begin_generation() if transactional else store.root
     snapshot, _case_files = archive_case_bundle(case, archive_root)
     spec = study_spec_from_case(snapshot)
+    evaluation = CaseEvaluationBackend(
+        snapshot,
+        store.root,
+        solver_override,
+        case_archive_root=archive_root,
+        artifact_namespace=_sha256_json(simulation_fingerprint)[:16],
+    )
     runner = StudyRunner(
         study=spec,
-        evaluator=CaseEvaluator(
-            snapshot,
-            store.root,
-            solver_override,
-            case_archive_root=archive_root,
-            artifact_namespace=_sha256_json(simulation_fingerprint)[:16],
-        ),
-        metrics=(CaseMetrics(snapshot, store.root),),
+        evaluator=evaluation,
+        metrics=(evaluation,),
         constraints=constraints_from_case(snapshot),
         control_policy=CaseControlPolicy(snapshot),
         store=store,
@@ -350,17 +276,25 @@ def _evaluation_table_rows(
     trial: int,
     result: CandidateResult,
     dataset_identity: Mapping[str, Any],
+    constant_inputs: Mapping[str, Mapping[str, Any]],
+    candidate_label: str,
 ) -> list[dict[str, Any]]:
     """One analysis-ready row for every candidate/scenario/control solve."""
 
     rows: list[dict[str, Any]] = []
-    design = _flatten_table_values("design", result.candidate.values)
+    constants = {
+        name: value
+        for role, values in constant_inputs.items()
+        for name, value in _flatten_table_values(role, values).items()
+    }
+    candidate_values = _flatten_table_values(candidate_label, result.candidate.values)
     for scenario_result in result.scenarios:
         scenario = scenario_result.scenario
         scenario_values = _flatten_table_values("scenario", scenario.values)
         for evaluation in scenario_result.trials:
             row: dict[str, Any] = {
                 **dataset_identity,
+                **constants,
                 "trial": trial,
                 "candidate_id": result.candidate.candidate_id,
                 "scenario_id": scenario.scenario_id,
@@ -373,7 +307,7 @@ def _evaluation_table_rows(
                 "from_cache": evaluation.from_cache,
                 "raw_cache_key": evaluation.raw_cache_key,
                 "error": evaluation.raw.error,
-                **design,
+                **candidate_values,
                 **scenario_values,
                 **_flatten_table_values("control", evaluation.request.control.values),
                 **_flatten_table_values("metric", evaluation.metrics.values),
@@ -400,13 +334,28 @@ def _write_selected_projections(
     result: CandidateResult,
     generation_root: Path,
     generation: Path,
+    constant_inputs: Mapping[str, Mapping[str, Any]],
 ) -> dict[str, str]:
     study_mode = str(mapping(case.data.get("study"), "study").get("analysis_mode", ""))
     if study_mode != "quasi_static_snapshot":
         return {}
     filename = "snapshot_response.csv"
-    quasi_static_snapshot_table(result).to_csv(generation_root / filename, index=False)
+    table = quasi_static_snapshot_table(result)
+    for role, values in constant_inputs.items():
+        for name, value in values.items():
+            table[f"{role}.{name}"] = value
+    table.to_csv(generation_root / filename, index=False)
     return {"snapshot_response": str(generation / filename).replace("\\", "/")}
+
+
+def _constant_parameter_inputs(
+    parameters: ParameterSet,
+    proposed_role: ParameterRole,
+) -> dict[str, dict[str, Any]]:
+    roles = tuple(
+        role for role in ParameterRole if role not in {ParameterRole.OPERATING, ParameterRole.CONTROL, proposed_role}
+    )
+    return {role.value: values for role in roles if (values := parameters.defaults(role))}
 
 
 def _write_pareto_projection(
@@ -450,29 +399,7 @@ def resolve_study_case(
 ) -> Case:
     """Return one case whose archived plan matches the actual run settings."""
 
-    if case.has_exact_candidate_enumeration:
-        planned = dict((case.resolved_plan or {}).get("execution") or {})
-        trial_value: Any = planned.get("trials")
-        if trial_value is None:
-            trial_value = (case.data.get("run") or {}).get("trials")
-        planned_trials = int(1 if trial_value is None else trial_value)
-        planned_optimizer = str(planned.get("optimizer", (case.data.get("optimizer") or {}).get("name", "grid")))
-        seed_value: Any = planned.get("seed")
-        if seed_value is None:
-            seed_value = (case.data.get("optimizer") or {}).get("seed")
-        planned_seed = int(0 if seed_value is None else seed_value)
-        changes = []
-        if int(n_trials) != planned_trials:
-            changes.append(f"trials={n_trials} (planned {planned_trials})")
-        if optimizer_name is not None and str(optimizer_name) != planned_optimizer:
-            changes.append(f"optimizer={optimizer_name} (planned {planned_optimizer})")
-        if seed is not None and int(seed) != planned_seed:
-            changes.append(f"seed={seed} (planned {planned_seed})")
-        if changes:
-            raise ValueError(
-                "pcd.rf.v1 candidate enumeration is derived from network.search and cannot be overridden: "
-                + ", ".join(changes)
-            )
+    _reject_exact_enumeration_overrides(case, n_trials, optimizer_name, seed)
 
     data = deepcopy(case.data)
     solver = mapping(data.get("solver"), "solver")
@@ -486,34 +413,229 @@ def resolve_study_case(
     data["optimizer"] = {**optimizer, "name": effective_optimizer, "seed": effective_seed}
     data["run"] = {**run, "trials": int(n_trials)}
 
-    resolved = deepcopy(case.resolved_plan)
-    if resolved is not None:
-        effective = {
-            "solver": effective_solver,
-            "optimizer": effective_optimizer,
-            "trials": int(n_trials),
-            "seed": effective_seed,
-        }
-        previous = dict(resolved.get("execution") or {})
-        if previous != effective:
-            inferences = [
-                str(item)
-                for item in resolved.get("inferences") or []
-                if not str(item).startswith(("run ", "compare all "))
-            ]
-            inferences.append(
-                "apply effective execution settings: "
-                + ", ".join(f"{name}={value}" for name, value in effective.items())
-            )
-            resolved["inferences"] = inferences
-        resolved["execution"] = effective
-        resolved["case"] = deepcopy(data)
+    effective = {
+        "solver": effective_solver,
+        "optimizer": effective_optimizer,
+        "trials": n_trials,
+        "seed": effective_seed,
+    }
+    resolved = _updated_resolved_plan(case.resolved_plan, data, effective)
     return Case(
         path=case.path,
         data=data,
         source_data=case.source_data,
         resolved_plan=resolved,
     )
+
+
+def _reject_exact_enumeration_overrides(
+    case: Case,
+    n_trials: int,
+    optimizer_name: str | None,
+    seed: int | None,
+) -> None:
+    if not case.has_exact_candidate_enumeration:
+        return
+    planned_trials, planned_optimizer, planned_seed = _planned_exact_execution(case)
+    changes = [
+        message
+        for changed, message in (
+            (n_trials != planned_trials, f"trials={n_trials} (planned {planned_trials})"),
+            (
+                optimizer_name is not None and optimizer_name != planned_optimizer,
+                f"optimizer={optimizer_name} (planned {planned_optimizer})",
+            ),
+            (seed is not None and seed != planned_seed, f"seed={seed} (planned {planned_seed})"),
+        )
+        if changed
+    ]
+    if changes:
+        raise ValueError(
+            "pcd.rf.v1 candidate enumeration is derived from network.search and cannot be overridden: "
+            + ", ".join(changes)
+        )
+
+
+def _planned_exact_execution(case: Case) -> tuple[int, str, int]:
+    planned = dict((case.resolved_plan or {}).get("execution") or {})
+    run = case.data.get("run") or {}
+    optimizer_cfg = case.data.get("optimizer") or {}
+    trial_value = planned.get("trials")
+    if trial_value is None:
+        trial_value = run.get("trials")
+    planned_trials = int(1 if trial_value is None else trial_value)
+    planned_optimizer = str(planned.get("optimizer", optimizer_cfg.get("name", "grid")))
+    seed_value = planned.get("seed")
+    if seed_value is None:
+        seed_value = optimizer_cfg.get("seed")
+    planned_seed = int(0 if seed_value is None else seed_value)
+    return planned_trials, planned_optimizer, planned_seed
+
+
+def _updated_resolved_plan(
+    raw_plan: dict[str, Any] | None,
+    case_data: dict[str, Any],
+    effective: dict[str, Any],
+) -> dict[str, Any] | None:
+    resolved = deepcopy(raw_plan)
+    if resolved is None:
+        return None
+    if dict(resolved.get("execution") or {}) != effective:
+        inferences = [
+            str(item) for item in resolved.get("inferences") or [] if not str(item).startswith(("run ", "compare all "))
+        ]
+        settings = ", ".join(f"{name}={value}" for name, value in effective.items())
+        resolved["inferences"] = [*inferences, f"apply effective execution settings: {settings}"]
+    resolved["execution"] = dict(effective)
+    resolved["case"] = deepcopy(case_data)
+    return resolved
+
+
+def _dataset_identity(case: Case, store: FileResultStore, generation_root: Path) -> dict[str, Any]:
+    return {
+        "table_schema": "evaluation_table.v2",
+        "dataset_id": f"{store.study_id}/{generation_root.name}",
+        "study_id": store.study_id,
+        "case_schema": str(case.authored_data.get("schema", "case_yaml.v1")),
+        "resolved_case_schema": str(case.data.get("schema", "case_yaml.v1")),
+        "runtime_fingerprint_sha256": _sha256_json(store.runtime_fingerprint),
+        "solver_fingerprint_sha256": _sha256_json(store.raw_runtime_fingerprint.get("solver", {})),
+    }
+
+
+@dataclass(frozen=True, slots=True)
+class _TrialBatch:
+    results: list[CandidateResult]
+    history: list[dict[str, Any]]
+    rows: list[dict[str, Any]]
+
+
+def _run_trials(
+    case: Case,
+    spec: StudySpec,
+    runner: StudyRunner,
+    optimizer: BaseOptimizer,
+    n_trials: int,
+    dataset_identity: Mapping[str, Any],
+    constant_inputs: Mapping[str, Mapping[str, Any]],
+) -> _TrialBatch:
+    results: list[CandidateResult] = []
+    history: list[dict[str, Any]] = []
+    rows: list[dict[str, Any]] = []
+    optimizer_name = str((case.data.get("optimizer") or {}).get("name"))
+    seed = int((case.data.get("optimizer") or {}).get("seed", 0))
+    candidate_label = candidate_role(case).value
+    for index in range(n_trials):
+        params = validate_proposal(optimizer.case, optimizer.ask())
+        result = runner.evaluate_candidate(Candidate(f"trial_{index:04d}", params))
+        results.append(result)
+        rows.extend(_evaluation_table_rows(index, result, dataset_identity, constant_inputs, candidate_label))
+        rank, feedback = _optimizer_feedback(spec, result)
+        optimizer.tell(params, feedback)
+        history.append(_study_history_entry(index, result, rank, optimizer_name, seed, optimizer.proposal_metadata()))
+    return _TrialBatch(results, history, rows)
+
+
+def _generated_path(generation: Path, name: str) -> str:
+    return str(generation / name).replace("\\", "/")
+
+
+def _generation_artifacts(
+    generation_root: Path,
+    generation: Path,
+    selected_candidate_path: Path,
+    selected: Mapping[str, Any],
+    pareto: Mapping[str, Any],
+) -> dict[str, Any]:
+    artifacts = {
+        "generation": str(generation).replace("\\", "/"),
+        "case": _generated_path(generation, "case.yaml"),
+        "input_manifest": _generated_path(generation, "input_manifest.json"),
+        "best_candidate": _generated_path(generation, selected_candidate_path.name),
+        "history": _generated_path(generation, "study_history.json"),
+        "evaluation_table": _generated_path(generation, "evaluations.csv"),
+        **selected,
+        **pareto,
+    }
+    for key, name in (
+        ("input_case", "input_case.yaml"),
+        ("resolved_plan", "resolved_plan.yaml"),
+        ("imported_netlist", "imported_netlist.cir"),
+    ):
+        if (generation_root / name).is_file():
+            artifacts[key] = _generated_path(generation, name)
+    return artifacts
+
+
+def _finalize_study(
+    case: Case,
+    spec: StudySpec,
+    store: FileResultStore,
+    generation_root: Path,
+    dataset_identity: Mapping[str, Any],
+    parameters: ParameterSet,
+    constant_inputs: Mapping[str, Mapping[str, Any]],
+    trials: _TrialBatch,
+    runner: StudyRunner,
+    n_trials: int,
+) -> dict[str, Any]:
+    generation = generation_root.relative_to(store.root)
+    search_best = min(trials.results, key=lambda item: candidate_rank_key(spec, item))
+    # Candidate selection may use reusable search results, but the published
+    # engineering decision must come from a normal solver execution that did
+    # not read or write that cache.
+    best = runner.verify_candidate(search_best)
+    n_failed = sum(not evaluation.raw.ok for result in trials.results for evaluation in result.control_evaluations)
+    verification_failed = sum(not evaluation.raw.ok for evaluation in best.control_evaluations)
+    selected_candidate_path = store.save_selected_candidate(best)
+    selected_artifacts = _write_selected_projections(case, best, generation_root, generation, constant_inputs)
+    pareto_artifacts, pareto_summary = _write_pareto_projection(
+        case,
+        spec,
+        trials.results,
+        best,
+        generation_root,
+        generation,
+        str(dataset_identity["dataset_id"]),
+    )
+    payload = {
+        "schema": "study_result.v1",
+        "study": spec.to_dict(),
+        "execution": {
+            "solver": str((case.data.get("solver") or {}).get("name")),
+            "optimizer": str((case.data.get("optimizer") or {}).get("name")),
+            "trials": n_trials,
+            "seed": int((case.data.get("optimizer") or {}).get("seed", 0)),
+        },
+        "dataset": dict(dataset_identity),
+        "parameters": {"roles": parameters.role_names(), "constant_values": dict(constant_inputs)},
+        "run_root": str(store.root),
+        "artifacts": _generation_artifacts(
+            generation_root,
+            generation,
+            selected_candidate_path,
+            selected_artifacts,
+            pareto_artifacts,
+        ),
+        "n_candidates": len(trials.results),
+        "n_evaluations": sum(len(item.control_evaluations) for item in trials.results),
+        "n_failed_evaluations": n_failed,
+        "verification": {
+            "schema": "final_candidate_verification.v1",
+            "cache_reused": False,
+            "candidate_id": best.candidate.candidate_id,
+            "n_evaluations": len(best.control_evaluations),
+            "n_failed_evaluations": verification_failed,
+            "status": "verified" if verification_failed == 0 else "failed",
+        },
+        "best": best_decision_summary(spec, best, n_failed_evaluations=n_failed),
+        **({"pareto": pareto_summary} if pareto_summary is not None else {}),
+    }
+    # Publish only after every referenced file has been committed.
+    write_json(generation_root / "study_history.json", trials.history)
+    pd.DataFrame(trials.rows).to_csv(generation_root / "evaluations.csv", index=False)
+    write_json(store.root / "study_result.json", payload)
+    return payload
 
 
 def run_case_study(
@@ -524,7 +646,35 @@ def run_case_study(
     solver_override: str | None = None,
     seed: int | None = None,
 ) -> dict[str, Any]:
-    """Optimize fixed candidates using feasibility-first scenario aggregation."""
+    """Optimize design candidates using feasibility-first scenario aggregation."""
+
+    if candidate_role(case) is not ParameterRole.DESIGN:
+        raise ValueError("run_case_study accepts design candidates; use run_identification for latent parameters")
+    return _run_parameter_study(
+        case,
+        run_root,
+        n_trials=n_trials,
+        optimizer_name=optimizer_name,
+        solver_override=solver_override,
+        seed=seed,
+        proposed_role=ParameterRole.DESIGN,
+    )
+
+
+def _run_parameter_study(
+    case: Case,
+    run_root: str | Path,
+    *,
+    n_trials: int | None,
+    optimizer_name: str | None,
+    solver_override: str | None,
+    seed: int | None,
+    proposed_role: ParameterRole,
+) -> dict[str, Any]:
+    """Run the shared study path for one explicit candidate parameter role."""
+
+    if candidate_role(case) is not proposed_role:
+        raise ValueError(f"study candidate role is {candidate_role(case).value!r}; expected {proposed_role.value!r}")
 
     configured_trials = int((case.data.get("run", {}) or {}).get("trials", 1))
     effective_trials = configured_trials if n_trials is None else int(n_trials)
@@ -540,8 +690,7 @@ def run_case_study(
     if not report.ok:
         raise ValueError(report.format_text())
 
-    optimizer_case = candidate_case(case)
-    optimizer = create_optimizer(optimizer_case)
+    optimizer = create_optimizer(case)
     grid_size = getattr(optimizer, "n_points", None)
     if grid_size is not None and effective_trials != int(grid_size):
         raise ValueError(f"grid optimizer requires exactly {grid_size} trials, got {effective_trials}")
@@ -549,100 +698,27 @@ def run_case_study(
     generation_root = store.generation_root
     if generation_root is None:  # pragma: no cover - an internal construction invariant
         raise RuntimeError("study result generation was not initialized")
-    generation = generation_root.relative_to(store.root)
-    dataset_identity = {
-        "table_schema": "evaluation_table.v2",
-        "dataset_id": f"{store.study_id}/{generation_root.name}",
-        "study_id": store.study_id,
-        "case_schema": str(case.authored_data.get("schema", "case_yaml.v1")),
-        "resolved_case_schema": str(case.data.get("schema", "case_yaml.v1")),
-        "runtime_fingerprint_sha256": _sha256_json(store.runtime_fingerprint),
-        "solver_fingerprint_sha256": _sha256_json(store.raw_runtime_fingerprint.get("solver", {})),
-    }
-    results = []
-    history: list[dict[str, Any]] = []
-    evaluation_rows: list[dict[str, Any]] = []
-    effective_optimizer = str((case.data.get("optimizer") or {}).get("name"))
-    effective_seed = int((case.data.get("optimizer") or {}).get("seed", 0))
-    for index in range(effective_trials):
-        params = validate_proposal(optimizer_case, optimizer.ask())
-        candidate = Candidate(f"trial_{index:04d}", params)
-        result = runner.evaluate_candidate(candidate)
-        results.append(result)
-        evaluation_rows.extend(_evaluation_table_rows(index, result, dataset_identity))
-        rank, feedback = _optimizer_feedback(spec, result)
-        optimizer.tell(params, feedback)
-        history.append(
-            _study_history_entry(
-                index,
-                result,
-                rank,
-                effective_optimizer,
-                effective_seed,
-                optimizer.proposal_metadata(),
-            )
-        )
-
-    ordered = sorted(results, key=lambda item: candidate_rank_key(spec, item))
-    best = ordered[0]
-    n_failed = sum(not evaluation.raw.ok for result in results for evaluation in result.control_evaluations)
-    selected_candidate_path = store.save_selected_candidate(best)
-    selected_artifacts = _write_selected_projections(case, best, generation_root, generation)
-    pareto_artifacts, pareto_summary = _write_pareto_projection(
+    dataset_identity = _dataset_identity(case, store, generation_root)
+    parameters = resolve_parameter_set(case)
+    constant_inputs = _constant_parameter_inputs(parameters, proposed_role)
+    trials = _run_trials(
         case,
         spec,
-        results,
-        best,
-        generation_root,
-        generation,
-        dataset_identity["dataset_id"],
+        runner,
+        optimizer,
+        effective_trials,
+        dataset_identity,
+        constant_inputs,
     )
-
-    def generated(name: str) -> str:
-        return str(generation / name).replace("\\", "/")
-
-    payload = {
-        "schema": "study_result.v1",
-        "study": spec.to_dict(),
-        "execution": {
-            "solver": str((case.data.get("solver") or {}).get("name")),
-            "optimizer": effective_optimizer,
-            "trials": effective_trials,
-            "seed": effective_seed,
-        },
-        "dataset": dataset_identity,
-        "run_root": str(store.root),
-        "artifacts": {
-            "generation": str(generation).replace("\\", "/"),
-            "case": generated("case.yaml"),
-            "input_manifest": generated("input_manifest.json"),
-            "best_candidate": generated(selected_candidate_path.name),
-            "history": generated("study_history.json"),
-            "evaluation_table": generated("evaluations.csv"),
-            **selected_artifacts,
-            **pareto_artifacts,
-            **({"input_case": generated("input_case.yaml")} if (generation_root / "input_case.yaml").is_file() else {}),
-            **(
-                {"resolved_plan": generated("resolved_plan.yaml")}
-                if (generation_root / "resolved_plan.yaml").is_file()
-                else {}
-            ),
-            **(
-                {"imported_netlist": generated("imported_netlist.cir")}
-                if (generation_root / "imported_netlist.cir").is_file()
-                else {}
-            ),
-        },
-        "n_candidates": len(results),
-        "n_evaluations": sum(len(item.control_evaluations) for item in results),
-        "n_failed_evaluations": n_failed,
-        "best": best_decision_summary(spec, best, n_failed_evaluations=n_failed),
-        **({"pareto": pareto_summary} if pareto_summary is not None else {}),
-    }
-    # Everything referenced by the root result exists before this final atomic
-    # replacement.  An interrupted rerun therefore leaves the previous complete
-    # generation authoritative instead of publishing a mixed candidate set.
-    write_json(generation_root / "study_history.json", history)
-    pd.DataFrame(evaluation_rows).to_csv(generation_root / "evaluations.csv", index=False)
-    write_json(store.root / "study_result.json", payload)
-    return payload
+    return _finalize_study(
+        case,
+        spec,
+        store,
+        generation_root,
+        dataset_identity,
+        parameters,
+        constant_inputs,
+        trials,
+        runner,
+        effective_trials,
+    )

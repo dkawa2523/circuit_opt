@@ -16,6 +16,8 @@ def custom_series_lc(case, params):
 
 
 @register_metric("peak_voltage")
-def peak_voltage(case, record, waveform):
+def peak_voltage(case, params, response):
+    del case, params
+    waveform = response.as_frame()
     peak = float(np.nanmax(np.abs(waveform["voltage_V"].to_numpy(float)))) if len(waveform) else 1e30
     return {"loss": peak, "peak_abs_voltage_V": peak, "objective": "peak_voltage"}

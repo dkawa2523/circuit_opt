@@ -9,7 +9,6 @@ sources:
 
 circuit:
   builder: from_yaml
-  topology_family: dual_frequency_ccp_bias_path
   output_node: top_electrode
   variables:
     R_off_ohm: {choices: [55.0, 70.0, 85.0], default: 70.0}

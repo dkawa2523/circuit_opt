@@ -8,6 +8,7 @@ adds constraint penalties to an objective.
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -23,8 +24,8 @@ from .component_models import observed_components
 from .core.models import ConstraintResult, EvaluationRequest, MetricSet, RawResult
 from .metric_registry import get as get_metric
 from .metric_registry import load_plugins, register
-from .records import frequency_response_path, load_frequency_response, load_waveform, read_sim_record
-from .simulation import AC_LOAD_VOLTAGE_COLUMN
+from .records import load_simulation_result, read_sim_record
+from .simulation import AC_LOAD_VOLTAGE_COLUMN, SimulationResult
 from .simulation_input import build_probe_plan
 from .spice import fundamental_hz
 
@@ -88,8 +89,9 @@ def _finite_or_none(value: Any) -> float | None:
 
 
 @register("waveform_l2")
-def waveform_l2(case: Case, record: dict[str, Any], waveform: pd.DataFrame) -> dict[str, Any]:
-    del record
+def waveform_l2(case: Case, params: dict[str, Any], response: SimulationResult) -> dict[str, Any]:
+    del params
+    waveform = response.as_frame()
     target = load_target_waveform(case)
     _time, target_voltage, voltage = interpolate_to_target(target, waveform)
     if len(voltage) == 0 or np.isnan(voltage).all():
@@ -108,13 +110,23 @@ def waveform_l2(case: Case, record: dict[str, Any], waveform: pd.DataFrame) -> d
 
 
 @register("impedance_match")
-def impedance_match(case: Case, record: dict[str, Any], waveform: pd.DataFrame) -> dict[str, Any]:
-    del waveform
-    path = frequency_response_path(record)
-    if path is None or not path.exists():
+def impedance_match(case: Case, params: dict[str, Any], response: SimulationResult) -> dict[str, Any]:
+    metrics = _terminal_impedance_metrics(case, params, response)
+    reflection = float(metrics["reflection_magnitude"])
+    return {"loss": reflection, "objective": "impedance_match", **metrics}
+
+
+def _terminal_impedance_metrics(
+    case: Case,
+    params: dict[str, Any],
+    response: SimulationResult,
+) -> dict[str, Any]:
+    """Measure the complex impedance seen at the calibrated source plane."""
+
+    frequency_response = response.frequency_response
+    if frequency_response is None:
         raise ValueError("no frequency response; set solver.ac in the case")
     reference = float((case.data.get("measurement", {}) or {}).get("reference_impedance_ohm", DEFAULT_Z0))
-    params = record.get("params") or {}
     target_frequency = fundamental_hz(case, params)
     components = observed_components(case, params)
     probes = build_probe_plan(case)
@@ -122,12 +134,11 @@ def impedance_match(case: Case, record: dict[str, Any], waveform: pd.DataFrame) 
     # Interpolate the complex voltage/current first. Reflection and impedance
     # are nonlinear ratios, so interpolating those derived fields would be a
     # subtly different calculation.
-    response = at_frequency(load_frequency_response(record, extras), target_frequency)
-    row = input_impedance(pd.DataFrame([response]), reference).iloc[0]
+    _require_ac_columns(frequency_response, extras)
+    selected = at_frequency(frequency_response, target_frequency)
+    row = input_impedance(pd.DataFrame([selected]), reference).iloc[0]
     reflection = float(row["reflection_magnitude"])
     metrics: dict[str, Any] = {
-        "loss": reflection,
-        "objective": "impedance_match",
         "reflection_magnitude": reflection,
         "reflected_power_fraction": reflection**2,
         "reflection_db": _finite_or_none(row["reflection_db"]),
@@ -137,17 +148,75 @@ def impedance_match(case: Case, record: dict[str, Any], waveform: pd.DataFrame) 
         "match_frequency_Hz": float(row["frequency_Hz"]),
         "reference_impedance_ohm": reference,
     }
-    metrics.update(ac_power_flow(response, probes.load_current_column, reference))
-    metrics.update(ac_component_metrics(response, components))
+    metrics.update(ac_power_flow(selected, probes.load_current_column, reference))
+    metrics.update(ac_component_metrics(selected, components))
     metrics.update(component_loss_balance(metrics))
     return metrics
 
 
+@register("terminal_vi_fit")
+def terminal_vi_fit(case: Case, params: dict[str, Any], response: SimulationResult) -> dict[str, Any]:
+    """Fit source-plane impedance derived from a measured complex V/I pair."""
+
+    target_impedance = _target_impedance(params)
+    scale = _target_impedance_scale(case)
+    metrics = _terminal_impedance_metrics(case, params, response)
+    resistance_error = float(metrics["resistance_ohm"]) - target_impedance.real
+    reactance_error = float(metrics["reactance_ohm"]) - target_impedance.imag
+    error = math.hypot(resistance_error, reactance_error) / scale
+    return {
+        "loss": error,
+        "objective": "terminal_vi_fit",
+        "normalized_impedance_error": error,
+        "target_resistance_ohm": target_impedance.real,
+        "target_reactance_ohm": target_impedance.imag,
+        "residual_resistance_ohm": resistance_error,
+        "residual_reactance_ohm": reactance_error,
+        **metrics,
+    }
+
+
+def _target_impedance(params: Mapping[str, Any]) -> complex:
+    required = (
+        "target_voltage_re_V",
+        "target_voltage_im_V",
+        "target_current_re_A",
+        "target_current_im_A",
+    )
+    try:
+        values = {name: float(params[name]) for name in required}
+    except KeyError as exc:
+        raise ValueError(f"terminal_vi_fit requires scenario value {exc.args[0]!r}") from exc
+    except (TypeError, ValueError) as exc:
+        raise ValueError("terminal_vi_fit target V/I values must be numeric") from exc
+    if not all(math.isfinite(value) for value in values.values()):
+        raise ValueError("terminal_vi_fit target V/I values must be finite")
+
+    target_voltage = complex(values["target_voltage_re_V"], values["target_voltage_im_V"])
+    target_current = complex(values["target_current_re_A"], values["target_current_im_A"])
+    if abs(target_current) <= 1e-30:
+        raise ValueError("terminal_vi_fit target delivered current must be nonzero")
+    return target_voltage / target_current
+
+
+def _target_impedance_scale(case: Case) -> float:
+    target_cfg = case.data.get("target") or {}
+    try:
+        scale = float(target_cfg["impedance_scale_ohm"])
+    except KeyError as exc:
+        raise ValueError("terminal_vi_fit requires target.impedance_scale_ohm") from exc
+    except (TypeError, ValueError) as exc:
+        raise ValueError("target.impedance_scale_ohm must be numeric") from exc
+    if not math.isfinite(scale) or scale <= 0:
+        raise ValueError("target.impedance_scale_ohm must be positive and finite")
+    return scale
+
+
 @register("rf_load")
-def rf_load(case: Case, record: dict[str, Any], waveform: pd.DataFrame) -> dict[str, Any]:
+def rf_load(case: Case, params: dict[str, Any], response: SimulationResult) -> dict[str, Any]:
     """Electrical load-port voltage, current, power, and harmonic metrics."""
 
-    params = record.get("params") or {}
+    waveform = response.as_frame()
     frequency = fundamental_hz(case, params)
     options = rf_measurement_options(case.data.get("measurement"))
     probes = build_probe_plan(case)
@@ -174,16 +243,41 @@ def rf_load(case: Case, record: dict[str, Any], waveform: pd.DataFrame) -> dict[
     return {"objective": "rf_load", **values}
 
 
-def measure_record(case: Case, record_or_path: dict[str, Any] | str | Path) -> dict[str, Any]:
-    """Measure one successful simulation record without mutating its artifacts."""
+def _require_ac_columns(frame: pd.DataFrame, extras: list[str] | None) -> None:
+    required = {"frequency_Hz", "voltage_re", "voltage_im", "current_re", "current_im"}
+    required.update(f"{name}_{part}" for name in (extras or []) for part in ("re", "im"))
+    if missing := sorted(required - set(frame)):
+        raise ValueError(f"canonical AC response is missing columns {missing}")
+
+
+def _detached_response(response: SimulationResult) -> SimulationResult:
+    return SimulationResult(
+        time_s=np.array(response.time_s, dtype=float, copy=True),
+        voltage_V=np.array(response.voltage_V, dtype=float, copy=True),
+        current_A=(None if response.current_A is None else np.array(response.current_A, dtype=float, copy=True)),
+        status=response.status,
+        log=response.log,
+        diagnostics=deepcopy(response.diagnostics),
+        frequency_response=(
+            None if response.frequency_response is None else response.frequency_response.copy(deep=True)
+        ),
+        probes={name: np.array(values, dtype=float, copy=True) for name, values in response.probes.items()},
+    )
+
+
+def measure_response(
+    case: Case,
+    response: SimulationResult,
+    params: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Measure one canonical solver response without reading or writing artifacts."""
 
     load_plugins(case.data.get("plugins"), case.base_dir)
-    record = read_sim_record(record_or_path)
-    if record.get("status") != "ok":
-        raise ValueError(f"cannot measure simulation record with status {record.get('status')!r}")
+    if response.status != "ok":
+        raise ValueError(f"cannot measure simulation response with status {response.status!r}")
     metric_name = str((case.data.get("target", {}) or {}).get("objective", "waveform_l2"))
-    waveform = load_waveform(record)
-    values = dict(get_metric(metric_name)(case.detached(), deepcopy(record), waveform.copy(deep=True)))
+    detached = _detached_response(response)
+    values = dict(get_metric(metric_name)(case.detached(), deepcopy(params or {}), detached))
     if not values:
         raise ValueError(f"metric '{metric_name}' returned no values")
     if "loss" in values:
@@ -194,10 +288,19 @@ def measure_record(case: Case, record_or_path: dict[str, Any] | str | Path) -> d
         if not math.isfinite(loss):
             raise ValueError(f"metric '{metric_name}' returned a non-finite loss")
         values["loss"] = loss
-    peak = _peak_voltage(waveform)
+    peak = _peak_voltage(detached.as_frame())
     if peak is not None:
         values.setdefault("peak_abs_voltage_V", peak)
     return values
+
+
+def measure_record(case: Case, record_or_path: dict[str, Any] | str | Path) -> dict[str, Any]:
+    """Restore and measure one successful saved simulation response."""
+
+    record = read_sim_record(record_or_path)
+    if record.get("status") != "ok":
+        raise ValueError(f"cannot measure simulation record with status {record.get('status')!r}")
+    return measure_response(case, load_simulation_result(record), dict(record.get("params") or {}))
 
 
 class MetricLimitConstraint:

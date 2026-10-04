@@ -12,14 +12,18 @@ source:
   v2_V: 5
   rise_s: 2.0e-9
   fall_s: 2.0e-9
-  width_s: 1.0e-6
-  period_s: 2.0e-6
+  # The target CSV is a 2 us step response. Keep the source high beyond the
+  # simulated window so waveform fitting is a well-posed sizing problem.
+  width_s: 3.0e-6
+  period_s: 4.0e-6
 
 circuit:
   builder: from_yaml
   output_node: out
   variables:
-    R1: {bounds: [100, 10000], scale: log, default: 1000}
+    # One voltage trace identifies the RC time constant, not R and C
+    # separately. Treat the installed resistor as fixed and size C1 only.
+    R1: {default: 1000}
     C1: {bounds: [1.0e-10, 1.0e-7], scale: log, default: 1.0e-9}
   components:
     - {ref: R1, n1: src, n2: out, value: R1}

@@ -26,7 +26,6 @@ sources:
 
 circuit:
   builder: from_yaml
-  topology_family: dual_frequency_ccp_bias_path
   output_node: top_electrode
   components:
     - {ref: Rhf, n1: hf_src, n2: top_electrode, value: 50.0}

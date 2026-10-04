@@ -23,7 +23,7 @@ from .protocols import Constraint, ControlPolicy, Evaluator, FixedControlPolicy,
 
 
 class StudyRunner:
-    """Evaluate fixed designs across scenarios through one explicit pipeline."""
+    """Evaluate candidate designs across scenarios through one explicit pipeline."""
 
     def __init__(
         self,
@@ -41,7 +41,19 @@ class StudyRunner:
         self.control_policy = control_policy or FixedControlPolicy()
         self.store = store
 
-    def evaluate_candidate(self, candidate: Candidate) -> CandidateResult:
+    def evaluate_candidate(
+        self,
+        candidate: Candidate,
+        *,
+        reuse_cached: bool = True,
+    ) -> CandidateResult:
+        """Evaluate one candidate over every scenario and control state.
+
+        ``reuse_cached=False`` is reserved for the final independent replay of
+        a selected design.  It executes the same evaluator and measurements,
+        but neither reads nor writes the search cache.
+        """
+
         scenarios: list[ScenarioResult] = []
         for scenario in self.study.scenarios:
             controls = self.control_policy.controls(self.study, candidate, scenario)
@@ -49,7 +61,10 @@ class StudyRunner:
                 raise ValueError(f"control policy produced no operating point for scenario {scenario.scenario_id!r}")
             trial_rows = tuple(
                 (
-                    self._with_control_margin(self._evaluate_control(candidate, scenario, control), margin),
+                    self._with_control_margin(
+                        self._evaluate_control(candidate, scenario, control, reuse_cached=reuse_cached),
+                        margin,
+                    ),
                     margin,
                 )
                 for control in controls
@@ -68,6 +83,30 @@ class StudyRunner:
     def run(self, candidates: list[Candidate]) -> list[CandidateResult]:
         results = [self.evaluate_candidate(candidate) for candidate in candidates]
         return sorted(results, key=lambda item: candidate_rank_key(self.study, item))
+
+    def verify_candidate(self, selected: CandidateResult) -> CandidateResult:
+        """Replay each selected scenario/control point without using the cache.
+
+        Search evidence retains every tried control state.  Release evidence
+        only needs the control selected for each scenario, so verification
+        performs one fresh solve per scenario instead of repeating the grid.
+        """
+
+        scenarios: list[ScenarioResult] = []
+        for scenario_result in selected.scenarios:
+            scenario = scenario_result.scenario
+            control = scenario_result.selected.request.control
+            replay = self._evaluate_control(selected.candidate, scenario, control, reuse_cached=False)
+            replay = self._with_control_margin(replay, scenario_result.control_margin)
+            scenarios.append(
+                ScenarioResult(
+                    scenario,
+                    replay,
+                    (replay,),
+                    scenario_result.control_margin,
+                )
+            )
+        return aggregate_candidate(self.study, selected.candidate, tuple(scenarios))
 
     def _control_rank(self, result: EvaluationResult, margin: float | None) -> tuple[float, ...]:
         if self.study.control_margin_min is not None:
@@ -117,17 +156,17 @@ class StudyRunner:
             )
         return replace(result, constraints=(*result.constraints, constraint))
 
-    def _evaluate_control(self, candidate, scenario, control) -> EvaluationResult:
+    def _evaluate_control(self, candidate, scenario, control, *, reuse_cached: bool) -> EvaluationResult:
         started = time.perf_counter()
         request = EvaluationRequest(candidate, scenario, control)
         # Collision checking is a semantic guard, not optional validation:
         # one value must never silently be both a design and an environment.
         request.merged_inputs()
-        raw = self.store.load_raw(request) if self.store else None
+        raw = self.store.load_raw(request) if self.store and reuse_cached else None
         from_cache = raw is not None
         if raw is None:
             raw = self.evaluator.evaluate(request)
-            if self.store:
+            if self.store and reuse_cached:
                 self.store.save_raw(request, raw)
         result = self._finish_evaluation(request, raw, started, from_cache)
         return result

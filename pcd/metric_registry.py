@@ -4,11 +4,15 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .registry import Registry
 
-MetricFunction = Callable[..., dict[str, Any]]
+if TYPE_CHECKING:
+    from .case import Case
+    from .simulation import SimulationResult
+
+MetricFunction = Callable[["Case", dict[str, Any], "SimulationResult"], dict[str, Any]]
 
 _REGISTRY = Registry(label="metric", kinds=("metric",), builtins_module="pcd.metrics")
 

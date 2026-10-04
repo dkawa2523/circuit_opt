@@ -55,8 +55,8 @@ def test_the_synthetic_envelope_declares_only_observable_electrical_corners():
 def test_cases_form_a_negative_negative_positive_control_sequence():
     fixed_study, limited_study, full_study = (case.data["study"] for case in (FIXED, LIMITED, FULL))
     assert "controls" not in fixed_study
-    assert fixed_study["design_variables"] == ["C1", "L1", "C2"]
-    assert limited_study["design_variables"] == full_study["design_variables"] == ["L1"]
+    assert fixed_study["design_variables"] == []
+    assert limited_study["design_variables"] == full_study["design_variables"] == []
 
     limited_c1 = set(limited_study["controls"]["variables"]["C1"]["values"])
     full_c1 = set(full_study["controls"]["variables"]["C1"]["values"])

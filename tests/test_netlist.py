@@ -80,6 +80,24 @@ def test_a_case_without_a_load_section_selects_none(make_case):
     assert select_load_name(make_case({"case_id": "x"}), {}) == "none"
 
 
+def test_a_builder_variable_selects_the_runtime_builder(make_case):
+    case = make_case(
+        {
+            "case_id": "variable_builder",
+            "circuit": {"builder": "from_yaml", "builder_variable": "selected_builder"},
+        }
+    )
+
+    assert select_circuit_name(case, {"selected_builder": "l_match"}) == "l_match"
+
+
+def test_a_non_mapping_load_is_rejected(make_case):
+    case = make_case({"case_id": "bad_load", "load": []})
+
+    with pytest.raises(TypeError, match="load must be a mapping"):
+        select_load_name(case, {})
+
+
 def test_a_builder_must_return_a_circuit(make_case):
     from pcd.sim_registry import register
 
@@ -166,6 +184,27 @@ def test_only_the_measured_source_excites_an_ac_analysis(make_case):
     lines = render_source(case, {}, active_source=active_source)
     assert lines[0].endswith("AC 0")
     assert lines[1].endswith("AC 4 0")
+
+
+@pytest.mark.parametrize(
+    ("source", "expected_suffix"),
+    [
+        (
+            {"type": "sine_voltage", "amplitude_V": 8, "frequency_Hz": 1e6, "ac_magnitude": 2},
+            "AC 2 0",
+        ),
+        (
+            {"type": "sine_voltage", "amplitude_V": 8, "frequency_Hz": 1e6, "ac_magnitude_V": 3},
+            "AC 3 0",
+        ),
+        ({"type": "current_dc", "current_A": 1, "ac_magnitude_A": 4}, "AC 4 0"),
+        ({"type": "dc_voltage", "voltage_V": 5}, "AC 1 0"),
+    ],
+)
+def test_ac_source_magnitude_uses_the_declared_unit_aware_override(make_case, source, expected_suffix):
+    case = make_case({"case_id": "ac_source", "source": {"name": "Vsrc", "p": "src", "n": "0", **source}})
+
+    assert render_source(case, {}, active_source="Vsrc")[0].endswith(expected_suffix)
 
 
 def test_floating_measured_source_uses_its_differential_voltage(make_case):

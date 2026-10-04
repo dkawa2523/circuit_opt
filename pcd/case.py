@@ -1,4 +1,4 @@
-"""Case loading, path resolution, and design-variable discovery."""
+"""Case loading, path resolution, and resolved parameter defaults."""
 
 from __future__ import annotations
 
@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+
+from .problem import declared_variable_specs
 
 
 @dataclass(frozen=True)
@@ -97,38 +99,10 @@ def resolve_path(case: Case, raw: str | Path) -> Path:
     return path if path.is_absolute() else case.base_dir / path
 
 
-_VARIABLE_SECTIONS = ("variables", "source", "circuit", "load")
-
-
-def _variable_sections(case: Case) -> list[tuple[str, dict[str, Any]]]:
-    found: list[tuple[str, dict[str, Any]]] = []
-    for section in _VARIABLE_SECTIONS:
-        block = case.data.get(section)
-        if section == "variables":
-            variables = block
-            label = "variables"
-        elif isinstance(block, dict):
-            variables = block.get("variables")
-            label = f"{section}.variables"
-        else:
-            continue
-        if isinstance(variables, dict):
-            found.append((label, variables))
-
-    sources = case.data.get("sources") or []
-    if isinstance(sources, list):
-        for index, source in enumerate(sources):
-            if isinstance(source, dict) and isinstance(source.get("variables"), dict):
-                found.append((f"sources[{index}].variables", source["variables"]))
-    return found
-
-
 def variable_specs(case: Case) -> dict[str, dict[str, Any]]:
-    specs: dict[str, dict[str, Any]] = {}
-    for _label, variables in _variable_sections(case):
-        for name, spec in variables.items():
-            specs[str(name)] = dict(spec) if isinstance(spec, dict) else {"default": spec}
-    return specs
+    """Return uniquely declared specs; role filtering belongs to ``problem``."""
+
+    return declared_variable_specs(case)
 
 
 def default_params(case: Case) -> dict[str, Any]:
@@ -149,13 +123,4 @@ def case_warnings(case: Case) -> list[str]:
     if case.data.get("source") is None and not case.data.get("sources"):
         warnings.append(NO_SOURCE_WARNING)
 
-    declared_in: dict[str, str] = {}
-    for label, variables in _variable_sections(case):
-        for name in variables:
-            key = str(name)
-            if key in declared_in:
-                warnings.append(
-                    f"design variable '{key}' appears in both {declared_in[key]} and {label}; later value wins"
-                )
-            declared_in[key] = label
     return warnings
