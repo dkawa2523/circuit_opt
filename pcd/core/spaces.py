@@ -5,21 +5,60 @@ from __future__ import annotations
 import itertools
 import math
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
 
+from pcd.inputs import integer, parameter_spec
+
+
+@dataclass(frozen=True, slots=True)
+class ContinuousAxis:
+    """One bounded numeric coordinate, shared by search and sensitivity."""
+
+    name: str
+    low: float
+    high: float
+    logarithmic: bool
+
+    def decode(self, unit_value: float) -> float:
+        if self.logarithmic:
+            low = math.log10(self.low)
+            return 10.0 ** (low + unit_value * (math.log10(self.high) - low))
+        return self.low + unit_value * (self.high - self.low)
+
+    def encode(self, value: Any) -> float | None:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(number) or not self.low <= number <= self.high:
+            return None
+        if self.logarithmic:
+            return (math.log10(number) - math.log10(self.low)) / (math.log10(self.high) - math.log10(self.low))
+        return (number - self.low) / (self.high - self.low)
+
 
 def grid_values(spec: Mapping[str, Any], default_levels: int = 3) -> list[Any]:
+    spec = parameter_spec(spec, "parameter grid", allow_grid=True)
+    if spec.get("type", "") not in {"", "float", "number", "int", "bool", "str", "string"}:
+        raise ValueError("unsupported parameter type")
+    if spec.get("scale", "linear") not in {"linear", "log"}:
+        raise ValueError("parameter scale must be linear or log")
+    if "choices" in spec and "values" in spec:
+        raise ValueError("use only one of choices or values for a parameter grid")
     if "choices" in spec:
         values = list(spec["choices"])
     elif "values" in spec:
         values = list(spec["values"])
     elif "bounds" not in spec:
-        values = [spec.get("default")]
+        if "default" not in spec:
+            raise ValueError("parameter grid requires choices, values, bounds, or a default")
+        values = [spec["default"]]
     else:
         low, high = spec["bounds"]
-        levels = max(1, int(spec.get("grid", default_levels)))
+        levels = integer(spec.get("grid", default_levels), "parameter grid levels", minimum=1)
         if spec.get("type") == "int":
             low_int, high_int = math.ceil(float(low)), math.floor(float(high))
             if low_int > high_int:

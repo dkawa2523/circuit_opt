@@ -1,0 +1,27 @@
+# Size C while the installed resistor remains fixed.
+schema: pcd.rf.v1
+case_id: rc_sizing
+parameters:
+  fixed: {R: "1 kohm"}
+  design:
+    C: {bounds: ["100 pF", "100 nF"], default: "1 nF", scale: log}
+source:
+  type: voltage_pulse
+  v1_V: 0
+  v2_V: 5
+  rise_s: "2 ns"
+  fall_s: "2 ns"
+  width_s: "3 us"
+  period_s: "4 us"
+circuit:
+  output_node: out
+  components:
+    - {ref: R1, n1: src, n2: out, value: R}
+    - {ref: C1, n1: out, n2: 0, value: C}
+analysis:
+  tran: {step_s: "2 ns", stop_s: "2 us"}
+objective: {type: waveform_l2, waveform_file: advanced/target_rc.csv, metric: normalized_rmse}
+acceptance:
+  metric_bounds:
+    peak_abs_voltage_V: {max: 4.9}
+execution: {trials: 24, seed: 3}

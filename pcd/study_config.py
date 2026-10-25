@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
-import csv
 import math
 from collections.abc import Mapping
 from typing import Any
 
-from .case import Case, resolve_path
+from .case import Case, default_params, resolve_path
 from .core.models import Candidate, ControlState, Objective, Scenario, StudySpec
-from .core.spaces import parameter_grid
-from .problem import project_candidate_case, resolve_parameter_set
+from .core.spaces import grid_values, parameter_grid
+from .inputs import integer, reject_unknown
+from .problem import ParameterRole, project_candidate_case, resolve_parameter_set
+from .tables import read_csv_rows
 
 
 def mapping(value: Any, path: str) -> dict[str, Any]:
@@ -36,6 +37,9 @@ def _scenario_specs(case: Case) -> tuple[Scenario, ...]:
     scenarios: list[Scenario] = []
     for index, item in enumerate(raw):
         cfg = mapping(item, f"study.scenarios[{index}]")
+        reject_unknown(cfg, {"id", "scenario_id", "values", "weight", "controls"}, f"study.scenarios[{index}]")
+        if "id" in cfg and "scenario_id" in cfg:
+            raise ValueError(f"study.scenarios[{index}] must use only one of id or scenario_id")
         scenario_id = str(cfg.get("id", cfg.get("scenario_id", f"scenario_{index:03d}")))
         values = mapping(cfg.get("values"), f"study.scenarios[{index}].values")
         scenarios.append(Scenario(scenario_id, values, float(cfg.get("weight", 1.0))))
@@ -43,34 +47,39 @@ def _scenario_specs(case: Case) -> tuple[Scenario, ...]:
 
 
 def _scenario_table_specs(case: Case, cfg: dict[str, Any]) -> tuple[Scenario, ...]:
+    reject_unknown(cfg, {"table_file", "values", "id_column", "weight_column", "defaults"}, "study.scenario_table")
     raw_path = cfg.get("table_file")
     if not raw_path:
         raise ValueError("study.scenario_table.table_file is required")
     value_columns = mapping(cfg.get("values"), "study.scenario_table.values")
-    if not value_columns:
+    if not value_columns and not (case.data.get("study", {}).get("controls") or {}).get("by_scenario"):
         raise ValueError("study.scenario_table.values must map parameter names to CSV columns")
     id_column = str(cfg.get("id_column", "scenario_id"))
     weight_column = str(cfg.get("weight_column", "weight"))
     path = resolve_path(case, raw_path)
-    with path.open("r", encoding="utf-8-sig", newline="") as handle:
-        reader = csv.DictReader(handle)
-        columns = set(reader.fieldnames or [])
-        required = {id_column, *map(str, value_columns.values())}
-        missing = sorted(required - columns)
-        if missing:
-            raise ValueError(f"scenario table is missing columns {missing}: {path}")
-        scenarios: list[Scenario] = []
-        for index, row in enumerate(reader):
-            scenario_id = str(row.get(id_column, "")).strip()
-            if not scenario_id:
-                raise ValueError(f"scenario table row {index + 2} has an empty {id_column}")
-            values = {
-                parameter: _scenario_cell(row[str(column)], f"{path}:{index + 2}:{column}")
+    required = set(map(str, value_columns.values()))
+    if "id_column" in cfg:
+        required.add(id_column)
+    if "weight_column" in cfg:
+        required.add(weight_column)
+    _columns, rows = read_csv_rows(path, required)
+    defaults = mapping(cfg.get("defaults"), "study.scenario_table.defaults")
+    scenarios: list[Scenario] = []
+    for index, row in enumerate(rows, start=2):
+        scenario_id = row[id_column].strip() if id_column in row else f"point_{index - 1}"
+        if not scenario_id:
+            raise ValueError(f"scenario table row {index} has an empty {id_column}")
+        values = {
+            **defaults,
+            **{
+                parameter: _scenario_cell(row[str(column)], f"{path}:{index}:{column}")
                 for parameter, column in value_columns.items()
-            }
-            weight_raw = row.get(weight_column, "") if weight_column in columns else ""
-            weight = float(weight_raw) if str(weight_raw).strip() else 1.0
-            scenarios.append(Scenario(scenario_id, values, weight))
+            },
+        }
+        weight_raw = row.get(weight_column, "").strip()
+        if weight_column in row and not weight_raw:
+            raise ValueError(f"scenario weight is empty at {path}:{index}:{weight_column}")
+        scenarios.append(Scenario(scenario_id, values, float(weight_raw) if weight_raw else 1.0))
     if not scenarios:
         raise ValueError(f"scenario table is empty: {path}")
     return tuple(scenarios)
@@ -139,6 +148,27 @@ def study_spec_from_case(case: Case) -> StudySpec:
             "study.fidelities is no longer supported; select one solver in solver.name "
             "and run separate explicit studies when two numerical methods must be compared"
         )
+    reject_unknown(
+        study_cfg,
+        {
+            "scenarios",
+            "scenario_table",
+            "objectives",
+            "aggregation",
+            "cvar_alpha",
+            "controls",
+            "control_margin_min",
+            "design_variables",
+            "candidate_role",
+            "candidate_enumeration",
+            "analysis_mode",
+        },
+        "study",
+    )
+    if study_cfg.get("candidate_enumeration", "exact") != "exact":
+        raise ValueError("study.candidate_enumeration must be exact when declared")
+    if "objectives" in study_cfg and ({"aggregation", "cvar_alpha"} & set(study_cfg)):
+        raise ValueError("put aggregation and cvar_alpha inside each declared objective")
     return StudySpec(
         study_id=case.case_id,
         scenarios=_scenario_specs(case),
@@ -164,18 +194,132 @@ def candidate_case(case: Case) -> Case:
     return project_candidate_case(case)
 
 
+def select_simulation_inputs(
+    case: Case,
+    params: Mapping[str, Any] | None = None,
+    *,
+    scenario_id: str | None = None,
+    controls: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Select one physical point explicitly when a case describes several."""
+
+    from .search import _validate_proposed_value
+
+    supplied = dict(params or {})
+    definitions = resolve_parameter_set(case).definitions
+    specs = {item.name: item.spec for item in definitions}
+    if unknown := sorted(set(supplied) - set(specs)):
+        raise ValueError(f"unknown simulation parameters {unknown}")
+    study = study_spec_from_case(case)
+    if scenario_id is None and len(study.scenarios) != 1:
+        raise ValueError("sim-run needs --scenario for a case with multiple conditions; use run for the complete study")
+    scenario = next((row for row in study.scenarios if scenario_id is None or row.scenario_id == scenario_id), None)
+    if scenario is None:
+        raise ValueError(f"unknown scenario {scenario_id!r}")
+    for item in definitions:
+        if item.role not in {ParameterRole.DESIGN, ParameterRole.LATENT} or item.name in supplied:
+            continue
+        spec = item.spec
+        values = spec.get("choices", spec.get("values"))
+        bounds = spec.get("bounds")
+        if (values is not None and len(values) > 1) or (bounds is not None and bounds[0] != bounds[1]):
+            raise ValueError(
+                f"sim-run needs an explicit value for {item.name!r} via --params; use run for candidate search"
+            )
+        if values:
+            supplied[item.name] = values[0]
+        elif bounds:
+            supplied[item.name] = bounds[0]
+    policy = CaseControlPolicy(case)
+    available = policy.controls(study, Candidate("single_point", supplied), scenario)
+    requested_controls = dict(controls or {})
+    matches = [
+        control
+        for control in available
+        if all(control.values.get(name) == value for name, value in requested_controls.items())
+    ]
+    if not matches:
+        raise ValueError("requested simulation controls do not belong to the declared condition/control grid")
+    if len(matches) != 1:
+        raise ValueError("sim-run needs --controls for a case with multiple control states; use run for control search")
+    selected = dict(matches[0].values)
+    if overlap := sorted(set(supplied) & (set(scenario.values) | set(selected))):
+        raise ValueError(f"select operating/control inputs through --scenario/--controls, not --params: {overlap}")
+    resolved = {**default_params(case), **supplied, **scenario.values, **selected}
+    for name, spec in specs.items():
+        if name not in resolved:
+            raise ValueError(f"simulation parameter {name!r} has no selected value")
+        resolved[name] = _validate_proposed_value(name, resolved[name], spec)
+    return resolved
+
+
+def describe_case(case: Case) -> dict[str, Any]:
+    """Explain the existing compiled plan without introducing another validator."""
+
+    from .artifacts import data_file_references
+    from .netlist import build_netlist_inputs
+    from .simulation_input import resolve_simulation_case
+
+    study = study_spec_from_case(case)
+    parameters = resolve_parameter_set(case)
+    simulation = resolve_simulation_case(case, default_params(case))
+    netlist = build_netlist_inputs(case, default_params(case))
+    policy = CaseControlPolicy(case)
+    counts = {
+        scenario.scenario_id: len(policy.controls(study, Candidate("preview"), scenario))
+        for scenario in study.scenarios
+    }
+    return {
+        "output": dict(case.data.get("output") or {}),
+        "workflow": (case.data.get("metadata") or {}).get(
+            "workflow", "identification" if case.data.get("identification") else "study"
+        ),
+        "parameter_roles": parameters.role_names(),
+        "condition_ids": [scenario.scenario_id for scenario in study.scenarios],
+        "control_states_per_condition": counts,
+        "candidate_budget": (case.data.get("run") or {}).get("trials", 1),
+        "complete_candidate_enumeration": case.has_exact_candidate_enumeration,
+        "solver": dict(case.data.get("solver") or {}),
+        "measurement": {
+            **dict(case.data.get("measurement") or {}),
+            "current_source": simulation.probes.source_name,
+            "source_voltage_vector": simulation.probes.source_voltage_vector,
+            "load_current_column": simulation.probes.load_current_column,
+            "voltage_node": simulation.measurement.voltage_node or netlist.circuit.output_node,
+            "load_ports": {
+                "p": simulation.measurement.load_positive or netlist.circuit.output_node,
+                "n": simulation.measurement.load_negative,
+            },
+            "load_reference_plane": simulation.measurement.reference_plane,
+        },
+        "preview_params": default_params(case),
+        "preview_scope": "default point only; sim-run requires selection when multiple points are declared",
+        "analysis_mode": study.metadata.get("analysis_mode", "circuit_response"),
+        "dependencies": [str(resolve_path(case, path)) for _field, path in data_file_references(case.data)],
+        "inferences": list((case.resolved_plan or {}).get("inferences") or []),
+    }
+
+
 class CaseControlPolicy:
     """Expand tunable controls separately from each candidate design."""
 
     def __init__(self, case: Case) -> None:
         study_cfg = mapping(case.data.get("study"), "study")
         control_cfg = mapping(study_cfg.get("controls"), "study.controls")
+        reject_unknown(control_cfg, {"defaults", "variables", "budget", "by_scenario"}, "study.controls")
         self.defaults = mapping(control_cfg.get("defaults"), "study.controls.defaults")
         self.variables = {
             str(name): mapping(spec, f"study.controls.variables.{name}")
             for name, spec in mapping(control_cfg.get("variables"), "study.controls.variables").items()
         }
-        self.budget = int(control_cfg.get("budget", 27))
+        self.budget = integer(control_cfg.get("budget", 27), "study.controls.budget", minimum=1)
+        self.numeric_ranges = {}
+        for name, spec in self.variables.items():
+            if spec.get("role", "control") != "control":
+                raise ValueError(f"study.controls.variables.{name}.role must be control")
+            values = grid_values(spec)
+            if all(isinstance(value, int | float) and not isinstance(value, bool) for value in values):
+                self.numeric_ranges[name] = (min(values), max(values))
         self.by_scenario = {
             str(name): mapping(values, f"study.controls.by_scenario.{name}")
             for name, values in mapping(control_cfg.get("by_scenario"), "study.controls.by_scenario").items()
@@ -186,6 +330,9 @@ class CaseControlPolicy:
             inline = mapping(cfg.get("controls"), f"study.scenarios[{index}].controls")
             if inline:
                 self.by_scenario[scenario_id] = {**self.by_scenario.get(scenario_id, {}), **inline}
+        ids = {scenario.scenario_id for scenario in _scenario_specs(case)}
+        if unknown := sorted(set(self.by_scenario) - ids):
+            raise ValueError(f"study.controls.by_scenario references unknown scenarios {unknown}")
 
     def controls(
         self,
@@ -194,6 +341,12 @@ class CaseControlPolicy:
         scenario: Scenario,
     ) -> tuple[ControlState, ...]:
         del study, candidate
-        fixed = {**self.defaults, **self.by_scenario.get(scenario.scenario_id, {})}
-        grid = parameter_grid(self.variables, budget=self.budget)
-        return tuple(ControlState({**fixed, **point}) for point in grid)
+        observed = self.by_scenario.get(scenario.scenario_id, {})
+        # Observed condition settings pin axes; they must never be replaced
+        # by a more favorable grid setting during evaluation or identification.
+        for name, value in observed.items():
+            if name in self.variables and value not in grid_values(self.variables[name]):
+                raise ValueError(f"scenario {scenario.scenario_id!r} control {name!r}={value!r} is outside its grid")
+        remaining = {name: spec for name, spec in self.variables.items() if name not in observed}
+        grid = parameter_grid(remaining, budget=self.budget)
+        return tuple(ControlState({**self.defaults, **point, **observed}, self.numeric_ranges) for point in grid)

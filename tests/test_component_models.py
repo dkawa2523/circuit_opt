@@ -54,7 +54,7 @@ def test_structured_component_expands_to_meter_loss_and_core(make_case):
     assert "Rloss_L1 observe_L1_meter observe_L1_core 0.5" in netlist
     assert "L1 observe_L1_core load {L1}" in netlist
     assert "Vsrc src 0 SIN(0 100 1000000 0 0 0) AC 100" in netlist
-    assert "wrdata ac.csv v(src) i(Vsrc) v(load) v(src,load) i(Vobserve_L1) i(Vload_meter)" in netlist
+    assert "wrdata ac.csv v(src) i(Vsrc) v(load) v(load) v(src,load) i(Vobserve_L1) i(Vload_meter)" in netlist
 
 
 def test_component_observation_names_are_shared_by_ac_and_transient(make_case):

@@ -70,10 +70,10 @@ def best_decision_summary(
 ) -> dict[str, Any]:
     """Project the selected candidate into a compact engineering decision summary."""
 
-    if best.success_fraction < 1.0:
+    if not best.successful or best.success_fraction < 1.0:
         status = "incomplete_evidence"
         limitation = "selected_candidate_failed_conditions"
-    elif best.feasible_fraction == 1.0 and best.success_fraction == 1.0:
+    elif best.feasible and best.feasible_fraction == 1.0:
         status = "meets_declared_acceptance"
         limitation = "none"
     else:
@@ -119,8 +119,8 @@ def best_decision_summary(
         "edge_limited": best.edge_limited,
         "status": status,
         "limitation": limitation,
-        "search_completeness": "complete" if n_failed_evaluations == 0 else "incomplete_evidence",
-        "search_limitation": "none" if n_failed_evaluations == 0 else "failed_evaluations",
+        "evaluation_evidence": "complete" if n_failed_evaluations == 0 else "incomplete_evidence",
+        "evidence_limitation": "none" if n_failed_evaluations == 0 else "failed_evaluations",
         "coverage": {
             "conditions": len(conditions),
             "solved": sum(item["status"] != "failed" for item in conditions),

@@ -24,7 +24,7 @@ circuit:
     # One voltage trace identifies the RC time constant, not R and C
     # separately. Treat the installed resistor as fixed and size C1 only.
     R1: {default: 1000}
-    C1: {bounds: [1.0e-10, 1.0e-7], scale: log, default: 1.0e-9}
+    C1: {role: design, bounds: [1.0e-10, 1.0e-7], scale: log, default: 1.0e-9}
   components:
     - {ref: R1, n1: src, n2: out, value: R1}
     - {ref: C1, n1: out, n2: 0, value: C1}

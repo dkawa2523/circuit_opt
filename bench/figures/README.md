@@ -36,7 +36,7 @@ source hash, forward error, exact-grid candidate, GP-UCB selected value,
 three-seed loss trace, cache behavior, and held-out error without
 duplicating every raw trial row. The
 full literature boundary, equations, results, and reproduction commands are in
-[`docs/etch-ccp-dcs-dynamic-impedance-study-ja.md`](../../docs/etch-ccp-dcs-dynamic-impedance-study-ja.md).
+[`docs/studies/etch-ccp-dcs-dynamic-impedance-study-ja.md`](../../docs/studies/etch-ccp-dcs-dynamic-impedance-study-ja.md).
 The combined publication artifact is
 [`output/pdf/etch-ccp-dcs-dynamic-impedance-study.pdf`](../../output/pdf/etch-ccp-dcs-dynamic-impedance-study.pdf).
 Its page-by-page Japanese reading guide is
@@ -67,7 +67,7 @@ records input and run hashes, direct numerical errors, all 162 candidate
 evaluations, held-out errors, and the excluded physical claims. The figure
 generator is read-only. The
 problem statement, literature boundary, results, and reproduction commands are
-in [`docs/dual-frequency-ccp-pulsed-bias-study-ja.md`](../../docs/dual-frequency-ccp-pulsed-bias-study-ja.md),
+in [`docs/studies/dual-frequency-ccp-pulsed-bias-study-ja.md`](../../docs/studies/dual-frequency-ccp-pulsed-bias-study-ja.md),
 and the combined artifact is
 [`output/pdf/dual-frequency-ccp-pulsed-bias-study.pdf`](../../output/pdf/dual-frequency-ccp-pulsed-bias-study.pdf).
 The page-by-page Japanese guide is
@@ -137,7 +137,7 @@ The vector SVG files are the publication masters and the 300 dpi PNG files are
 for ordinary document insertion. `output/pdf/benchmark-figure-pack.pdf`
 contains the same eleven figures in one fixed-page file. The reusable layout
 and rendering rules are documented in
-[`docs/figure-system.md`](../../docs/figure-system.md).
+[the integrated manual](../../docs/manual-ja.md#development).
 
 ## Figure map
 

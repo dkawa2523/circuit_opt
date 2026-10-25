@@ -1,0 +1,36 @@
+schema: case_yaml.v1
+case_id: narrow_pulse_stress
+source:
+  type: pulse
+  name: Vsrc
+  p: src
+  n: 0
+  v1_V: 0
+  v2_V: 200
+  delay_s: 3.5713e-7
+  rise_s: 1e-11
+  fall_s: 1e-11
+  width_s: 1e-11
+  period_s: 1e-6
+circuit:
+  builder: from_yaml
+  output_node: load_port
+  components:
+    - {ref: Rnetwork, n1: src, n2: load_port, value: 50, observe: true}
+load:
+  name: resistor
+  ports: {p: load_port, n: 0}
+  reference_plane: load_terminal
+  R_ohm: 50
+measurement: {load_current: auto}
+solver:
+  name: ngspice_cli
+  tran: {step_s: 1e-8, stop_s: 8e-6}
+target:
+  objective: rf_load
+  fundamental_Hz: 1e6
+  constraints:
+    metric_bounds:
+      component_Rnetwork_voltage_peak_V: {max: 10}
+study:
+  objectives: [{metric: load_real_power_W, direction: maximize}]

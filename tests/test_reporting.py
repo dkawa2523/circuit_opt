@@ -124,17 +124,18 @@ def test_harmonic_figure_compares_voltage_and_current_to_their_fundamentals(tmp_
     assert out.stat().st_size > 0
 
 
-def test_analyze_run_regenerates_summary_and_figures_from_saved_artifacts(tmp_path):
+@pytest.mark.parametrize("reference", [50.0, 100.0])
+def test_analyze_run_regenerates_summary_and_figures_from_saved_artifacts(tmp_path, reference, monkeypatch):
     case_text = (
         "schema: case_yaml.v1\n"
         "case_id: saved_ac\n"
         "source: {type: sine_voltage, name: Vsrc, p: src, n: '0', amplitude_V: 1, frequency_Hz: 10000000}\n"
         "circuit: {builder: from_yaml, output_node: out, components: [{ref: R1, n1: src, n2: out, value: 50}]}\n"
         "load: {name: resistor, ports: {p: out, n: '0'}, reference_plane: load_terminal, R_ohm: 50}\n"
-        "measurement: {voltage_node: out, current_source: Vsrc, reference_impedance_ohm: 50}\n"
+        f"measurement: {{voltage_node: out, current_source: Vsrc, reference_impedance_ohm: {reference}}}\n"
         "solver: {name: ngspice_cli, ac: {frequency_Hz: 10000000}}\n"
     )
-    ac = _ac(50.0, 0.0, (1e7,)).assign(load_voltage_V_re=1.0, load_voltage_V_im=0.0)
+    ac = _ac(reference, 0.0, (1e7,)).assign(load_voltage_V_re=1.0, load_voltage_V_im=0.0)
     empty = pd.DataFrame(columns=["time_s", "voltage_V", "current_A"])
     run_dir = _saved_run(tmp_path, "run", "saved_ac", case_text, empty, ac)
 
@@ -143,13 +144,29 @@ def test_analyze_run_regenerates_summary_and_figures_from_saved_artifacts(tmp_pa
 
     assert summary["schema"] == "run_analysis.v1"
     assert summary["scope"].startswith("electrical measurements only")
-    assert summary["analyses"]["ac"]["resistance_ohm"] == pytest.approx(50.0)
+    assert summary["analyses"]["ac"]["resistance_ohm"] == pytest.approx(reference)
+    assert summary["analyses"]["ac"]["forward_power_W"] == pytest.approx(1 / (2 * reference))
+    assert summary["analyses"]["ac"]["reflected_power_W"] == pytest.approx(0, abs=1e-15)
     assert summary["analyses"]["ac"]["reflection_magnitude"] == pytest.approx(0.0, abs=1e-12)
     assert summary["analyses"]["ac"]["return_loss_db"] == pytest.approx(600.0)
-    assert set(summary["artifacts"]) == {"summary", "frequency_response", "operating_point"}
+    assert set(summary["artifacts"]) >= {"summary", "frequency_response", "operating_point"}
     assert (report_dir / "summary.json").exists()
     assert (report_dir / "frequency_response.png").stat().st_size > 0
     assert (report_dir / "operating_point.png").stat().st_size > 0
+    provenance = summary["provenance"]
+    assert len(provenance["implementation_sha256"]) == 64
+    assert provenance["inputs"]["frequency_response"]["sha256"]
+    assert provenance["environment"]["libraries"]["numpy"]
+    original = (report_dir / "summary.json").read_bytes()
+    repeated = analyze_run(run_dir, out_dir=report_dir)
+    assert repeated["provenance"]["analysis_id"] == provenance["analysis_id"]
+    assert repeated["output_dir"] != summary["output_dir"]
+    assert (report_dir / "summary.json").read_bytes() == original
+    changed = analyze_run(run_dir, out_dir=report_dir, frequency_hz=1e7)
+    assert changed["provenance"]["analysis_id"] != provenance["analysis_id"]
+    monkeypatch.chdir(report_dir)
+    relative = analyze_run(run_dir, out_dir=".")
+    assert relative["output_dir"] == str(tmp_path / "report_003")
 
 
 def test_analyze_run_recomputes_periodic_metrics_from_saved_waveform(tmp_path):
@@ -170,7 +187,7 @@ def test_analyze_run_recomputes_periodic_metrics_from_saved_waveform(tmp_path):
     assert periodic["status"] == "ok"
     assert periodic["load_real_power_W"] == pytest.approx(25.0, rel=2e-3)
     assert periodic["periodic_settled"] is True
-    assert set(summary["artifacts"]) == {
+    assert set(summary["artifacts"]) >= {
         "summary",
         "transient_response",
         "operating_point",
@@ -178,6 +195,25 @@ def test_analyze_run_recomputes_periodic_metrics_from_saved_waveform(tmp_path):
     }
     assert (run_dir / "analysis" / "summary.json").exists()
     assert (run_dir / "analysis" / "harmonic_spectrum.png").stat().st_size > 0
+
+
+def test_saved_sweep_interpolates_phasors_before_impedance_and_reflection(tmp_path):
+    case_text = (
+        "schema: case_yaml.v1\ncase_id: interpolated\n"
+        "source: {type: sine_voltage, name: Vsrc, p: src, n: 0, frequency_Hz: 2000000}\n"
+        "circuit: {builder: from_yaml, output_node: out, components: []}\n"
+        "load: {name: none}\nsolver: {ac: {sweep: lin, points: 2, start_Hz: 1000000, stop_Hz: 3000000}}\n"
+    )
+    ac = _ac(100.0, 0.0, (1e6, 3e6)).assign(
+        current_re=[-0.01, -0.03],
+        load_voltage_V_re=1.0,
+        load_voltage_V_im=0.0,
+    )
+    empty = pd.DataFrame(columns=["time_s", "voltage_V", "current_A"])
+    run_dir = _saved_run(tmp_path, "sweep", "interpolated", case_text, empty, ac)
+    metrics = analyze_run(run_dir)["analyses"]["ac"]
+    assert metrics["resistance_ohm"] == pytest.approx(50.0)
+    assert metrics["reflection_magnitude"] == pytest.approx(0.0, abs=1e-12)
 
 
 def test_analyze_run_marks_dc_transient_periodic_metrics_not_applicable(tmp_path):
@@ -208,12 +244,13 @@ def test_analyze_run_marks_dc_transient_periodic_metrics_not_applicable(tmp_path
 
     summary = analyze_run(run_dir)
 
-    assert summary["measurement"]["frequency_Hz"] is None
+    assert summary["measurement"]["ac_frequency_Hz"] is None
+    assert summary["measurement"]["periodic_fundamental_Hz"] is None
     assert summary["analyses"]["transient"]["periodic"] == {
         "status": "not_applicable",
         "reason": "no periodic fundamental was declared; basic transient statistics remain available",
     }
-    assert set(summary["artifacts"]) == {"summary", "transient_response"}
+    assert set(summary["artifacts"]) >= {"summary", "transient_response"}
 
 
 def test_analyze_run_rejects_failed_records(tmp_path):

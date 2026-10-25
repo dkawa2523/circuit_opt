@@ -20,7 +20,7 @@ FIXTURES = ROOT / "tests" / "fixtures"
 RC_CASE = str(EXAMPLES / "advanced" / "generic_rc_filter.yaml")
 ADVANCED_CASE = str(FIXTURES / "advanced_case.yaml")
 GRID_CASE = str(ROOT / "bench" / "cases" / "match_discrete_hardware_search.yaml")
-IDENTIFICATION_CASE = str(EXAMPLES / "advanced" / "ccp_terminal_identification.yaml")
+IDENTIFICATION_CASE = str(EXAMPLES / "terminal_identification.yaml")
 
 
 def _stdout_json(capsys) -> dict:
@@ -79,14 +79,18 @@ def test_validate_case_strict_accepts_the_physical_example(capsys):
 def test_sim_netlist_writes_a_netlist(tmp_path, capsys):
     out = tmp_path / "netlist.cir"
     main(["sim-netlist", RC_CASE, "--out", str(out)])
-    assert capsys.readouterr().out.strip() == str(out)
+    output = capsys.readouterr().out
+    assert str(out) in output
+    assert "Preview only:" in output
     text = out.read_text(encoding="utf-8")
     assert ".end" in text
     assert "wrdata waveform.csv" in text
 
 
 def test_sim_run_produces_a_waveform_and_no_metrics(tmp_path, capsys):
-    main(["sim-run", RC_CASE, "--solver", "test_fake", "--run-root", str(tmp_path), "--json"])
+    main(
+        ["sim-run", RC_CASE, "--params", '{"C1":1e-9}', "--solver", "test_fake", "--run-root", str(tmp_path), "--json"]
+    )
     payload = _stdout_json(capsys)
     run_dir = Path(payload["run_dir"])
     assert payload["status"] == "ok"
@@ -97,7 +101,7 @@ def test_sim_run_produces_a_waveform_and_no_metrics(tmp_path, capsys):
 
 
 def test_sim_run_defaults_to_a_short_human_summary(tmp_path, capsys):
-    main(["sim-run", RC_CASE, "--solver", "test_fake", "--run-root", str(tmp_path)])
+    main(["sim-run", RC_CASE, "--params", '{"C1":1e-9}', "--solver", "test_fake", "--run-root", str(tmp_path)])
     output = capsys.readouterr().out
     assert "Simulation: generic_rc_filter" in output
     assert "Status: ok" in output
@@ -207,23 +211,41 @@ def test_visualize_netlist_writes_image_and_summary(tmp_path, capsys):
 
 
 def test_analyze_regenerates_summary_and_figures_from_a_run(tmp_path, capsys):
-    main(["sim-run", RC_CASE, "--solver", "test_fake", "--run-root", str(tmp_path / "runs"), "--json"])
+    main(
+        [
+            "sim-run",
+            RC_CASE,
+            "--params",
+            '{"C1":1e-9}',
+            "--solver",
+            "test_fake",
+            "--run-root",
+            str(tmp_path / "runs"),
+            "--json",
+        ]
+    )
     run_dir = json.loads(capsys.readouterr().out)["run_dir"]
     report_dir = tmp_path / "analysis"
     main(["analyze", run_dir, "--out", str(report_dir), "--json"])
     payload = _stdout_json(capsys)
     assert payload["schema"] == "run_analysis.v1"
     assert payload["analyses"]["transient"]["samples"] > 1
-    assert set(payload["artifacts"]) == {"summary", "transient_response"}
+    assert set(payload["artifacts"]) >= {"summary", "transient_response", "signals"}
     assert (report_dir / "summary.json").exists()
     assert (report_dir / "transient_response.png").stat().st_size > 0
 
-    main(["analyze", run_dir, "--out", str(tmp_path / "analysis_text")])
+    settings = tmp_path / "output.yaml"
+    settings.write_text(
+        "output:\n  formats: [svg]\n  schematic: false\n  plots:\n    - type: waveform\n      signals: [voltage_V]\n",
+        encoding="utf-8",
+    )
+    main(["analyze", run_dir, "--case", str(settings), "--out", str(tmp_path / "analysis_text")])
     output = capsys.readouterr().out
     assert "Analysis: generic_rc_filter" in output
     assert "Transient:" in output
     assert "periodic=" in output
     assert "Artifacts: summary=summary.json" in output
+    assert (tmp_path / "analysis_text/waveform_1.svg").is_file()
 
 
 def test_analyze_prints_the_bracketed_sweep_bandwidth(monkeypatch, capsys):
@@ -263,6 +285,22 @@ def test_analyze_prints_the_bracketed_sweep_bandwidth(monkeypatch, capsys):
 
 
 # --- study -----------------------------------------------------------------
+
+
+def test_open_circuit_analysis_is_successful_in_text_and_json(monkeypatch, capsys):
+    summary = {
+        "case_id": "open",
+        "output_dir": "analysis",
+        "artifacts": {},
+        "analyses": {
+            "ac": {"frequency_Hz": 1e6, "resistance_ohm": None, "reactance_ohm": None, "reflection_magnitude": 1.0}
+        },
+    }
+    monkeypatch.setattr("pcd.reporting.analyze_run", lambda *args, **kwargs: summary)
+    main(["analyze", "saved-run"])
+    assert "Z=unavailable (open or undefined), |Gamma|=1" in capsys.readouterr().out
+    main(["analyze", "saved-run", "--json"])
+    assert _stdout_json(capsys)["analyses"]["ac"]["resistance_ohm"] is None
 
 
 def test_run_is_the_simple_human_readable_study_entry_point(tmp_path, capsys):
@@ -355,7 +393,7 @@ def test_run_refuses_to_sample_only_part_of_a_resolved_grid(tmp_path, capsys):
     with pytest.raises(SystemExit) as excinfo:
         main(["run", GRID_CASE, "--trials", "2", "--output", str(tmp_path)])
     assert excinfo.value.code == 2
-    assert "candidate enumeration is derived from network.search" in capsys.readouterr().out
+    assert "candidate enumeration is derived from declared finite choices" in capsys.readouterr().out
 
 
 def test_run_refuses_to_replace_complete_public_enumeration_with_random_sampling(tmp_path, capsys):
@@ -373,7 +411,7 @@ def test_run_refuses_to_replace_complete_public_enumeration_with_random_sampling
             ]
         )
     assert excinfo.value.code == 2
-    assert "candidate enumeration is derived from network.search" in capsys.readouterr().out
+    assert "candidate enumeration is derived from declared finite choices" in capsys.readouterr().out
 
 
 def test_run_uses_the_unified_pipeline_for_an_advanced_case(tmp_path, capsys):

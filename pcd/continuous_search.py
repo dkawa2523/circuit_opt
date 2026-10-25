@@ -9,12 +9,12 @@ the pipeline's feasibility-first rank for selection.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
 
 from .case import Case
+from .core.spaces import ContinuousAxis
 from .search import BaseOptimizer, candidate_defaults, candidate_specs, feedback_rank
 
 _MUTATION = 0.8
@@ -27,74 +27,50 @@ def _reflect_unit(values: np.ndarray) -> np.ndarray:
     return 1.0 - np.abs(np.mod(values, 2.0) - 1.0)
 
 
-@dataclass(frozen=True, slots=True)
-class _Axis:
-    name: str
-    low: float
-    high: float
-    logarithmic: bool
-
-    def decode(self, unit_value: float) -> float:
-        if self.logarithmic:
-            low = math.log10(self.low)
-            return 10.0 ** (low + unit_value * (math.log10(self.high) - low))
-        return self.low + unit_value * (self.high - self.low)
-
-    def encode(self, value: Any) -> float | None:
-        try:
-            number = float(value)
-        except (TypeError, ValueError):
-            return None
-        if not math.isfinite(number) or not self.low <= number <= self.high:
-            return None
-        if self.logarithmic:
-            return (math.log10(number) - math.log10(self.low)) / (math.log10(self.high) - math.log10(self.low))
-        return (number - self.low) / (self.high - self.low)
-
-
-def _continuous_space(case: Case) -> tuple[tuple[_Axis, ...], dict[str, Any]]:
-    axes: list[_Axis] = []
+def continuous_space(
+    case: Case, method: str = "differential_evolution"
+) -> tuple[tuple[ContinuousAxis, ...], dict[str, Any]]:
+    axes: list[ContinuousAxis] = []
     fixed = candidate_defaults(case)
     for name, spec in candidate_specs(case).items():
-        choices = spec.get("choices")
+        choices = spec.get("choices", spec.get("values"))
         if choices is not None:
-            fixed[name] = _single_choice(name, choices)
+            fixed[name] = _single_choice(name, choices, method)
             continue
         if "bounds" not in spec:
             if "default" not in spec:
-                raise ValueError(f"differential_evolution variable {name!r} needs numeric bounds or a fixed default")
+                raise ValueError(f"{method} variable {name!r} needs numeric bounds or a fixed default")
             continue
-        axes.append(_continuous_axis(name, spec))
+        axes.append(_continuous_axis(name, spec, method))
     if not axes:
-        raise ValueError("differential_evolution requires at least one bounded continuous design variable")
+        raise ValueError(f"{method} requires at least one bounded continuous design variable")
     return tuple(axes), fixed
 
 
-def _single_choice(name: str, choices: Any) -> Any:
+def _single_choice(name: str, choices: Any, method: str) -> Any:
     values = list(choices)
     if len(values) != 1:
         raise ValueError(
-            "differential_evolution requires bounded continuous design variables; "
-            f"{name!r} declares {len(values)} choices"
+            f"{method} requires bounded continuous design variables; {name!r} declares {len(values)} choices"
         )
     return values[0]
 
 
-def _continuous_axis(name: str, spec: dict[str, Any]) -> _Axis:
+def _continuous_axis(name: str, spec: dict[str, Any], method: str) -> ContinuousAxis:
     if spec.get("type") in {"bool", "int", "str", "string"}:
-        raise ValueError(f"differential_evolution variable {name!r} must be continuous, not {spec.get('type')!r}")
+        raise ValueError(f"{method} variable {name!r} must be continuous, not {spec.get('type')!r}")
     try:
         low, high = (float(item) for item in spec["bounds"])
     except (TypeError, ValueError) as exc:
-        raise ValueError(f"differential_evolution variable {name!r} needs two finite numeric bounds") from exc
+        raise ValueError(f"{method} variable {name!r} needs two finite numeric bounds") from exc
     if not math.isfinite(low) or not math.isfinite(high) or low >= high:
-        raise ValueError(f"differential_evolution variable {name!r} needs increasing finite bounds")
+        raise ValueError(f"{method} variable {name!r} needs increasing finite bounds")
     scale = str(spec.get("scale", "linear"))
     if scale not in {"linear", "log"}:
-        raise ValueError(f"differential_evolution variable {name!r} scale must be linear or log")
+        raise ValueError(f"{method} variable {name!r} scale must be linear or log")
     if scale == "log" and low <= 0:
-        raise ValueError(f"differential_evolution variable {name!r} needs positive log-scale bounds")
-    return _Axis(name, low, high, scale == "log")
+        raise ValueError(f"{method} variable {name!r} needs positive log-scale bounds")
+    return ContinuousAxis(name, low, high, scale == "log")
 
 
 def _trial_budget(case: Case) -> int:
@@ -111,7 +87,7 @@ class DifferentialEvolutionOptimizer(BaseOptimizer):
 
     def __init__(self, case: Case, seed: int | None = None) -> None:
         super().__init__(case=case, seed=seed)
-        self.axes, self.fixed = _continuous_space(case)
+        self.axes, self.fixed = continuous_space(case)
         self.population_size = max(4, 4 * len(self.axes))
         budget = _trial_budget(case)
         if budget < 2 * self.population_size:

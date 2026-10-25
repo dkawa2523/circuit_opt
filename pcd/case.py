@@ -2,15 +2,41 @@
 
 from __future__ import annotations
 
-import json
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import yaml
-
+from .inputs import read_input_mapping, reject_unknown
 from .problem import declared_variable_specs
+
+_CASE_FIELDS = {
+    "schema",
+    "case_id",
+    "variables",
+    "source",
+    "sources",
+    "circuit",
+    "load",
+    "measurement",
+    "solver",
+    "target",
+    "run",
+    "optimizer",
+    "study",
+    "identification",
+    "plugins",
+    "metadata",
+    "description",
+    "extensions",
+    "output",
+}
+
+
+def validate_case_fields(data: dict[str, Any]) -> None:
+    """Top-level typos cannot turn an explicit request into a default workflow."""
+
+    reject_unknown(data, _CASE_FIELDS, "case")
 
 
 @dataclass(frozen=True)
@@ -60,22 +86,14 @@ class Case:
         """Whether candidate values form a complete, non-truncatable set."""
 
         study = self.data.get("study")
-        return self.is_resolved_rf or (isinstance(study, dict) and study.get("candidate_enumeration") == "exact")
+        return isinstance(study, dict) and study.get("candidate_enumeration") == "exact"
 
 
 def load_case(path: str | Path) -> Case:
     """Load exactly one supported input schema and resolve public RF inputs."""
 
     path = Path(path).resolve()
-    text = path.read_text(encoding="utf-8")
-    if path.suffix.lower() in {".yaml", ".yml"}:
-        data = yaml.safe_load(text) or {}
-    elif path.suffix.lower() == ".json":
-        data = json.loads(text)
-    else:
-        raise ValueError(f"case file must be YAML or JSON: {path}")
-    if not isinstance(data, dict):
-        raise ValueError(f"case file root must be a mapping: {path}")
+    data = read_input_mapping(path)
 
     # Keep schema routing at the only file-loading boundary.
     from .plan import EXECUTABLE_SCHEMA, PUBLIC_SCHEMA, compile_rf_case
@@ -85,6 +103,7 @@ def load_case(path: str | Path) -> Case:
         plan = compile_rf_case(data, path.parent)
         return Case(path=path, data=plan.case, source_data=data, resolved_plan=plan.to_dict())
     if schema == EXECUTABLE_SCHEMA:
+        validate_case_fields(data)
         return Case(path=path, data=data)
     if not schema:
         raise ValueError(
@@ -106,6 +125,7 @@ def variable_specs(case: Case) -> dict[str, dict[str, Any]]:
 
 
 def default_params(case: Case) -> dict[str, Any]:
+    validate_case_fields(case.data)
     return {name: spec["default"] for name, spec in variable_specs(case).items() if "default" in spec}
 
 
@@ -120,7 +140,9 @@ def case_warnings(case: Case) -> list[str]:
     """Return only concise warnings worth retaining with run artifacts."""
 
     warnings: list[str] = []
-    if case.data.get("source") is None and not case.data.get("sources"):
+    from .sources import imported_sources
+
+    if case.data.get("source") is None and not case.data.get("sources") and not imported_sources(case):
         warnings.append(NO_SOURCE_WARNING)
 
     return warnings

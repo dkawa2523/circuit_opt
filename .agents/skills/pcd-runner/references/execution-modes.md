@@ -31,6 +31,9 @@ Validate normal executable input:
 uv run --frozen python -m pcd validate-case {case.yaml} --json
 ```
 
+Use `validate-case {case.yaml} --plan` to inspect the resolved roles, condition
+IDs, control counts, observations, defaults, and input files without solving.
+
 Add `--strict` only when warnings must fail a requested release or
 qualification check.
 
@@ -58,6 +61,13 @@ case, without candidate ranking or objective scoring:
 uv run --frozen python -m pcd sim-run {case.yaml} --run-root runs
 ```
 
+Public examples `examples/circuit_external.yaml` and
+`examples/circuit_transient.yaml` are minimal single-point inputs. Cases with
+multiple conditions, candidate domains, or control states require explicit
+`--scenario`, `--params` (SI JSON), and/or `--controls`, or the `run` workflow.
+Never silently reduce a requested study to a default point. `sim-netlist`
+remains an explicitly labelled default-point preview.
+
 The command prints the run directory. Read `summary.json` first. Canonical
 waveform and AC data are under `data/`; the exact netlist, solver log, replay
 case, and detailed `manifest.json` are under `debug/`. Resolve paths from the
@@ -83,6 +93,17 @@ and loaded Q. Do not interpret that value as unloaded component Q, and do not
 manufacture it for a single point or an unbracketed sweep. This mode reports
 electrical measurements; use a study when engineering acceptance is required.
 
+PCD accepts `output` in the same case YAML. `output: {}` automatically
+renders applicable figures and a schematic after a successful solve/study/fit;
+omitting it retains data-only execution. Use `analyze RUN --case case.yaml` to
+read only revised output settings and regenerate figures from saved observations.
+Inspect `output.status` separately from solver/engineering status: requested
+missing signals or partial schematics produce a nonzero CLI exit and saved reasons.
+See `docs/manual-ja.md`, sections 9–11, for recipes, signal units/signs, and export scope.
+From 0.22, combined CSV columns distinguish `context.phase` and `parameter.*`
+from `signal.*`. Read plot `coverage` and nullable power ratios with their saved
+reasons; an unavailable efficiency cannot satisfy an engineering limit.
+
 ## Run a design study
 
 Use this for public `pcd.rf.v1` studies and advanced `case_yaml.v1` studies
@@ -93,9 +114,10 @@ uv run --frozen python -m pcd run {case.yaml} --output runs --json
 ```
 
 Add `--require-acceptance` for CI, unattended qualification, or when the user
-explicitly wants an unacceptable design to produce a nonzero exit. Do not add
-`--optimizer`, `--trials`, or `--seed` to a public RF case unless the case and
-user explicitly choose the advanced exploratory path.
+explicitly wants an unacceptable design to produce a nonzero exit. An exact
+finite candidate grid cannot be truncated or changed by CLI overrides. For
+continuous public circuit design, use its declared exploratory optimizer,
+budget, and seed unless the user requests overrides.
 
 After completion, inspect the printed `run_root` and its `study_result.json`.
 Important fields are:
@@ -133,7 +155,11 @@ scenarios, and identifiability limits:
 uv run --frozen python -m pcd identify {case.yaml} --output runs --json
 ```
 
-Read `identification_result.json` first. It links separate `fit/` and
+Read `identification_result.json` first. Check `validation.scope`: unseen
+declared conditions and same-condition replicates make different claims.
+Repeated IDs/observations do not establish independent acquisition. Expected
+unavailable evidence returns `not_identified` with a phase-specific reason;
+follow only artifacts listed for phases actually executed. It links separate `fit/` and
 `holdout/` studies, aligned observation tables, local-sensitivity evidence,
 and each phase's cache-free selected-candidate replay. An `identified` result
 means the declared electrical fit/holdout and local-rank checks passed. It does
@@ -173,8 +199,9 @@ Run these only when the user explicitly asks for the full benchmark,
 regression evidence, or publication artifacts. The core suite performs 411
 real-ngspice evaluations when no matching cache is available.
 
-PCD v1 user-workflow release acceptance uses a new root and performs 353
-real-ngspice evaluations:
+PCD user-workflow release acceptance uses a new root. The exact count depends
+on numerical-method convergence; read it from `release_result.json` rather than
+assuming the historical 0.16.0 count:
 
 ```text
 uv run --frozen python bench/release/run_suite.py --run-root runs/release_acceptance
@@ -228,7 +255,7 @@ user asks or source code changed as part of the same task.
 - Component stress and effective loss: `examples/rf_component_stress.yaml`.
 - Effective CCP one-port: `examples/rf_ccp_lumped.yaml`.
 - Effective ICP terminal fit: `examples/rf_icp_transformer.yaml`.
-- Effective CCP terminal-parameter identification: `examples/advanced/ccp_terminal_identification.yaml`.
+- Effective CCP terminal-parameter identification: `examples/terminal_identification.yaml`.
 - Advanced constrained continuous sizing: `examples/advanced/generic_rc_filter.yaml`.
 - Advanced transient port measurement: `examples/advanced/rf_port_transient.yaml`.
 

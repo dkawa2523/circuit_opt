@@ -102,6 +102,7 @@ def test_case_study_runs_through_the_generic_pipeline(tmp_path, topology_case):
         "optimizer": "random",
         "trials": 2,
         "seed": 3,
+        "optimizer_outcome": {"termination": "candidate_budget_exhausted"},
     }
     assert (study_root / "study_result.json").exists()
     evaluation_table = pd.read_csv(study_root / result["artifacts"]["evaluation_table"])
@@ -216,6 +217,7 @@ def test_continuous_study_persists_reproducible_search_evidence(tmp_path, rc_cas
         "optimizer": "differential_evolution",
         "trials": 16,
         "seed": 23,
+        "optimizer_outcome": {"termination": "candidate_budget_exhausted"},
     }
     assert len(history) == result["n_candidates"] == 16
     assert history[0]["proposal"]["phase"] == "initialization"
@@ -417,8 +419,8 @@ def test_best_decision_summary_distinguishes_failed_evidence_and_control_margin(
     incomplete = best_decision_summary(study, accepted_result, n_failed_evaluations=1)
     assert incomplete["status"] == "meets_declared_acceptance"
     assert incomplete["limitation"] == "none"
-    assert incomplete["search_completeness"] == "incomplete_evidence"
-    assert incomplete["search_limitation"] == "failed_evaluations"
+    assert incomplete["evaluation_evidence"] == "incomplete_evidence"
+    assert incomplete["evidence_limitation"] == "failed_evaluations"
     assert incomplete["coverage"] == {"conditions": 1, "solved": 1, "accepted": 1}
     assert incomplete["conditions"][0]["selected_control"] == {"tune_F": 2e-10}
     assert incomplete["conditions"][0]["values"] == {"pressure_Pa": 5.0}
@@ -566,6 +568,29 @@ def test_final_candidate_replay_bypasses_the_search_cache(tmp_path, rc_case):
     assert all(item.from_cache for item in cached.evaluations)
     assert not any(item.from_cache for item in replay.evaluations)
     assert replay.evaluations[0].raw.artifacts["manifest"] != search.evaluations[0].raw.artifacts["manifest"]
+
+
+def test_a_failed_final_replay_cannot_report_complete_evaluation_evidence(tmp_path, rc_case):
+    from pcd.sim_registry import invoke_solver
+
+    calls = 0
+
+    @register_solver("test_fail_final_replay")
+    def fail_replay(request):
+        nonlocal calls
+        calls += 1
+        if calls > 1:
+            return SimulationResult(time_s=np.array([]), voltage_V=np.array([]), status="failed", log="replay failed")
+        return invoke_solver("test_fake", request)
+
+    result = run_case_study(
+        rc_case, tmp_path, n_trials=1, optimizer_name="random", solver_override="test_fail_final_replay"
+    )
+    assert result["n_failed_evaluations"] == 0
+    assert result["verification"]["n_failed_evaluations"] == 1
+    assert result["verification"]["status"] == "failed"
+    assert result["best"]["status"] == "incomplete_evidence"
+    assert result["best"]["evaluation_evidence"] == "incomplete_evidence"
 
 
 def test_case_evaluation_keeps_a_successful_ac_response_canonical(tmp_path):
@@ -891,7 +916,7 @@ def test_public_candidate_enumeration_cannot_be_changed_after_resolution():
     path = Path(__file__).resolve().parents[1] / "bench" / "cases" / "match_discrete_hardware_search.yaml"
     case = load_case(path)
 
-    with pytest.raises(ValueError, match=r"candidate enumeration is derived from network.search"):
+    with pytest.raises(ValueError, match=r"candidate enumeration is derived from declared finite choices"):
         resolve_study_case(case, n_trials=2, optimizer_name="random", seed=9)
 
     effective = resolve_study_case(case, n_trials=3, solver_override="test_fake")
@@ -911,7 +936,7 @@ def test_public_candidate_enumeration_cannot_be_changed_after_resolution():
 
 def test_grid_optimizer_cannot_be_partially_run_through_the_python_api(tmp_path):
     path = Path(__file__).resolve().parents[1] / "bench" / "cases" / "match_discrete_hardware_search.yaml"
-    with pytest.raises(ValueError, match=r"candidate enumeration is derived from network.search"):
+    with pytest.raises(ValueError, match=r"candidate enumeration is derived from declared finite choices"):
         run_case_study(load_case(path), n_trials=2, run_root=tmp_path)
     assert not list(tmp_path.rglob("study_result.json"))
 
@@ -924,7 +949,7 @@ def test_archived_public_case_keeps_exact_candidate_enumeration(tmp_path):
 
     assert archived.resolved_plan is None
     assert archived.has_exact_candidate_enumeration
-    with pytest.raises(ValueError, match=r"candidate enumeration is derived from network.search"):
+    with pytest.raises(ValueError, match=r"candidate enumeration is derived from declared finite choices"):
         resolve_study_case(archived, n_trials=2, optimizer_name="random", seed=9)
 
 

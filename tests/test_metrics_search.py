@@ -281,7 +281,6 @@ def test_duplicate_timestamps_are_averaged():
     assert v[1] == pytest.approx(3.0)
 
 
-@pytest.mark.property
 @pytest.mark.parametrize(("n_target", "n_source"), [(2, 2), (8, 3), (3, 8), (64, 17)])
 def test_interpolation_preserves_shape_and_never_extrapolates(n_target, n_source):
     target = pd.DataFrame({"time_s": np.linspace(0.0, 1e-6, n_target), "voltage_V": np.zeros(n_target)})
@@ -392,6 +391,7 @@ def test_rf_load_is_a_named_study_metric_with_exact_port_current(tmp_path, make_
         {
             "case_id": "rf_load",
             "source": {"frequency_Hz": frequency_hz},
+            "load": {"name": "resistor", "R_ohm": 5},
             "measurement": {"load_current": "load_current_A"},
             "target": {"objective": "rf_load"},
         }
@@ -455,6 +455,14 @@ def test_total_reflection_keeps_a_finite_loss_and_null_unbounded_values(tmp_path
     assert metrics["vswr"] is None
     assert metrics["resistance_ohm"] is None
 
+    from pcd.core.models import MeasurementUnavailableError
+    from pcd.metrics import terminal_vi_fit
+
+    case.data["target"] = {"objective": "terminal_vi_fit", "impedance_scale_ohm": 1}
+    targets = {"target_voltage_re_V": 1, "target_voltage_im_V": 0, "target_current_re_A": 0.1, "target_current_im_A": 0}
+    with pytest.raises(MeasurementUnavailableError, match="open or undefined"):
+        terminal_vi_fit(case, targets, response)
+
 
 def test_a_waveform_objective_needs_a_target_file(make_case):
     from pcd.metrics import load_target_waveform
@@ -468,7 +476,7 @@ def test_a_target_waveform_must_have_the_canonical_columns(tmp_path, make_case):
 
     (tmp_path / "bad_target.csv").write_text("a,b\n1,2\n", encoding="utf-8")
     case = make_case({"case_id": "x", "target": {"waveform_file": "bad_target.csv"}})
-    with pytest.raises(ValueError, match="must contain time_s and voltage_V"):
+    with pytest.raises(ValueError, match="missing columns"):
         load_target_waveform(case)
 
 

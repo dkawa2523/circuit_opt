@@ -36,5 +36,5 @@
 
 ## 追跡可能な元データ
 
-- 問題設定、文献に基づく適用範囲、数値結果: [`../../docs/dual-frequency-ccp-pulsed-bias-study-ja.md`](../../docs/dual-frequency-ccp-pulsed-bias-study-ja.md)
+- 問題設定、文献に基づく適用範囲、数値結果: [個別検証](../../docs/studies/dual-frequency-ccp-pulsed-bias-study-ja.md)
 - 図別データと元ファイルのハッシュ値: [`../../bench/figures/dual_frequency_ccp/figure_data.json`](../../bench/figures/dual_frequency_ccp/figure_data.json)

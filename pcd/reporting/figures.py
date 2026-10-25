@@ -11,7 +11,9 @@ import numpy as np
 import pandas as pd
 
 from pcd.analysis.ac import DEFAULT_Z0, at_frequency, frequency_sweep_metrics, input_impedance
+from pcd.analysis.traces import instantaneous_power, magnitude_phase
 from pcd.probes import ComponentObservation
+from pcd.simulation import LOAD_VOLTAGE_COLUMN
 
 _R_CIRCLES = (0.2, 0.5, 1.0, 2.0, 5.0)
 _X_CIRCLES = (0.2, 0.5, 1.0, 2.0, 5.0)
@@ -22,6 +24,15 @@ def _headless_pyplot() -> Any:
 
     matplotlib.use("Agg", force=True)
     import matplotlib.pyplot as plt
+    from matplotlib import font_manager
+
+    available = set(font_manager.get_font_names())
+    matplotlib.rcParams["font.family"] = [
+        next(
+            (name for name in ("Yu Gothic", "Meiryo", "Noto Sans CJK JP", "DejaVu Sans") if name in available),
+            "DejaVu Sans",
+        )
+    ]
 
     return plt
 
@@ -49,8 +60,11 @@ def render_frequency_response(
     if ac.empty:
         raise ValueError("frequency response is empty")
     plt = _headless_pyplot()
-    impedance = input_impedance(ac, z0)
     sweep = sweep_metrics if sweep_metrics is not None else frequency_sweep_metrics(ac, z0)
+    if marker_hz is not None:
+        marker = pd.DataFrame([at_frequency(ac, marker_hz)])
+        ac = pd.concat([ac, marker], ignore_index=True).drop_duplicates("frequency_Hz").sort_values("frequency_Hz")
+    impedance = input_impedance(ac, z0)
     figure, axes = plt.subplots(2, 2, figsize=(10.4, 8.0))
     _draw_impedance_rectangular(axes[0, 0], impedance, marker_hz)
     _draw_smith(axes[0, 1], impedance, z0, marker_hz)
@@ -78,8 +92,8 @@ def _draw_impedance_rectangular(axis: Any, impedance: pd.DataFrame, marker_hz: f
 def _draw_impedance_polar(axis: Any, impedance: pd.DataFrame, marker_hz: float | None) -> None:
     frequency_mhz = impedance["frequency_Hz"].to_numpy(float) / 1e6
     magnitude = impedance["magnitude_ohm"].to_numpy(float)
-    phase = np.degrees(
-        np.angle(impedance["resistance_ohm"].to_numpy(float) + 1j * impedance["reactance_ohm"].to_numpy(float))
+    _, phase = magnitude_phase(
+        impedance["resistance_ohm"].to_numpy(float) + 1j * impedance["reactance_ohm"].to_numpy(float)
     )
     phase_axis = axis.twinx()
     marker = "o" if len(impedance) == 1 else None
@@ -231,11 +245,14 @@ def _has_source_power(waveform: pd.DataFrame) -> bool:
 
 
 def _has_load_power(waveform: pd.DataFrame, load_current_column: str | None) -> bool:
-    return _finite_column(waveform, "voltage_V") and _finite_column(waveform, load_current_column)
+    column = LOAD_VOLTAGE_COLUMN if LOAD_VOLTAGE_COLUMN in waveform else "voltage_V"
+    return _finite_column(waveform, column) and _finite_column(waveform, load_current_column)
 
 
 def _draw_transient_voltage(axis: Any, waveform: pd.DataFrame, time_us: np.ndarray) -> None:
-    axis.plot(time_us, waveform["voltage_V"].to_numpy(float), lw=1.2, label="load port")
+    axis.plot(time_us, waveform["voltage_V"].to_numpy(float), lw=1.2, label="observed output")
+    if _finite_column(waveform, LOAD_VOLTAGE_COLUMN):
+        axis.plot(time_us, waveform[LOAD_VOLTAGE_COLUMN].to_numpy(float), lw=1.1, label="load port")
     if _finite_column(waveform, "source_voltage_V"):
         axis.plot(time_us, waveform["source_voltage_V"].to_numpy(float), lw=0.9, alpha=0.75, label="source")
     axis.set_ylabel("voltage [V]")
@@ -265,10 +282,10 @@ def _draw_transient_power(
     load_current_column: str | None,
 ) -> None:
     if _has_source_power(waveform):
-        source_power = -waveform["source_voltage_V"].to_numpy(float) * waveform["current_A"].to_numpy(float)
+        source_power = instantaneous_power(waveform, load_current_column)["source_power_W"].to_numpy(float)
         axis.plot(time_us, source_power, lw=1.1, label="source delivered")
     if _has_load_power(waveform, load_current_column):
-        load_power = waveform["voltage_V"].to_numpy(float) * waveform[load_current_column].to_numpy(float)
+        load_power = instantaneous_power(waveform, load_current_column)["load_power_W"].to_numpy(float)
         axis.plot(time_us, load_power, lw=1.1, label="load accepted")
     axis.set_ylabel("instantaneous power [W]")
     axis.set_title("Transient electrical power")

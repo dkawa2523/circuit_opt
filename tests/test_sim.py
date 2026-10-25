@@ -17,7 +17,7 @@ import pytest
 
 import pcd.sim_core as sim_core_module
 import pcd.solver as solver_module
-from pcd.case import load_case
+from pcd.case import Case, load_case
 from pcd.metrics import measure_record, measure_response
 from pcd.records import artifact_path
 from pcd.sim_core import execute_case, prepare_case, simulate_case
@@ -91,7 +91,10 @@ def test_structured_and_imported_circuits_return_the_same_response_type(tmp_path
 
 
 def test_common_simulation_layer_persists_a_custom_solver_ac_result(tmp_path, rc_case, monkeypatch):
-    response = pd.DataFrame({"frequency_Hz": [1e6], "voltage_V_re": [1.0], "voltage_V_im": [0.0]})
+    case = Case(rc_case.path, {**rc_case.data, "solver": {"ac": {"frequency_Hz": 1e6}}})
+    response = pd.DataFrame(
+        {"frequency_Hz": [1e6], "voltage_re": [1.0], "voltage_im": [0.0], "current_re": [-0.01], "current_im": [0.0]}
+    )
 
     def custom_solver(*_args):
         return SimulationResult(
@@ -101,7 +104,7 @@ def test_common_simulation_layer_persists_a_custom_solver_ac_result(tmp_path, rc
         )
 
     monkeypatch.setattr(sim_core_module, "invoke_solver", custom_solver)
-    record = simulate_case(rc_case, run_root=tmp_path, solver_override="custom_ac")
+    record = simulate_case(case, run_root=tmp_path, solver_override="custom_ac")
 
     assert record.frequency_response_file == "data/ac.csv"
     pd.testing.assert_frame_equal(pd.read_csv(record.run_dir / record.frequency_response_file), response)
@@ -113,10 +116,12 @@ def test_a_typed_solver_receives_no_case_dictionary(tmp_path, rc_case):
     @register_solver("test_typed_request")
     def typed_solver(request: SolverRunRequest) -> SimulationResult:
         observed.append(request)
+        transient = request.simulation.analysis.transient
+        assert transient is not None
         return SimulationResult(
-            time_s=np.asarray([0.0]),
-            voltage_V=np.asarray([0.0]),
-            current_A=np.asarray([0.0]),
+            time_s=np.asarray([0.0, transient.stop_s]),
+            voltage_V=np.asarray([0.0, 0.0]),
+            current_A=np.asarray([0.0, 0.0]),
         )
 
     record = simulate_case(rc_case, run_root=tmp_path, solver_override="test_typed_request")
@@ -290,18 +295,14 @@ def test_invalid_analysis_input_is_rejected_before_a_run_directory_is_created(tm
     assert not run_root.exists()
 
 
-def test_run_directory_collisions_are_resolved(tmp_path):
-    """The directory name embeds a one-second timestamp, so this can collide."""
-
-    from pcd.sim_core import _ensure_unique_dir
-
-    base = tmp_path / "sim_0000"
-    assert _ensure_unique_dir(base) == base
-    base.mkdir()
-    first = _ensure_unique_dir(base)
-    assert first.name == "sim_0000_001"
-    first.mkdir()
-    assert _ensure_unique_dir(base).name == "sim_0000_002"
+def test_repeated_named_runs_preserve_the_previous_evidence(tmp_path, rc_case):
+    first = prepare_case(rc_case, run_root=tmp_path, run_id="repeat")
+    netlist = first.run_dir / first.netlist_file
+    original = netlist.read_bytes()
+    second = prepare_case(rc_case, run_root=tmp_path, run_id="repeat")
+    assert first.run_dir != second.run_dir
+    assert netlist.read_bytes() == original
+    assert (second.run_dir / second.netlist_file).is_file()
 
 
 def test_long_run_id_is_bounded_without_changing_case_identity(tmp_path, rc_case):
@@ -311,17 +312,6 @@ def test_long_run_id_is_bounded_without_changing_case_identity(tmp_path, rc_case
     assert len(record.run_dir.name) == 32
     assert record.run_dir.name != run_id
     assert record.case_id == rc_case.case_id
-
-
-def test_run_directory_digest_is_stable_across_the_security_flag():
-    """`usedforsecurity=False` must not rename existing run directories."""
-
-    import hashlib
-
-    payload = repr(sorted({"C1": 1e-9}.items())).encode("utf-8")
-    assert (
-        hashlib.sha1(payload, usedforsecurity=False).hexdigest()[:8] == hashlib.sha1(payload).hexdigest()[:8]  # noqa: S324
-    )
 
 
 # --- electrical reference plane -------------------------------------------
@@ -347,4 +337,4 @@ def test_the_manifest_records_load_ports_and_reference_plane(tmp_path, make_case
     assert rec.measurement["current_source"] == "Vrf"
     assert rec.measurement["load_ports"] == {"p": "electrode", "n": "return"}
     assert rec.measurement["load_current"] == "load_current_A"
-    assert rec.measurement["reference_plane"] == "chamber_feedthrough"
+    assert rec.measurement["load_reference_plane"] == "chamber_feedthrough"

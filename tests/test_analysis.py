@@ -7,6 +7,7 @@ a series R-C has an exactly known Z(f), so a sign or scaling error cannot hide.
 from __future__ import annotations
 
 import numpy as np
+import pandas as pd
 import pytest
 
 from pcd.analysis import (
@@ -28,7 +29,7 @@ from pcd.ngspice_io import read_frequency_response
 from pcd.probes import ComponentObservation
 from pcd.records import load_waveform
 from pcd.signals import time_average
-from pcd.simulation import AC_LOAD_VOLTAGE_COLUMN, LOAD_CURRENT_COLUMN, SimulationResult
+from pcd.simulation import LOAD_CURRENT_COLUMN, LOAD_VOLTAGE_COLUMN, SimulationResult
 
 # --- canonical AC input -----------------------------------------------------
 
@@ -98,7 +99,7 @@ def test_named_ac_probes_support_power_stress_and_loss_closure(tmp_path):
     response = read_frequency_response(
         path,
         [
-            AC_LOAD_VOLTAGE_COLUMN,
+            LOAD_VOLTAGE_COLUMN,
             component.voltage_column,
             component.current_column,
             LOAD_CURRENT_COLUMN,
@@ -245,8 +246,8 @@ def test_frequency_sweep_uses_saved_load_power_when_available():
             "voltage_im": np.zeros_like(frequency),
             "current_re": np.full_like(frequency, -1.0 / DEFAULT_Z0),
             "current_im": np.zeros_like(frequency),
-            f"{AC_LOAD_VOLTAGE_COLUMN}_re": np.ones_like(frequency),
-            f"{AC_LOAD_VOLTAGE_COLUMN}_im": np.zeros_like(frequency),
+            f"{LOAD_VOLTAGE_COLUMN}_re": np.ones_like(frequency),
+            f"{LOAD_VOLTAGE_COLUMN}_im": np.zeros_like(frequency),
             f"{LOAD_CURRENT_COLUMN}_re": 2.0 * load_power,
             f"{LOAD_CURRENT_COLUMN}_im": np.zeros_like(frequency),
         }
@@ -388,6 +389,24 @@ def test_rf_port_metrics_reject_missing_measurement_inputs():
         rf_port_metrics(frame.assign(load_current_A=np.nan), 1e6, "load_current_A")
 
 
+def test_periodic_load_measurements_survive_optional_missing_source_channels():
+    time = np.linspace(0, 5e-6, 501)
+    tone = np.cos(2 * np.pi * 1e6 * time)
+    waveform = pd.DataFrame(
+        {
+            "time_s": time,
+            "voltage_V": 10 * tone,
+            "load_current_A": 0.2 * tone,
+            "current_A": np.nan,
+            "source_voltage_V": np.nan,
+        }
+    )
+    metrics = rf_port_metrics(waveform, 1e6, "load_current_A")
+    assert metrics["load_v_peak_V"] == pytest.approx(10.0)
+    assert metrics["load_real_power_W"] == pytest.approx(1.0, rel=1e-3)
+    assert "source_real_power_W" not in metrics
+
+
 def test_rf_port_metrics_preserve_source_terminal_rms_and_apparent_power():
     metrics = rf_port_metrics(_sine_waveform(100.0, 2.0, load_current=1.5), 1e6, "i(Vload)")
     assert metrics["source_current_rms_A"] == pytest.approx(np.sqrt(2.0), rel=1e-3)
@@ -395,17 +414,86 @@ def test_rf_port_metrics_preserve_source_terminal_rms_and_apparent_power():
     assert metrics["source_real_power_W"] == pytest.approx(100.0, rel=1e-3)
 
 
-def test_rf_port_periodic_window_and_harmonic_count_are_configurable():
-    metrics = rf_port_metrics(
-        _sine_waveform(100.0, 2.0, load_current=1.5),
-        1e6,
-        "i(Vload)",
-        periodic_cycles=2,
-        settling_comparisons=1,
-        harmonic_count=5,
+@pytest.mark.parametrize(("cycles", "slope", "tolerance"), [(2, 0.001, 0.001), (8, 0.001, 0.001), (8, 0.02, 0.1)])
+def test_declared_periodic_window_controls_power_harmonics_and_probe_tables(cycles, slope, tolerance):
+    from pcd.analysis.traces import harmonic_trace
+
+    time = np.linspace(0, 12, 12001)
+    voltage = (1 + slope * time) * np.sin(2 * np.pi * time)
+    waveform = pd.DataFrame(
+        {"time_s": time, "voltage_V": voltage, "load_voltage_V": voltage, "load_current_A": voltage / 50}
     )
-    assert metrics["measurement_cycles"] == 2
+    options = {"periodic_cycles": cycles, "settling_tolerance": tolerance, "harmonic_count": 5}
+    metrics = rf_port_metrics(waveform, 1, "load_current_A", **options)
+    table = harmonic_trace(time, voltage, 1, measurement=options)
+    start, end = 12 - cycles, 12
+    mean_amplitude = 1 + slope * (start + end) / 2
+    expected_h1 = np.hypot(mean_amplitude, slope / (4 * np.pi))
+    expected_v2 = (1 + slope * (start + end) + slope**2 * (start**2 + start * end + end**2) / 3) / 2 - slope**2 / (
+        4 * np.pi
+    ) ** 2
+    assert metrics["measurement_cycles"] == cycles
+    assert metrics["measurement_start_s"] == pytest.approx(start)
+    assert metrics["measurement_end_s"] == pytest.approx(end)
+    assert metrics["load_real_power_W"] == pytest.approx(expected_v2 / 50, rel=1e-7)
+    assert metrics["load_v_rms_V"] == pytest.approx(np.sqrt(expected_v2), rel=1e-7)
+    assert metrics["voltage_harmonic_amplitude_V"]["h1"] == pytest.approx(expected_h1, rel=1e-7)
+    assert table["amplitude"].iloc[0] == pytest.approx(expected_h1, rel=1e-7)
+    assert table["measurement_cycles"].tolist() == [cycles] * 5
+    assert table["window_start_s"].tolist() == [start] * 5
     assert set(metrics["voltage_harmonic_amplitude_V"]) == {"h1", "h2", "h3", "h4", "h5"}
+
+
+@pytest.mark.parametrize("source_power", [0.0, 1e-40, 1.0])
+def test_efficiency_distinguishes_undefined_from_finite_power_ratios(source_power):
+    from pcd.core import Candidate, ControlState, EvaluationRequest, MetricSet, RawResult, Scenario
+    from pcd.metrics import MetricLimitConstraint
+
+    load_power = source_power / 2
+    ac = pd.Series(
+        {
+            "voltage_re": 1.0,
+            "voltage_im": 0.0,
+            "current_re": -2 * source_power,
+            "current_im": 0.0,
+            "load_voltage_V_re": 1.0,
+            "load_voltage_V_im": 0.0,
+            "load_current_A_re": 2 * load_power,
+            "load_current_A_im": 0.0,
+        }
+    )
+    waveform = pd.DataFrame(
+        {
+            "time_s": [0.0, 1.0],
+            "source_voltage_V": [1.0, 1.0],
+            "current_A": [-source_power, -source_power],
+            "load_voltage_V": [1.0, 1.0],
+            "load_current_A": [load_power, load_power],
+        }
+    )
+    request = EvaluationRequest(Candidate("point"), Scenario("condition"), ControlState())
+    for metrics in (ac_power_flow(ac, "load_current_A"), power_flow(waveform, "load_current_A")):
+        balance = component_loss_balance(
+            {
+                "source_real_power_W": source_power,
+                "network_loss_W": source_power,
+                "modeled_component_loss_W": source_power / 2,
+            }
+        )
+        constraint = MetricLimitConstraint("transfer_efficiency", "min", 0).evaluate(
+            request, RawResult("ok"), MetricSet(metrics)
+        )
+        if source_power == 0:
+            assert balance["component_loss_balance_fraction_of_source"] is None
+            assert metrics["transfer_efficiency"] is None
+            assert "nonzero source real power" in metrics["transfer_efficiency_unavailable_reason"]
+            assert not constraint.satisfied
+            assert constraint.value is None
+            assert constraint.margin is None
+        else:
+            assert balance["component_loss_balance_fraction_of_source"] == pytest.approx(0.5)
+            assert metrics["transfer_efficiency"] == pytest.approx(0.5)
+            assert constraint.satisfied
 
 
 def test_saved_simulation_result_reproduces_rf_metrics(tmp_path):

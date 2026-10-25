@@ -7,23 +7,23 @@ import json
 import math
 from collections.abc import Mapping
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import pandas as pd
-
 from . import __version__
-from .artifacts import data_file_references, file_sha256, package_source_sha256, write_json
+from .artifacts import data_file_references, file_sha256, package_source_sha256, runtime_environment, write_json
 from .case import Case, default_params
 from .core.aggregation import candidate_is_pareto_eligible, candidate_rank_key, pareto_front
 from .core.models import Candidate, CandidateResult, StudySpec
 from .core.pipeline import StudyRunner
 from .evaluation import CaseEvaluationBackend
+from .inputs import integer, reject_unknown
 from .metrics import constraints_from_case
 from .netlist_import import flatten_netlist_file
 from .problem import ParameterRole, ParameterSet, candidate_role, resolve_parameter_set
 from .results import FileResultStore, best_decision_summary, pareto_front_table, quasi_static_snapshot_table
+from .results.table import evaluation_table
 from .search import BaseOptimizer, create_optimizer, validate_proposal
 from .sim_core import archive_case_bundle
 from .simulation_input import resolve_solver_settings
@@ -97,7 +97,7 @@ def _simulation_case_data(case: Case) -> dict[str, Any]:
     """
 
     data = deepcopy(case.data)
-    for name in ("study", "optimizer", "benchmark", "run"):
+    for name in ("study", "optimizer", "benchmark", "run", "output"):
         data.pop(name, None)
 
     target = data.pop("target", None)
@@ -122,6 +122,7 @@ def _runtime_fingerprint(case: Case, solver_override: str | None) -> dict[str, A
     return {
         "pcd_version": __version__,
         "implementation_sha256": package_source_sha256(),
+        "environment": runtime_environment(),
         "case_sha256": _sha256_json(case.data),
         "plugins": _plugin_fingerprints(case),
         "referenced_files": _referenced_file_fingerprints(case, case.data),
@@ -366,11 +367,11 @@ def _write_pareto_projection(
     generation_root: Path,
     generation: Path,
     dataset_id: str,
+    eligible_candidates: int,
 ) -> tuple[dict[str, str], dict[str, Any] | None]:
     if len(study.objectives) <= 1:
         return {}, None
 
-    eligible = tuple(result for result in results if candidate_is_pareto_eligible(study, result))
     front = pareto_front(study, results)
     filename = "pareto_front.csv"
     pareto_front_table(
@@ -384,7 +385,7 @@ def _write_pareto_projection(
         "schema": "pareto_summary.v1",
         "scope": "declared_grid" if case.has_exact_candidate_enumeration else "observed_candidates",
         "eligibility": "complete_solver_evidence_and_full_feasibility",
-        "eligible_candidates": len(eligible),
+        "eligible_candidates": eligible_candidates,
         "front_candidates": len(front),
     }
     return artifacts, summary
@@ -405,10 +406,11 @@ def resolve_study_case(
     solver = mapping(data.get("solver"), "solver")
     optimizer = mapping(data.get("optimizer"), "optimizer")
     run = mapping(data.get("run"), "run")
+    reject_unknown(run, {"trials", "root"}, "run")
 
-    effective_solver = str(solver_override or solver.get("name", "ngspice_cli"))
-    effective_optimizer = str(optimizer_name or optimizer.get("name", "random"))
-    effective_seed = int(seed if seed is not None else optimizer.get("seed", 0))
+    effective_solver = str(solver.get("name", "ngspice_cli") if solver_override is None else solver_override)
+    effective_optimizer = str(optimizer.get("name", "random") if optimizer_name is None else optimizer_name)
+    effective_seed = integer(seed if seed is not None else optimizer.get("seed", 0), "optimizer.seed", minimum=0)
     data["solver"] = {**solver, "name": effective_solver}
     data["optimizer"] = {**optimizer, "name": effective_optimizer, "seed": effective_seed}
     data["run"] = {**run, "trials": int(n_trials)}
@@ -451,7 +453,7 @@ def _reject_exact_enumeration_overrides(
     ]
     if changes:
         raise ValueError(
-            "pcd.rf.v1 candidate enumeration is derived from network.search and cannot be overridden: "
+            "exact candidate enumeration is derived from declared finite choices and cannot be overridden: "
             + ", ".join(changes)
         )
 
@@ -503,11 +505,26 @@ def _dataset_identity(case: Case, store: FileResultStore, generation_root: Path)
     }
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class _TrialBatch:
-    results: list[CandidateResult]
-    history: list[dict[str, Any]]
-    rows: list[dict[str, Any]]
+    best: CandidateResult | None = None
+    front: list[CandidateResult] = field(default_factory=list)
+    history: list[dict[str, Any]] = field(default_factory=list)
+    n_evaluations: int = 0
+    n_failed: int = 0
+    eligible_candidates: int = 0
+    optimizer_outcome: dict[str, Any] = field(default_factory=dict)
+
+    def include(self, spec: StudySpec, result: CandidateResult) -> None:
+        """Keep detailed trials only for the best candidate and observed front."""
+
+        if self.best is None or candidate_rank_key(spec, result) < candidate_rank_key(spec, self.best):
+            self.best = result
+        self.n_evaluations += len(result.control_evaluations)
+        self.n_failed += sum(not evaluation.raw.ok for evaluation in result.control_evaluations)
+        if len(spec.objectives) > 1:
+            self.eligible_candidates += candidate_is_pareto_eligible(spec, result)
+            self.front = list(pareto_front(spec, (*self.front, result)))
 
 
 def _run_trials(
@@ -518,22 +535,50 @@ def _run_trials(
     n_trials: int,
     dataset_identity: Mapping[str, Any],
     constant_inputs: Mapping[str, Mapping[str, Any]],
+    table_path: Path,
 ) -> _TrialBatch:
-    results: list[CandidateResult] = []
-    history: list[dict[str, Any]] = []
-    rows: list[dict[str, Any]] = []
+    batch = _TrialBatch()
     optimizer_name = str((case.data.get("optimizer") or {}).get("name"))
     seed = int((case.data.get("optimizer") or {}).get("seed", 0))
     candidate_label = candidate_role(case).value
-    for index in range(n_trials):
-        params = validate_proposal(optimizer.case, optimizer.ask())
-        result = runner.evaluate_candidate(Candidate(f"trial_{index:04d}", params))
-        results.append(result)
-        rows.extend(_evaluation_table_rows(index, result, dataset_identity, constant_inputs, candidate_label))
-        rank, feedback = _optimizer_feedback(spec, result)
-        optimizer.tell(params, feedback)
-        history.append(_study_history_entry(index, result, rank, optimizer_name, seed, optimizer.proposal_metadata()))
-    return _TrialBatch(results, history, rows)
+    with evaluation_table(table_path) as append:
+
+        def evaluate(proposal: dict[str, Any]) -> dict[str, Any]:
+            index = len(batch.history)
+            params = validate_proposal(optimizer.case, proposal)
+            result = runner.evaluate_candidate(Candidate(f"trial_{index:04d}", params))
+            batch.include(spec, result)
+            append(_evaluation_table_rows(index, result, dataset_identity, constant_inputs, candidate_label))
+            rank, feedback = _optimizer_feedback(spec, result)
+            if optimizer_name == "least_squares":
+                feedback["residuals"] = _terminal_residuals(result)
+            optimizer.tell(params, feedback)
+            batch.history.append(
+                _study_history_entry(index, result, rank, optimizer_name, seed, optimizer.proposal_metadata())
+            )
+            return feedback
+
+        optimizer.optimize(evaluate, n_trials)
+        batch.optimizer_outcome = dict(optimizer.outcome)
+    return batch
+
+
+def _terminal_residuals(result: CandidateResult) -> list[float] | None:
+    import math
+
+    residuals: list[float] = []
+    weight_scale = max(item.scenario.weight for item in result.scenarios)
+    weights = [item.scenario.weight / weight_scale for item in result.scenarios]
+    weight_sum = math.fsum(weights)
+    for scenario, weight in zip(result.scenarios, weights, strict=True):
+        selected = scenario.selected
+        if not selected.raw.ok:
+            return None
+        residuals.extend(
+            float(selected.metrics.values[name]) * math.sqrt(weight / weight_sum)
+            for name in ("normalized_residual_resistance", "normalized_residual_reactance")
+        )
+    return residuals
 
 
 def _generated_path(generation: Path, name: str) -> str:
@@ -580,31 +625,35 @@ def _finalize_study(
     n_trials: int,
 ) -> dict[str, Any]:
     generation = generation_root.relative_to(store.root)
-    search_best = min(trials.results, key=lambda item: candidate_rank_key(spec, item))
+    search_best = trials.best
+    if search_best is None:
+        raise ValueError("optimizer produced no candidate evaluations")
     # Candidate selection may use reusable search results, but the published
     # engineering decision must come from a normal solver execution that did
     # not read or write that cache.
     best = runner.verify_candidate(search_best)
-    n_failed = sum(not evaluation.raw.ok for result in trials.results for evaluation in result.control_evaluations)
+    n_failed = trials.n_failed
     verification_failed = sum(not evaluation.raw.ok for evaluation in best.control_evaluations)
     selected_candidate_path = store.save_selected_candidate(best)
     selected_artifacts = _write_selected_projections(case, best, generation_root, generation, constant_inputs)
     pareto_artifacts, pareto_summary = _write_pareto_projection(
         case,
         spec,
-        trials.results,
+        trials.front,
         best,
         generation_root,
         generation,
         str(dataset_identity["dataset_id"]),
+        trials.eligible_candidates,
     )
-    payload = {
+    payload: dict[str, Any] = {
         "schema": "study_result.v1",
         "study": spec.to_dict(),
         "execution": {
             "solver": str((case.data.get("solver") or {}).get("name")),
             "optimizer": str((case.data.get("optimizer") or {}).get("name")),
             "trials": n_trials,
+            "optimizer_outcome": trials.optimizer_outcome,
             "seed": int((case.data.get("optimizer") or {}).get("seed", 0)),
         },
         "dataset": dict(dataset_identity),
@@ -617,8 +666,8 @@ def _finalize_study(
             selected_artifacts,
             pareto_artifacts,
         ),
-        "n_candidates": len(trials.results),
-        "n_evaluations": sum(len(item.control_evaluations) for item in trials.results),
+        "n_candidates": len(trials.history),
+        "n_evaluations": trials.n_evaluations,
         "n_failed_evaluations": n_failed,
         "verification": {
             "schema": "final_candidate_verification.v1",
@@ -628,12 +677,16 @@ def _finalize_study(
             "n_failed_evaluations": verification_failed,
             "status": "verified" if verification_failed == 0 else "failed",
         },
-        "best": best_decision_summary(spec, best, n_failed_evaluations=n_failed),
+        "best": best_decision_summary(spec, best, n_failed_evaluations=n_failed + verification_failed),
         **({"pareto": pareto_summary} if pareto_summary is not None else {}),
     }
     # Publish only after every referenced file has been committed.
     write_json(generation_root / "study_history.json", trials.history)
-    pd.DataFrame(trials.rows).to_csv(generation_root / "evaluations.csv", index=False)
+    if "output" in case.data and candidate_role(case) is ParameterRole.DESIGN:
+        from .reporting.study import render_study_outputs
+
+        payload["output"] = render_study_outputs(payload, case, generation_root)
+        payload["artifacts"]["output_summary"] = payload["output"]["summary"]
     write_json(store.root / "study_result.json", payload)
     return payload
 
@@ -648,6 +701,8 @@ def run_case_study(
 ) -> dict[str, Any]:
     """Optimize design candidates using feasibility-first scenario aggregation."""
 
+    if (case.data.get("metadata") or {}).get("workflow") == "simulation":
+        raise ValueError("this case describes a forward simulation; use sim-run, or declare an objective for a study")
     if candidate_role(case) is not ParameterRole.DESIGN:
         raise ValueError("run_case_study accepts design candidates; use run_identification for latent parameters")
     return _run_parameter_study(
@@ -676,8 +731,8 @@ def _run_parameter_study(
     if candidate_role(case) is not proposed_role:
         raise ValueError(f"study candidate role is {candidate_role(case).value!r}; expected {proposed_role.value!r}")
 
-    configured_trials = int((case.data.get("run", {}) or {}).get("trials", 1))
-    effective_trials = configured_trials if n_trials is None else int(n_trials)
+    configured_trials = integer((case.data.get("run", {}) or {}).get("trials", 1), "run.trials", minimum=1)
+    effective_trials = configured_trials if n_trials is None else integer(n_trials, "n_trials", minimum=1)
     if effective_trials < 1:
         raise ValueError("n_trials must be positive")
     case = resolve_study_case(case, effective_trials, optimizer_name, solver_override, seed)
@@ -709,6 +764,7 @@ def _run_parameter_study(
         effective_trials,
         dataset_identity,
         constant_inputs,
+        generation_root / "evaluations.csv",
     )
     return _finalize_study(
         case,

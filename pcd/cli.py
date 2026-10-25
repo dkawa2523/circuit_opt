@@ -42,9 +42,9 @@ def _add_study_commands(sub: argparse._SubParsersAction) -> None:
     p.add_argument("case")
     p.add_argument("--output", default="runs", help="directory that receives the study; default: runs")
     p.add_argument("--solver")
-    p.add_argument("--optimizer", help="advanced case only; public RF candidates are exact")
-    p.add_argument("--trials", type=int, help="advanced case only; public RF candidate count is inferred")
-    p.add_argument("--seed", type=int, help="advanced exploratory optimizer seed")
+    p.add_argument("--optimizer", help="exploratory optimizer override; exact candidate grids cannot be changed")
+    p.add_argument("--trials", type=int, help="exploratory trial budget; exact candidate grids infer their count")
+    p.add_argument("--seed", type=int, help="exploratory optimizer seed")
     p.add_argument(
         "--require-acceptance",
         action="store_true",
@@ -74,6 +74,9 @@ def _add_study_commands(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser("validate-case", help="validate a case file without simulation or metric evaluation")
     p.add_argument("case")
     p.add_argument("--strict", action="store_true")
+    p.add_argument(
+        "--plan", action="store_true", help="also explain the resolved conditions, roles, controls, analysis, and files"
+    )
     p.add_argument("--json", action="store_true")
 
 
@@ -82,6 +85,9 @@ def _add_simulation_commands(sub: argparse._SubParsersAction) -> None:
     p.add_argument("case")
     p.add_argument("--solver")
     p.add_argument("--run-root")
+    p.add_argument("--scenario", help="select one declared operating condition")
+    p.add_argument("--params", type=json.loads, help="explicit fixed/candidate parameter values as a JSON object")
+    p.add_argument("--controls", type=json.loads, help="select declared control values as a JSON object")
     p.add_argument(
         "--allow-failure",
         action="store_true",
@@ -98,11 +104,16 @@ def _add_simulation_commands(sub: argparse._SubParsersAction) -> None:
     p.add_argument("--out", required=True)
     p.add_argument("--title")
     p.add_argument("--summary-json")
+    p.add_argument("--view", choices=["physical", "instrumented"], default="physical")
+    p.add_argument("--format", choices=["auto", "deck", "fragment"], default="auto", dest="netlist_mode")
 
     p = sub.add_parser("analyze", help="regenerate an electrical summary and standard figures from a saved run")
     p.add_argument("run", help="a run directory, summary.json, or debug/manifest.json")
     p.add_argument("--out", help="output directory; default: <run>/analysis")
     p.add_argument("--frequency-Hz", type=float, dest="frequency_hz", help="operating point; default: saved source")
+    p.add_argument(
+        "--case", dest="output_case", help="read only output settings from this YAML; physical inputs remain archived"
+    )
     p.add_argument("--json", action="store_true", help="print the complete analysis summary")
 
 
@@ -154,11 +165,19 @@ def _cmd_validate_case(args: argparse.Namespace) -> int:
     from .case import load_case
     from .validation import validate_case
 
-    report = validate_case(load_case(args.case), strict=args.strict)
+    case = load_case(args.case)
+    report = validate_case(case, strict=args.strict)
+    payload = report.to_dict()
+    if args.plan and report.ok:
+        from .study_config import describe_case
+
+        payload["plan"] = describe_case(case)
     if args.json:
-        _dump(report.to_dict())
+        _dump(payload)
     else:
         print(report.format_text())
+        if "plan" in payload:
+            _dump(payload["plan"])
     return 0 if report.ok else 1
 
 
@@ -166,8 +185,14 @@ def _cmd_run(args: argparse.Namespace) -> int:
     from .case import load_case
     from .study import run_case_study
 
+    case = load_case(args.case)
+    if args.require_acceptance and not (
+        (case.data.get("target") or {}).get("constraints", {}).get("metric_bounds")
+        or (case.data.get("study") or {}).get("control_margin_min") is not None
+    ):
+        raise ValueError("--require-acceptance requires explicit engineering limits in the input")
     result = run_case_study(
-        load_case(args.case),
+        case,
         run_root=args.output,
         n_trials=args.trials,
         optimizer_name=args.optimizer,
@@ -178,10 +203,13 @@ def _cmd_run(args: argparse.Namespace) -> int:
         _dump(result)
     else:
         _print_run_summary(result)
+        if result.get("output"):
+            print(f"Output: {result['output']['status']} ({result['output']['summary']})")
     verification = result.get("verification") or {}
     failed = bool(result.get("n_failed_evaluations", 0)) or bool(verification.get("n_failed_evaluations", 0))
     rejected = args.require_acceptance and (result.get("best") or {}).get("status") != "meets_declared_acceptance"
-    return 1 if failed or rejected else 0
+    output_failed = (result.get("output") or {}).get("status") == "partial"
+    return 1 if failed or rejected or output_failed else 0
 
 
 def _cmd_identify(args: argparse.Namespace) -> int:
@@ -201,13 +229,23 @@ def _cmd_identify(args: argparse.Namespace) -> int:
     else:
         print(f"Identification: {result['case_id']}")
         print(f"Status: {result['status']}")
+        if result.get("output"):
+            print(f"Output: {result['output']['status']} ({result['output']['summary']})")
+        if result.get("reason"):
+            print(f"Reason: {result['reason']}")
+        validation = result.get("validation") or {}
+        if validation:
+            print(f"Holdout scope: {validation['scope']}")
+            if validation.get("identical_observations"):
+                print("Holdout contains identical observations; independent acquisition is not established")
         print(
             "Estimated latent parameters: "
             + json.dumps(result["estimated_latent"], ensure_ascii=False, separators=(",", ":"), default=str)
         )
         fit, holdout = result["fit"], result["holdout"]
-        print(f"Fit: {fit['metric']}={float(fit['value']):.6g} (limit {float(fit['limit']):.6g})")
-        print(f"Holdout: {holdout['metric']}={float(holdout['value']):.6g} (limit {float(holdout['limit']):.6g})")
+        for label, phase in (("Fit", fit), ("Holdout", holdout)):
+            value = "unavailable" if phase["value"] is None else f"{float(phase['value']):.6g}"
+            print(f"{label}: {phase['metric']}={value} (limit {float(phase['limit']):.6g})")
         identifiable = result["identifiability"]
         condition = identifiable.get("condition_number")
         condition_text = "unavailable" if condition is None else f"{float(condition):.6g}"
@@ -216,7 +254,7 @@ def _cmd_identify(args: argparse.Namespace) -> int:
             f"condition={condition_text}"
         )
         print(f"Results: {result['run_root']}")
-    return 0 if result.get("status") == "identified" else 1
+    return 0 if result.get("status") == "identified" and (result.get("output") or {}).get("status") != "partial" else 1
 
 
 def _print_condition_summaries(conditions: list[dict]) -> None:
@@ -313,9 +351,13 @@ def _print_run_summary(result: dict) -> None:
     print(f"Feasible across all conditions: {feasibility}")
     if decision_status:
         print(f"Decision: {decision_status}")
-    search_completeness = best.get("search_completeness")
-    if search_completeness:
-        print(f"Search completeness: {search_completeness}")
+    evidence = best.get("evaluation_evidence")
+    if evidence:
+        print(f"Evaluation evidence: {evidence}")
+    execution = result.get("execution") or {}
+    termination = (execution.get("optimizer_outcome") or {}).get("termination")
+    if termination:
+        print(f"Candidate search: {execution.get('optimizer', '')} ({termination})")
     candidate = best.get("candidate") or {}
     candidate_id = candidate.get("candidate_id", "")
     candidate_values = candidate.get("values") or {}
@@ -392,23 +434,40 @@ def _cmd_result_prune(args: argparse.Namespace) -> int:
 
 
 def _cmd_sim_run(args: argparse.Namespace) -> int:
+    from .api import simulate_case
     from .case import load_case
-    from .sim_core import simulate_case
 
-    rec = simulate_case(load_case(args.case), run_root=args.run_root, solver_override=args.solver)
+    if any(value is not None and not isinstance(value, dict) for value in (args.params, args.controls)):
+        raise ValueError("--params and --controls must be JSON objects")
+    rec = simulate_case(
+        load_case(args.case),
+        params=args.params,
+        scenario_id=args.scenario,
+        controls=args.controls,
+        run_root=args.run_root,
+        solver_override=args.solver,
+    )
     summary = rec.summary()
     if args.json:
         _dump(summary)
     else:
         _print_sim_summary(summary)
-    return 1 if rec.status != "ok" and not args.allow_failure else 0
+    return (
+        1
+        if (rec.status != "ok" and not args.allow_failure) or (rec.output_result or {}).get("status") == "partial"
+        else 0
+    )
 
 
 def _print_sim_summary(summary: dict) -> None:
     version = f" ({summary['solver_version']})" if summary.get("solver_version") else ""
     print(f"Simulation: {summary.get('case_id', '')}")
     print(f"Status: {summary.get('status', '')}")
+    if summary.get("output"):
+        print(f"Output: {summary['output']['status']} ({summary['output']['summary']})")
     print(f"Solver: {summary.get('solver', '')}{version}")
+    if summary.get("params"):
+        print("Resolved point: " + json.dumps(summary["params"], ensure_ascii=False, separators=(",", ":")))
     if summary.get("error"):
         print(f"Error: {summary['error']}")
     print(f"Results: {summary.get('run_dir', '')}")
@@ -429,26 +488,35 @@ def _cmd_sim_netlist(args: argparse.Namespace) -> int:
     _, load = build_load_subckt(case, params)
     simulation = resolve_simulation_case(case, params)
     Path(args.out).write_text(render_ngspice_netlist(case, circuit, load, params, simulation), encoding="utf-8")
+    print("Preview only: one default parameter point; no study or acceptance evaluation")
+    print("Parameters: " + json.dumps(params, ensure_ascii=False, separators=(",", ":")))
     print(args.out)
     return 0
 
 
 def _cmd_visualize_netlist(args: argparse.Namespace) -> int:
     from .artifacts import write_json
-    from .netlist_parse import netlist_summary
     from .netlist_viz import render_netlist_schematic
 
-    render_netlist_schematic(args.netlist, args.out, title=args.title)
+    result = render_netlist_schematic(
+        args.netlist, args.out, title=args.title, view=args.view, netlist_mode=args.netlist_mode
+    )
     if args.summary_json:
-        write_json(args.summary_json, netlist_summary(args.netlist))
+        write_json(args.summary_json, result)
     print(args.out)
-    return 0
+    if result["status"] != "complete":
+        print("Partial drawing: " + "; ".join(result["issues"]))
+    return 0 if result["status"] == "complete" else 1
 
 
 def _print_analysis_summary(summary: dict[str, Any]) -> None:
     analyses = summary.get("analyses") or {}
     print(f"Analysis: {summary.get('case_id', '')}")
     print(f"Results: {summary.get('output_dir', '')}")
+    print(f"Output status: {summary.get('status', 'complete')}")
+    for item in (summary.get("output") or {}).get("plots", []):
+        if item.get("status") != "complete":
+            print(f"Unavailable plot {item['recipe']['name']}: {item['reason']}")
     if isinstance(analyses, dict) and isinstance(analyses.get("ac"), dict):
         _print_ac_analysis(analyses["ac"])
     if isinstance(analyses, dict) and isinstance(analyses.get("transient"), dict):
@@ -459,11 +527,15 @@ def _print_analysis_summary(summary: dict[str, Any]) -> None:
 
 
 def _print_ac_analysis(ac: dict[str, Any]) -> None:
-    print(
-        f"AC: {float(ac['frequency_Hz']) / 1e6:.6g} MHz, "
-        f"Z={float(ac['resistance_ohm']):.6g}{float(ac['reactance_ohm']):+.6g}j ohm, "
-        f"|Gamma|={float(ac['reflection_magnitude']):.6g}"
+    resistance, reactance = ac.get("resistance_ohm"), ac.get("reactance_ohm")
+    impedance = (
+        "unavailable (open or undefined)"
+        if resistance is None or reactance is None
+        else f"{resistance:.6g}{reactance:+.6g}j ohm"
     )
+    reflection = ac.get("reflection_magnitude")
+    gamma = "unavailable" if reflection is None else f"{reflection:.6g}"
+    print(f"AC: {float(ac['frequency_Hz']) / 1e6:.6g} MHz, Z={impedance}, |Gamma|={gamma}")
     sweep = ac.get("sweep")
     if isinstance(sweep, dict):
         _print_sweep_analysis(sweep)
@@ -496,12 +568,20 @@ def _print_transient_analysis(transient: dict[str, Any]) -> None:
 def _cmd_analyze(args: argparse.Namespace) -> int:
     from .reporting import analyze_run
 
-    summary = analyze_run(args.run, out_dir=args.out, frequency_hz=args.frequency_hz)
+    output = None
+    if args.output_case:
+        from .inputs import normalize_quantities, read_input_mapping
+
+        configured = read_input_mapping(Path(args.output_case))
+        if "output" not in configured:
+            raise ValueError("--case must contain output settings; analysis never changes the archived circuit")
+        output = normalize_quantities(configured["output"])
+    summary = analyze_run(args.run, out_dir=args.out, frequency_hz=args.frequency_hz, output=output)
     if args.json:
         _dump(summary)
     else:
         _print_analysis_summary(summary)
-    return 0
+    return 0 if summary.get("status", "complete") == "complete" else 1
 
 
 HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {

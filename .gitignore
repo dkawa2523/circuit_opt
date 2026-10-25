@@ -5,13 +5,16 @@ __pycache__/
 .coverage
 htmlcov/
 
-# Tool caches.  quality/coverage-floor.txt is committed on purpose.
+# Tool caches.
 .ruff_cache/
 .import_linter_cache/
+.importlinter_cache/
+.grimp_cache/
 .hypothesis/
 .nox/
 
 .venv/
+.venv-*/
 venv/
 env/
 

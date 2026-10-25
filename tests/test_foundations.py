@@ -7,8 +7,6 @@ import math
 
 import numpy as np
 import pytest
-from hypothesis import given, settings
-from hypothesis import strategies as st
 
 from pcd.artifacts import write_json
 from pcd.case import (
@@ -21,12 +19,6 @@ from pcd.core.spaces import grid_values
 from pcd.search import sample_param
 from pcd.spice import is_spice_literal, resolve_value, spice_value
 
-# Component values span many decades in this domain: pF to mH, mΩ to GΩ.
-component_values = st.floats(min_value=1e-15, max_value=1e12, allow_nan=False, allow_infinity=False)
-seeds = st.integers(min_value=0, max_value=2**32 - 1)
-PROPERTY = settings(max_examples=200, deadline=None)
-
-
 # --- SPICE value rendering -------------------------------------------------
 
 
@@ -37,24 +29,9 @@ def test_values_render_as_literals_or_parameter_references():
     assert spice_value("{C1}") == "{C1}"
 
 
-@pytest.mark.property
-@PROPERTY
-@given(value=component_values)
-def test_rendering_a_component_value_keeps_12_significant_digits(value: float) -> None:
-    """``spice_value`` formats with %.12g, so the netlist carries 12 digits.
-
-    The tolerance *is* that contract: tighter would assert precision the format
-    does not provide, looser would hide a real precision regression.
-    """
-
-    assert float(spice_value(value)) == pytest.approx(value, rel=1e-11)
-
-
-@pytest.mark.property
-@PROPERTY
-@given(value=st.floats(allow_nan=False, allow_infinity=False, min_value=-1e12, max_value=1e12))
-def test_finite_numbers_are_spice_literals(value: float) -> None:
-    assert is_spice_literal(value)
+def test_rendering_component_values_preserves_the_requested_float() -> None:
+    for value in [*np.geomspace(1e-15, 1e12, 32), 13560001.000001, 1.2345678901234567e-12]:
+        assert float(spice_value(float(value))) == value
 
 
 def test_non_finite_numbers_are_never_spice_literals():
@@ -99,50 +76,31 @@ def test_a_scalar_variable_is_normalized_to_a_default(make_case):
 # --- sampling --------------------------------------------------------------
 
 
-@pytest.mark.property
-@PROPERTY
-@given(lo=st.floats(min_value=1e-12, max_value=1e6), width=st.floats(min_value=1.0, max_value=1e6), seed=seeds)
-def test_log_sampling_stays_inside_the_declared_bounds(lo: float, width: float, seed: int) -> None:
-    hi = lo * width
-    value = sample_param(np.random.default_rng(seed), {"bounds": [lo, hi], "scale": "log"})
-    assert lo <= value <= hi
-    assert math.isfinite(value)
+@pytest.mark.parametrize(("lo", "hi"), [(1e-12, 1e12), (1.0, 1.0), (1e-5, 1.00001e-5)])
+def test_log_sampling_stays_inside_the_declared_bounds(lo: float, hi: float) -> None:
+    rng = np.random.default_rng(41)
+    values = [sample_param(rng, {"bounds": [lo, hi], "scale": "log"}) for _ in range(32)]
+    assert all(math.isfinite(value) and lo <= value <= hi for value in values)
 
 
-@pytest.mark.property
-@PROPERTY
-@given(lo=st.integers(min_value=-1000, max_value=1000), span=st.integers(min_value=0, max_value=1000), seed=seeds)
-def test_integer_sampling_is_inclusive_of_both_bounds(lo: int, span: int, seed: int) -> None:
-    value = sample_param(np.random.default_rng(seed), {"bounds": [lo, lo + span], "type": "int"})
-    assert isinstance(value, int)
-    assert lo <= value <= lo + span
-
-
-categorical_choices = st.lists(
-    st.one_of(st.text(min_size=1, max_size=12), st.integers(), st.floats(allow_nan=False)),
-    min_size=1,
-    max_size=8,
-    unique=True,
-)
-
-
-@pytest.mark.property
-@PROPERTY
-@given(choices=categorical_choices, seed=seeds)
-def test_categorical_sampling_returns_the_declared_object_unchanged(choices: list[object], seed: int) -> None:
-    """No dtype coercion: a mixed list like [0, "auto"] must survive intact."""
-
-    value = sample_param(np.random.default_rng(seed), {"choices": choices})
-    assert value in choices
-    assert type(value) in {type(c) for c in choices}
+def test_integer_and_mixed_categorical_sampling_preserve_values_and_types():
+    rng = np.random.default_rng(41)
+    integers = [sample_param(rng, {"bounds": [-1, 1], "type": "int"}) for _ in range(64)]
+    assert set(integers) == {-1, 0, 1}
+    assert all(isinstance(value, int) for value in integers)
+    choices = [0, "auto", 2.5]
+    mixed = [sample_param(rng, {"choices": choices}) for _ in range(64)]
+    assert {type(value) for value in mixed} == {int, str, float}
+    assert all(value in choices for value in mixed)
 
 
 def test_categorical_sampling_is_reproducible_for_a_seed():
     """Indexing draws from the same RNG stream that rng.choice used."""
 
     spec = {"choices": ["l_match", "pi_match", "pi_match_harmonic"]}
-    first = [sample_param(np.random.default_rng(11), spec) for _ in range(5)]
-    second = [sample_param(np.random.default_rng(11), spec) for _ in range(5)]
+    first_rng, second_rng = np.random.default_rng(11), np.random.default_rng(11)
+    first = [sample_param(first_rng, spec) for _ in range(16)]
+    second = [sample_param(second_rng, spec) for _ in range(16)]
     assert first == second
 
 
@@ -154,15 +112,9 @@ def test_log_scale_rejects_non_positive_bounds():
 # --- grids -----------------------------------------------------------------
 
 
-@pytest.mark.property
-@PROPERTY
-@given(
-    lo=st.floats(min_value=1e-9, max_value=1e3),
-    width=st.floats(min_value=1.0, max_value=1e6),
-    levels=st.integers(min_value=1, max_value=12),
-)
-def test_log_grid_is_monotonic_and_bounded(lo: float, width: float, levels: int) -> None:
-    hi = lo * width
+@pytest.mark.parametrize("levels", [1, 2, 12])
+def test_log_grid_is_monotonic_and_bounded(levels: int) -> None:
+    lo, hi = 1e-12, 1e12
     values = grid_values({"bounds": [lo, hi], "scale": "log", "grid": levels})
     assert len(values) == levels
     assert values == sorted(values)

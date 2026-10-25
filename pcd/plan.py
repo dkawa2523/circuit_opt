@@ -10,7 +10,6 @@ defaults through the numerical code.
 
 from __future__ import annotations
 
-import csv
 import math
 from collections.abc import Mapping
 from copy import deepcopy
@@ -18,7 +17,10 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
+from .inputs import normalize_quantities
+from .inputs import reject_unknown as _reject_unknown
 from .rf_loads import ccp_lumped_impedance, icp_effective_impedance, impedance_point
+from .tables import read_csv_rows
 from .topology_catalog import MATCHING_TOPOLOGIES, matching_topology
 
 PUBLIC_SCHEMA = "pcd.rf.v1"
@@ -108,7 +110,18 @@ class _TabulatedImpedance:
 def compile_rf_case(data: Mapping[str, Any], base_dir: Path) -> ResolvedPlan:
     """Resolve a ``pcd.rf.v1`` mapping without executing plugins or solvers."""
 
-    authored = _mapping(data, "$", required=True)
+    authored = _mapping(normalize_quantities(data), "$", required=True)
+    if "circuit" in authored:
+        from .authoring import compile_circuit_case
+
+        case, inferences = compile_circuit_case(authored, base_dir)
+        return ResolvedPlan(
+            case,
+            tuple(inferences),
+            int(case.get("run", {}).get("trials", 1)),
+            str(case.get("optimizer", {}).get("name", "grid")),
+            int(case.get("optimizer", {}).get("seed", 0)),
+        )
     _reject_unknown(
         authored,
         {
@@ -122,6 +135,9 @@ def compile_rf_case(data: Mapping[str, Any], base_dir: Path) -> ResolvedPlan:
             "conditions",
             "acceptance",
             "execution",
+            "reference_impedance_ohm",
+            "measurement",
+            "output",
         },
         "$",
     )
@@ -159,6 +175,13 @@ def compile_rf_case(data: Mapping[str, Any], base_dir: Path) -> ResolvedPlan:
     variables = {**network.variables, **_operating_defaults(operating, inferences)}
     study = _resolved_study(network, operating, acceptance, inferences, quasi_static=quasi_static)
     measurement = _resolved_measurement(network, acceptance, quasi_static=quasi_static)
+    extra_measurement = _mapping(authored.get("measurement"), "measurement")
+    if "reference_impedance_ohm" in extra_measurement:
+        raise ValueError("declare reference_impedance_ohm once at the public case root")
+    measurement.update(extra_measurement)
+    measurement["reference_impedance_ohm"] = _positive_number(
+        authored.get("reference_impedance_ohm", 50.0), "reference_impedance_ohm"
+    )
 
     resolved = {
         "schema": EXECUTABLE_SCHEMA,
@@ -183,7 +206,10 @@ def compile_rf_case(data: Mapping[str, Any], base_dir: Path) -> ResolvedPlan:
         "study": study,
         "optimizer": {"name": run.optimizer, "seed": run.seed},
         "run": {"trials": run.trials},
+        "metadata": {"drive_basis": "declared" if operating.has_absolute_drive else "normalized_1V_peak"},
     }
+    if "output" in authored:
+        resolved["output"] = deepcopy(authored["output"])
     return ResolvedPlan(resolved, tuple(inferences), run.trials, run.optimizer, run.seed)
 
 
@@ -201,7 +227,10 @@ def _resolved_study(
         "objectives": [{"metric": "reflection_magnitude", "direction": "minimize", "aggregation": "worst"}],
     }
     if operating.table:
-        study["scenario_table"] = operating.table
+        if "scenarios" in operating.table:
+            study["scenarios"] = operating.table["scenarios"]
+        else:
+            study["scenario_table"] = operating.table
     elif operating.conditions:
         study["scenarios"] = operating.conditions
     if quasi_static:
@@ -248,6 +277,7 @@ def _network_plan(
     search_variables = {name: _search_spec(name, spec) for name, spec in search.items()}
     variables.update(search_variables)
     controls = {name: _tuning_spec(name, spec) for name, spec in tuning.items()}
+    variables.update({name: {"role": "control", "default": spec["values"][0]} for name, spec in controls.items()})
     states = _control_state_count(controls, execution, inferences)
     bounds, observed, needs_drive = _acceptance_bounds(acceptance, required_refs)
     loss = _loss_values(network.get("loss_ohm"), topology, required_refs)
@@ -442,11 +472,6 @@ def _mapping(value: Any, path: str, *, required: bool = False) -> dict[str, Any]
     return {str(key): deepcopy(item) for key, item in value.items()}
 
 
-def _reject_unknown(values: Mapping[str, Any], allowed: set[str], path: str) -> None:
-    if unknown := sorted(set(values) - allowed):
-        raise ValueError(f"{path} contains unsupported fields {unknown}")
-
-
 def _reject_role_overlap(fixed: Mapping[str, Any], search: Mapping[str, Any], tuning: Mapping[str, Any]) -> None:
     memberships: dict[str, list[str]] = {}
     for role, values in (("fixed", fixed), ("search", search), ("tuning", tuning)):
@@ -611,9 +636,30 @@ def _load_frequency_and_scenarios(
     return frequency, {
         "table_file": table.raw_file,
         "values": values,
-        "id_column": "time_s" if table.quasi_static else "scenario_id",
-        "weight_column": "weight",
+        **(
+            {"id_column": "time_s" if table.quasi_static else "scenario_id"}
+            if table.quasi_static or "scenario_id" in table.columns
+            else {}
+        ),
+        **({"weight_column": "weight"} if "weight" in table.columns else {}),
         "defaults": defaults,
+        **(
+            {
+                "scenarios": [
+                    {
+                        "id": str(row["time_s"] if table.quasi_static else row["scenario_id"]),
+                        "values": {
+                            parameter: _table_cell(row[column], f"inline point {index}:{column}")
+                            for parameter, column in values.items()
+                        },
+                        "weight": _table_cell(row.get("weight", 1), f"inline point {index}:weight"),
+                    }
+                    for index, row in enumerate(table.rows)
+                ]
+            }
+            if "points" in load
+            else {}
+        ),
     }
 
 
@@ -631,6 +677,30 @@ def _read_tabulated_impedance(
     load: Mapping[str, Any],
     base_dir: Path,
 ) -> _TabulatedImpedance:
+    if "points" in load and "file" in load:
+        raise ValueError("load must use only one of points or file")
+    quasi_static = load_type == "impedance_profile"
+    if "points" in load:
+        raw = load["points"]
+        if not isinstance(raw, list) or not raw:
+            raise ValueError("load.points must be a non-empty list")
+        rows = [_mapping(row, f"load.points[{index}]", required=True) for index, row in enumerate(raw)]
+        columns = set().union(*(set(row) for row in rows))
+        for index, row in enumerate(rows):
+            _reject_unknown(
+                row,
+                {"scenario_id", "time_s", "resistance_ohm", "reactance_ohm", "weight", "frequency_Hz", "drive_peak_V"},
+                f"load.points[{index}]",
+            )
+            if not quasi_static:
+                row.setdefault("scenario_id", f"point_{index + 1}")
+            for field in {"resistance_ohm", "reactance_ohm"} | (
+                columns & {"frequency_Hz", "drive_peak_V", "time_s", "weight"}
+            ):
+                if field not in row:
+                    raise ValueError(f"load.points[{index}] is missing {field}")
+        columns.update({"scenario_id"} if not quasi_static else set())
+        return _TabulatedImpedance("", base_dir / "<inline points>", columns, rows, quasi_static)
     raw_file = load.get("file")
     if not isinstance(raw_file, str) or not raw_file.strip():
         raise ValueError(f"load.file is required for load.type: {load_type}")
@@ -639,15 +709,12 @@ def _read_tabulated_impedance(
     if not path.is_file():
         raise ValueError(f"tabulated impedance file not found: {path.resolve()}")
     path = path.resolve()
-    with path.open("r", encoding="utf-8-sig", newline="") as handle:
-        reader = csv.DictReader(handle)
-        columns = set(reader.fieldnames or [])
-        rows = list(reader)
-    quasi_static = load_type == "impedance_profile"
-    required = {"time_s" if quasi_static else "scenario_id", "resistance_ohm", "reactance_ohm"}
-    missing = sorted(required - columns)
-    if missing:
-        raise ValueError(f"{load_type} is missing canonical columns {missing}: {path}")
+    required = {"resistance_ohm", "reactance_ohm"} | ({"time_s"} if quasi_static else set())
+    header, rows = read_csv_rows(path, required)
+    columns = set(header)
+    if not quasi_static and "scenario_id" not in columns:
+        for index, row in enumerate(rows):
+            row["scenario_id"] = f"point_{index + 1}"
     if not rows:
         raise ValueError(f"{load_type} is empty: {path}")
     return _TabulatedImpedance(raw_file, path, columns, rows, quasi_static)
@@ -761,7 +828,7 @@ def _conditions(value: Any) -> list[dict[str, Any]]:
     for index, raw in enumerate(value):
         cfg = _mapping(raw, f"conditions[{index}]", required=True)
         _reject_unknown(cfg, {"id", "weight", "drive_peak_V", "frequency_Hz"}, f"conditions[{index}]")
-        condition_id = str(cfg.pop("id", "")).strip()
+        condition_id = str(cfg.pop("id", f"condition_{index + 1}")).strip()
         if not condition_id:
             raise ValueError(f"conditions[{index}].id is required")
         weight = _positive_number(cfg.pop("weight", 1.0), f"conditions[{index}].weight")
@@ -779,7 +846,7 @@ def _resolved_load(load: Mapping[str, Any], frequency: float | str) -> dict[str,
     if load_type in {"impedance_table", "impedance_profile"}:
         characterization = common.get("characterization")
         if isinstance(characterization, dict):
-            characterization.setdefault("table", str(load["file"]))
+            characterization.setdefault("table", str(load.get("file", "inline points")))
         return {
             "name": "impedance_point",
             **common,
@@ -795,8 +862,8 @@ def _resolved_load(load: Mapping[str, Any], frequency: float | str) -> dict[str,
 def _validated_load_type(load: Mapping[str, Any]) -> str:
     load_type = str(load.get("type", ""))
     allowed = {
-        "impedance_table": {"type", "file", "reference_plane", "evidence"},
-        "impedance_profile": {"type", "file", "reference_plane", "evidence"},
+        "impedance_table": {"type", "file", "points", "reference_plane", "evidence"},
+        "impedance_profile": {"type", "file", "points", "reference_plane", "evidence"},
         "impedance_point": {"type", "resistance_ohm", "reactance_ohm", "reference_plane", "evidence"},
         "ccp_lumped": {"type", "parameters", "reference_plane", "evidence"},
         "icp_transformer": {"type", "parameters", "reference_plane", "evidence"},

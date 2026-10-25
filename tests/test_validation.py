@@ -40,7 +40,7 @@ def test_each_variable_rule_emits_its_own_code(make_case, spec, expected):
 
 
 def test_a_well_formed_variable_produces_no_variable_diagnostics(make_case):
-    case = _variable_case(make_case, {"bounds": [1.0, 10.0], "scale": "log", "default": 5.0})
+    case = _variable_case(make_case, {"role": "design", "bounds": [1.0, 10.0], "scale": "log", "default": 5.0})
     assert not {c for c in codes(validate_case(case)) if c.startswith("variable.")}
 
 
@@ -247,11 +247,12 @@ def test_invalid_rf_measurement_options_are_rejected(make_case, measurement):
 def test_external_netlist_policies_are_owned_by_the_model_builder(make_case, field, value):
     case = make_case(
         {
+            "measurement": {"source_voltage": "v(src)"},
             "circuit": {
                 "builder": "from_netlist",
                 "netlist_file": "external.cir",
                 field: value,
-            }
+            },
         }
     )
 
@@ -373,7 +374,7 @@ def test_auto_metering_without_a_load_is_an_error(make_case):
     )
     report = validate_case(case)
     assert not report.ok
-    assert any(item.code == "measurement.auto_meter_without_load" for item in report.issues)
+    assert any("requires a declared load" in item.message for item in report.issues)
 
 
 def test_auto_metering_with_a_load_is_accepted(make_case):
@@ -386,7 +387,7 @@ def test_auto_metering_with_a_load_is_accepted(make_case):
             "solver": {"name": "ngspice_cli", "tran": {"step_s": 1e-9, "stop_s": 1e-6}},
         }
     )
-    assert not [i for i in validate_case(case).issues if i.code == "measurement.auto_meter_without_load"]
+    assert validate_case(case).ok
 
 
 def test_a_fractional_stop_is_valid_when_the_measurement_window_is_long_enough(make_case):

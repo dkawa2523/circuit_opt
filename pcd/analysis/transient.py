@@ -10,6 +10,8 @@ import pandas as pd
 
 from pcd.core.models import UnsettledMeasurementError
 from pcd.signals import PeriodicWindow, harmonic_phasors, periodic_window, time_average
+from pcd.signals.power import power_ratio
+from pcd.simulation import LOAD_VOLTAGE_COLUMN
 
 DEFAULT_PERIODIC_CYCLES = 3
 DEFAULT_SETTLING_COMPARISONS = 2
@@ -46,7 +48,12 @@ def rf_measurement_options(measurement: Mapping[str, Any] | None = None) -> dict
 
 
 def harmonic_spectrum(
-    time_s: np.ndarray, values: np.ndarray, fundamental_hz: float, count: int = 3
+    time_s: np.ndarray,
+    values: np.ndarray,
+    fundamental_hz: float,
+    count: int = 3,
+    *,
+    window: PeriodicWindow | None = None,
 ) -> np.ndarray | None:
     """Complex amplitudes at exact harmonics of the fundamental.
 
@@ -56,7 +63,7 @@ def harmonic_spectrum(
 
     if len(time_s) < 4 or fundamental_hz <= 0:
         return None
-    fitted = harmonic_phasors(time_s, values, fundamental_hz, range(1, count + 1))
+    fitted = harmonic_phasors(time_s, values, fundamental_hz, range(1, count + 1), window=window)
     if len(fitted) != count:
         return None
     return np.asarray([fitted[h] for h in range(1, count + 1)], dtype=complex)
@@ -72,7 +79,7 @@ def has_finite_samples(waveform: pd.DataFrame, columns: tuple[str, ...]) -> bool
     return int(np.all(np.isfinite(values), axis=1).sum()) >= 2
 
 
-def power_flow(waveform: pd.DataFrame, load_current: str | None = None) -> dict[str, float]:
+def power_flow(waveform: pd.DataFrame, load_current: str | None = None) -> dict[str, Any]:
     """Real power delivered by the source and accepted at the load port.
 
     Imported port data may omit the source term.  Load power requires the
@@ -82,7 +89,7 @@ def power_flow(waveform: pd.DataFrame, load_current: str | None = None) -> dict[
     if waveform.empty:
         return {}
     time_s = waveform["time_s"].to_numpy(float)
-    out: dict[str, float] = {}
+    out: dict[str, Any] = {}
     if has_finite_samples(waveform, ("source_voltage_V", "current_A")):
         source_voltage = waveform["source_voltage_V"].to_numpy(float)
         source_current = waveform["current_A"].to_numpy(float)
@@ -95,15 +102,20 @@ def power_flow(waveform: pd.DataFrame, load_current: str | None = None) -> dict[
                 "source_apparent_power_VA": voltage_rms * current_rms,
             }
         )
-    if load_current and has_finite_samples(waveform, ("voltage_V", load_current)):
-        load_voltage = waveform["voltage_V"].to_numpy(float)
+    voltage_column = LOAD_VOLTAGE_COLUMN if LOAD_VOLTAGE_COLUMN in waveform else "voltage_V"
+    if load_current and has_finite_samples(waveform, (voltage_column, load_current)):
+        load_voltage = waveform[voltage_column].to_numpy(float)
         load_current_values = waveform[load_current].to_numpy(float)
         load_power = time_average(load_voltage * load_current_values, time_s)
         out["load_power_W"] = load_power
         if "source_power_W" in out:
             source_power = out["source_power_W"]
             out["network_loss_W"] = source_power - load_power
-            out["transfer_efficiency"] = load_power / source_power if abs(source_power) > 1e-30 else 0.0
+            out["transfer_efficiency"] = power_ratio(load_power, source_power)
+            if out["transfer_efficiency"] is None:
+                out["transfer_efficiency_unavailable_reason"] = (
+                    "finite load power and a finite ratio to nonzero source real power are required"
+                )
     return out
 
 
@@ -154,20 +166,29 @@ def _periodic_evidence(
         "measurement_cycles": available[0].cycles,
         "available_cycles": min(window.available_cycles for window in available),
         "required_cycles": max(window.required_cycles for window in available),
+        "measurement_start_s": available[0].start_s,
+        "measurement_end_s": available[0].end_s,
     }
 
 
-def _resample_interval(waveform: pd.DataFrame, start_s: float, end_s: float) -> pd.DataFrame:
-    time_s = waveform["time_s"].to_numpy(float)
-    grid = np.linspace(start_s, end_s, max(len(waveform), 16))
-    columns: dict[str, np.ndarray] = {"time_s": grid}
-    for column in waveform.columns:
-        if column != "time_s":
-            columns[column] = np.asarray(
-                np.interp(grid, time_s, waveform[column].to_numpy(float)),
-                dtype=float,
-            )
-    return pd.DataFrame(columns)
+def _slice_interval(waveform: pd.DataFrame, start_s: float, end_s: float) -> pd.DataFrame:
+    ordered = waveform.sort_values("time_s", kind="stable")
+    time_s = ordered["time_s"].to_numpy(float)
+    selected = ordered.loc[(time_s >= start_s) & (time_s <= end_s)]
+    boundaries = []
+    for boundary in (start_s, end_s):
+        if not np.any(time_s == boundary):
+            row = {
+                column: float(np.interp(boundary, time_s, ordered[column].to_numpy(float)))
+                for column in ordered
+                if column != "time_s"
+            }
+            boundaries.append({"time_s": boundary, **row})
+    if boundaries:
+        selected = pd.concat([selected, pd.DataFrame(boundaries)], ignore_index=True)
+    # Optional unavailable probes stay missing without discarding valid load
+    # observations. Native duplicate/event rows also retain their peak values.
+    return selected.sort_values("time_s", kind="stable").reset_index(drop=True)
 
 
 def final_periodic_cycles(
@@ -178,11 +199,11 @@ def final_periodic_cycles(
     periodic_cycles: int = DEFAULT_PERIODIC_CYCLES,
     settling_comparisons: int = DEFAULT_SETTLING_COMPARISONS,
     settling_tolerance: float = DEFAULT_SETTLING_TOLERANCE,
-) -> tuple[pd.DataFrame, dict[str, Any]]:
-    """Return the final whole-cycle waveform and settling evidence."""
+) -> tuple[pd.DataFrame, dict[str, Any], PeriodicWindow | None]:
+    """Return native samples, settling evidence, and their exact common window."""
 
     if waveform.empty:
-        return waveform, {}
+        return waveform, {}, None
     columns = tuple(dict.fromkeys(signal_columns))
     missing = [column for column in columns if column not in waveform]
     if missing:
@@ -199,10 +220,10 @@ def final_periodic_cycles(
     available = tuple(window for window in windows.values() if window is not None)
     evidence = _periodic_evidence(windows, available, periodic_cycles, settling_comparisons)
     if len(available) != len(windows) or len(waveform) < 4:
-        return waveform, evidence
+        return waveform, evidence, None
 
     window = available[0]
-    return _resample_interval(waveform, window.start_s, window.end_s), evidence
+    return _slice_interval(waveform, window.start_s, window.end_s), evidence, window
 
 
 def require_periodic_settle(evidence: Mapping[str, Any]) -> None:
@@ -245,15 +266,16 @@ def rf_port_metrics(
         raise ValueError("waveform is empty; RF-port metrics are unavailable")
     if not load_current_column or load_current_column not in waveform:
         raise ValueError("RF-port metrics require measurement.load_current (use 'auto' for built-in loads)")
-    if not has_finite_samples(waveform, ("voltage_V", load_current_column)):
+    voltage_column = LOAD_VOLTAGE_COLUMN if LOAD_VOLTAGE_COLUMN in waveform else "voltage_V"
+    if not has_finite_samples(waveform, (voltage_column, load_current_column)):
         raise ValueError("RF-port metrics require finite load voltage/current samples")
     if fundamental_hz <= 0:
         raise ValueError("a positive source fundamental frequency is required for RF-port metrics")
 
-    signals = ["voltage_V", load_current_column]
+    signals = [voltage_column, load_current_column]
     if has_finite_samples(waveform, ("source_voltage_V", "current_A")):
         signals.extend(("source_voltage_V", "current_A"))
-    measured, evidence = final_periodic_cycles(
+    measured, evidence, window = final_periodic_cycles(
         waveform,
         fundamental_hz,
         tuple(signals),
@@ -264,11 +286,19 @@ def rf_port_metrics(
     if require_settled:
         require_periodic_settle(evidence)
     time_s = measured["time_s"].to_numpy(float)
-    voltage = measured["voltage_V"].to_numpy(float)
+    voltage = measured[voltage_column].to_numpy(float)
     current = measured[load_current_column].to_numpy(float)
     flow = power_flow(measured, load_current_column)
-    voltage_harmonics = harmonic_spectrum(time_s, voltage, fundamental_hz, harmonic_count)
-    current_harmonics = harmonic_spectrum(time_s, current, fundamental_hz, harmonic_count)
+    voltage_harmonics = (
+        harmonic_spectrum(time_s, voltage, fundamental_hz, harmonic_count, window=window)
+        if window is not None
+        else None
+    )
+    current_harmonics = (
+        harmonic_spectrum(time_s, current, fundamental_hz, harmonic_count, window=window)
+        if window is not None
+        else None
+    )
     impedance: complex | None = None
     if voltage_harmonics is not None and current_harmonics is not None and abs(current_harmonics[0]) > 1e-30:
         impedance = complex(voltage_harmonics[0] / current_harmonics[0])
@@ -301,4 +331,6 @@ def rf_port_metrics(
                 "transfer_efficiency": flow["transfer_efficiency"],
             }
         )
+        if "transfer_efficiency_unavailable_reason" in flow:
+            result["transfer_efficiency_unavailable_reason"] = flow["transfer_efficiency_unavailable_reason"]
     return result

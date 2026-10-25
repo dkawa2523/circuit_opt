@@ -8,8 +8,14 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any
 
+from pcd.inputs import reject_unknown
 
-class UnsettledMeasurementError(ValueError):
+
+class MeasurementUnavailableError(ValueError):
+    """A solved response cannot supply a required electrical measurement."""
+
+
+class UnsettledMeasurementError(MeasurementUnavailableError):
     """Raised when a periodic metric would use a waveform still in transition."""
 
 
@@ -123,16 +129,27 @@ class ControlState:
     """Values an operator or controller may tune for one scenario."""
 
     values: Mapping[str, Any] = field(default_factory=dict)
+    numeric_ranges: Mapping[str, tuple[float, float]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "values", _validated_mapping(self.values, "control.values"))
+        ranges = {}
+        for name, limits in self.numeric_ranges.items():
+            low, high = (float(value) for value in limits)
+            if not math.isfinite(low) or not math.isfinite(high) or low > high:
+                raise ValueError("control numeric ranges must be finite and ordered")
+            ranges[name] = (low, high)
+        object.__setattr__(self, "numeric_ranges", _frozen_mapping(ranges))
 
     def to_dict(self) -> dict[str, Any]:
-        return {"values": to_plain(self.values)}
+        return {
+            "values": to_plain(self.values),
+            **({"numeric_ranges": to_plain(self.numeric_ranges)} if self.numeric_ranges else {}),
+        }
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> ControlState:
-        return cls(data.get("values", {}) or {})
+        return cls(data.get("values", {}) or {}, data.get("numeric_ranges", {}) or {})
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,8 +165,8 @@ class Objective:
         _require_id(self.metric, "objective metric")
         if self.direction not in {"minimize", "maximize"}:
             raise ValueError("objective direction must be 'minimize' or 'maximize'")
-        if self.aggregation not in {"mean", "worst", "cvar"}:
-            raise ValueError("objective aggregation must be mean, worst, or cvar")
+        if self.aggregation not in {"mean", "rms", "worst", "cvar"}:
+            raise ValueError("objective aggregation must be mean, rms, worst, or cvar")
         try:
             alpha = float(self.cvar_alpha)
         except (TypeError, ValueError) as exc:
@@ -168,6 +185,7 @@ class Objective:
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> Objective:
+        reject_unknown(data, {"metric", "direction", "aggregation", "cvar_alpha"}, "objective")
         return cls(
             metric=str(data["metric"]),
             direction=str(data.get("direction", "minimize")),
@@ -194,6 +212,8 @@ class StudySpec:
             raise ValueError("a study needs at least one objective")
         if len({item.scenario_id for item in self.scenarios}) != len(self.scenarios):
             raise ValueError("scenario ids must be unique")
+        if len({item.metric for item in self.objectives}) != len(self.objectives):
+            raise ValueError("objective metrics must be unique; one metric cannot have conflicting reductions")
         if self.control_margin_min is not None:
             margin = float(self.control_margin_min)
             if not math.isfinite(margin) or not 0.0 <= margin <= 1.0:
@@ -495,6 +515,18 @@ class CandidateResult:
     @property
     def control_evaluations(self) -> tuple[EvaluationResult, ...]:
         return tuple(evaluation for scenario in self.scenarios for evaluation in scenario.trials)
+
+    @property
+    def successful(self) -> bool:
+        """Every selected condition solved, regardless of its statistical weight."""
+
+        return all(item.raw.ok for item in self.evaluations)
+
+    @property
+    def feasible(self) -> bool:
+        """Every selected condition meets its limits; weights never waive limits."""
+
+        return self.successful and all(item.feasible for item in self.evaluations)
 
     @property
     def control_margin(self) -> float | None:

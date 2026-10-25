@@ -16,18 +16,33 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from .analysis.ac import DEFAULT_Z0, ac_power_flow, at_frequency, input_impedance
-from .analysis.stress import ac_component_metrics, component_loss_balance, transient_component_metrics
-from .analysis.transient import rf_measurement_options, rf_port_metrics
+from .analysis.ac import DEFAULT_Z0
+from .analysis.measurements import ac_operating_metrics, periodic_operating_metrics
+from .analysis.transient import rf_measurement_options
 from .case import Case, resolve_path
 from .component_models import observed_components
-from .core.models import ConstraintResult, EvaluationRequest, MetricSet, RawResult
+from .core.models import ConstraintResult, EvaluationRequest, MeasurementUnavailableError, MetricSet, RawResult
+from .inputs import reject_unknown
 from .metric_registry import get as get_metric
 from .metric_registry import load_plugins, register
 from .records import load_simulation_result, read_sim_record
-from .simulation import AC_LOAD_VOLTAGE_COLUMN, SimulationResult
+from .simulation import SimulationResult
 from .simulation_input import build_probe_plan
-from .spice import fundamental_hz
+from .spice import ac_operating_frequency_hz, fundamental_hz
+from .tables import read_csv_rows
+
+
+def validate_metric_settings(case: Case) -> None:
+    target = case.data.get("target") or {}
+    name = str(target.get("objective", "waveform_l2"))
+    fields = {
+        "waveform_l2": {"waveform_file"},
+        "impedance_match": set(),
+        "terminal_vi_fit": {"impedance_scale_ohm"},
+        "rf_load": set(),
+    }
+    if name in fields:
+        reject_unknown(target, {"objective", "constraints", "fundamental_Hz"} | fields[name], f"target {name}")
 
 
 def load_target_waveform(case: Case) -> pd.DataFrame:
@@ -35,9 +50,14 @@ def load_target_waveform(case: Case) -> pd.DataFrame:
     path = cfg.get("waveform_file")
     if path is None:
         raise ValueError("target.waveform_file is required for waveform metrics")
-    frame = pd.read_csv(resolve_path(case, path))
-    if not {"time_s", "voltage_V"}.issubset(frame.columns):
-        raise ValueError("target waveform must contain time_s and voltage_V")
+    columns, rows = read_csv_rows(resolve_path(case, path), ("time_s", "voltage_V"))
+    frame = pd.DataFrame(rows, columns=columns)
+    for column in ("time_s", "voltage_V"):
+        frame[column] = pd.to_numeric(frame[column], errors="raise").astype(float)
+    if len(frame) < 2 or not np.all(np.isfinite(frame[["time_s", "voltage_V"]].to_numpy())):
+        raise ValueError("target waveform requires at least two finite time/voltage rows")
+    if np.any(np.diff(frame["time_s"].to_numpy()) <= 0):
+        raise ValueError("target waveform time_s must be strictly increasing")
     return frame
 
 
@@ -83,11 +103,6 @@ def _peak_voltage(waveform: pd.DataFrame) -> float | None:
     return float(np.max(np.abs(finite))) if len(finite) else None
 
 
-def _finite_or_none(value: Any) -> float | None:
-    number = float(value)
-    return number if math.isfinite(number) else None
-
-
 @register("waveform_l2")
 def waveform_l2(case: Case, params: dict[str, Any], response: SimulationResult) -> dict[str, Any]:
     del params
@@ -127,30 +142,12 @@ def _terminal_impedance_metrics(
     if frequency_response is None:
         raise ValueError("no frequency response; set solver.ac in the case")
     reference = float((case.data.get("measurement", {}) or {}).get("reference_impedance_ohm", DEFAULT_Z0))
-    target_frequency = fundamental_hz(case, params)
-    components = observed_components(case, params)
+    target_frequency = ac_operating_frequency_hz(case, params)
     probes = build_probe_plan(case)
-    extras = [AC_LOAD_VOLTAGE_COLUMN, *probes.ac_columns] if probes.ac_columns else None
-    # Interpolate the complex voltage/current first. Reflection and impedance
-    # are nonlinear ratios, so interpolating those derived fields would be a
-    # subtly different calculation.
-    _require_ac_columns(frequency_response, extras)
-    selected = at_frequency(frequency_response, target_frequency)
-    row = input_impedance(pd.DataFrame([selected]), reference).iloc[0]
-    reflection = float(row["reflection_magnitude"])
-    metrics: dict[str, Any] = {
-        "reflection_magnitude": reflection,
-        "reflected_power_fraction": reflection**2,
-        "reflection_db": _finite_or_none(row["reflection_db"]),
-        "vswr": _finite_or_none(row["vswr"]),
-        "resistance_ohm": _finite_or_none(row["resistance_ohm"]),
-        "reactance_ohm": _finite_or_none(row["reactance_ohm"]),
-        "match_frequency_Hz": float(row["frequency_Hz"]),
-        "reference_impedance_ohm": reference,
-    }
-    metrics.update(ac_power_flow(selected, probes.load_current_column, reference))
-    metrics.update(ac_component_metrics(selected, components))
-    metrics.update(component_loss_balance(metrics))
+    metrics = ac_operating_metrics(
+        frequency_response, target_frequency, reference, probes.load_current_column, observed_components(case, params)
+    )
+    metrics["match_frequency_Hz"] = metrics.pop("frequency_Hz")
     return metrics
 
 
@@ -161,6 +158,10 @@ def terminal_vi_fit(case: Case, params: dict[str, Any], response: SimulationResu
     target_impedance = _target_impedance(params)
     scale = _target_impedance_scale(case)
     metrics = _terminal_impedance_metrics(case, params, response)
+    if metrics.get("resistance_ohm") is None or metrics.get("reactance_ohm") is None:
+        raise MeasurementUnavailableError(
+            "terminal_vi_fit requires finite predicted impedance; the solved port is open or undefined"
+        )
     resistance_error = float(metrics["resistance_ohm"]) - target_impedance.real
     reactance_error = float(metrics["reactance_ohm"]) - target_impedance.imag
     error = math.hypot(resistance_error, reactance_error) / scale
@@ -172,19 +173,23 @@ def terminal_vi_fit(case: Case, params: dict[str, Any], response: SimulationResu
         "target_reactance_ohm": target_impedance.imag,
         "residual_resistance_ohm": resistance_error,
         "residual_reactance_ohm": reactance_error,
+        "normalized_residual_resistance": resistance_error / scale,
+        "normalized_residual_reactance": reactance_error / scale,
         **metrics,
     }
 
 
+TERMINAL_VI_PARAMETERS = (
+    "target_voltage_re_V",
+    "target_voltage_im_V",
+    "target_current_re_A",
+    "target_current_im_A",
+)
+
+
 def _target_impedance(params: Mapping[str, Any]) -> complex:
-    required = (
-        "target_voltage_re_V",
-        "target_voltage_im_V",
-        "target_current_re_A",
-        "target_current_im_A",
-    )
     try:
-        values = {name: float(params[name]) for name in required}
+        values = {name: float(params[name]) for name in TERMINAL_VI_PARAMETERS}
     except KeyError as exc:
         raise ValueError(f"terminal_vi_fit requires scenario value {exc.args[0]!r}") from exc
     except (TypeError, ValueError) as exc:
@@ -220,34 +225,12 @@ def rf_load(case: Case, params: dict[str, Any], response: SimulationResult) -> d
     frequency = fundamental_hz(case, params)
     options = rf_measurement_options(case.data.get("measurement"))
     probes = build_probe_plan(case)
-    values: dict[str, Any] = rf_port_metrics(
-        waveform,
-        frequency,
-        probes.load_current_column,
-        periodic_cycles=int(options["periodic_cycles"]),
-        settling_comparisons=int(options["settling_comparisons"]),
-        settling_tolerance=float(options["settling_tolerance"]),
-        harmonic_count=int(options["harmonic_count"]),
+    if not probes.load_current_column:
+        raise ValueError("RF-port metrics require measurement.load_current")
+    values = periodic_operating_metrics(
+        waveform, frequency, probes.load_current_column, observed_components(case, params), options
     )
-    values.update(
-        transient_component_metrics(
-            waveform,
-            frequency,
-            observed_components(case, params),
-            periodic_cycles=int(options["periodic_cycles"]),
-            settling_comparisons=int(options["settling_comparisons"]),
-            settling_tolerance=float(options["settling_tolerance"]),
-        )
-    )
-    values.update(component_loss_balance(values))
     return {"objective": "rf_load", **values}
-
-
-def _require_ac_columns(frame: pd.DataFrame, extras: list[str] | None) -> None:
-    required = {"frequency_Hz", "voltage_re", "voltage_im", "current_re", "current_im"}
-    required.update(f"{name}_{part}" for name in (extras or []) for part in ("re", "im"))
-    if missing := sorted(required - set(frame)):
-        raise ValueError(f"canonical AC response is missing columns {missing}")
 
 
 def _detached_response(response: SimulationResult) -> SimulationResult:
@@ -272,6 +255,7 @@ def measure_response(
 ) -> dict[str, Any]:
     """Measure one canonical solver response without reading or writing artifacts."""
 
+    validate_metric_settings(case)
     load_plugins(case.data.get("plugins"), case.base_dir)
     if response.status != "ok":
         raise ValueError(f"cannot measure simulation response with status {response.status!r}")
@@ -324,12 +308,13 @@ class MetricLimitConstraint:
         except (TypeError, ValueError):
             value = float("nan")
         if not math.isfinite(value):
+            reason = metrics.values.get(f"{self.metric}_unavailable_reason")
             return ConstraintResult(
                 self.name,
                 False,
                 violation=1.0,
                 limit=self.limit,
-                detail=f"metric {self.metric!r} is unavailable or non-finite",
+                detail=f"metric {self.metric!r} is unavailable or non-finite" + (f": {reason}" if reason else ""),
             )
 
         distance = max(0.0, value - self.limit) if self.bound == "max" else max(0.0, self.limit - value)
@@ -348,6 +333,7 @@ def constraints_from_case(case: Case) -> tuple[MetricLimitConstraint, ...]:
     cfg = {} if raw_cfg is None else raw_cfg
     if not isinstance(cfg, dict):
         raise ValueError("target.constraints must be a mapping")
+    reject_unknown(cfg, {"metric_bounds"}, "target.constraints")
 
     constraints: list[MetricLimitConstraint] = []
     raw_bounds = cfg.get("metric_bounds")
@@ -357,10 +343,13 @@ def constraints_from_case(case: Case) -> tuple[MetricLimitConstraint, ...]:
     for metric, raw_spec in bounds.items():
         if not isinstance(raw_spec, dict):
             raise ValueError(f"metric bound for {metric!r} must be a mapping")
+        reject_unknown(raw_spec, {"min", "max"}, f"target.constraints.metric_bounds.{metric}")
         if not ({"min", "max"} & set(raw_spec)):
             raise ValueError(f"metric bound for {metric!r} must declare min or max")
         if "min" in raw_spec:
             constraints.append(MetricLimitConstraint(str(metric), "min", float(raw_spec["min"])))
         if "max" in raw_spec:
             constraints.append(MetricLimitConstraint(str(metric), "max", float(raw_spec["max"])))
+        if "min" in raw_spec and "max" in raw_spec and float(raw_spec["min"]) > float(raw_spec["max"]):
+            raise ValueError(f"metric bound for {metric!r} requires min <= max")
     return tuple(constraints)

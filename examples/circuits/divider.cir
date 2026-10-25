@@ -1,0 +1,6 @@
+Imported voltage divider
+V1 in 0 AC 1
+Rs in out 50
+.param Rload=50
+Rload out 0 {Rload}
+.end

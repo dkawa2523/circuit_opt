@@ -1,0 +1,10 @@
+# One YAML plus the existing SPICE file. The unique voltage-source port is resolved.
+schema: pcd.rf.v1
+case_id: external_divider
+circuit:
+  file: circuits/divider.cir
+  output_node: out
+parameters:
+  fixed: {Rload: "50 ohm"}
+analysis:
+  ac: {frequency_Hz: "1 MHz"}

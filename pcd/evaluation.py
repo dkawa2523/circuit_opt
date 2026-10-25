@@ -83,6 +83,7 @@ class CaseEvaluationBackend:
             "waveform": str(relative_run / str(names["waveform"])),
             "netlist": str(relative_run / str(names["netlist"])),
             "solver_log": str(relative_run / str(names["solver_log"])),
+            "signals": str(relative_run / str(names["signals"])),
         }
         if names.get("frequency_response"):
             artifacts["frequency_response"] = str(relative_run / str(names["frequency_response"]))

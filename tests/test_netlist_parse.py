@@ -32,9 +32,11 @@ def test_a_netlist_can_be_passed_as_text_instead_of_a_path():
     assert {e.ref for e in parsed.edges} == {"Vsrc", "R1"}
 
 
-def test_unknown_component_prefixes_are_skipped(tmp_path):
+def test_transistor_terminals_are_preserved(tmp_path):
     netlist = _write(tmp_path, "Vsrc src 0 DC 1\nQ1 c b e npn\nR1 src out 50\n.end\n")
-    assert {e.ref for e in parse_netlist(netlist).edges} == {"Vsrc", "R1"}
+    parsed = parse_netlist(netlist)
+    assert {e.ref for e in parsed.edges} == {"Vsrc", "Q1", "R1"}
+    assert next(e for e in parsed.edges if e.ref == "Q1").nodes == ("c", "b", "e")
 
 
 def test_truncated_lines_are_skipped(tmp_path):

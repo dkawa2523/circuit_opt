@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .case import NO_SOURCE_WARNING, Case, default_params, resolve_path, variable_specs
+from .case import Case, case_warnings, default_params, resolve_path, validate_case_fields, variable_specs
 from .netlist import NetlistInputs, build_netlist_inputs, load_config
 from .problem import resolve_parameter_set
 from .simulation_input import ResolvedSimulationCase, resolve_simulation_case
@@ -55,9 +55,18 @@ def validate_case(case: Case, strict: bool = False) -> ValidationReport:
     if not isinstance(data, dict):
         report.add("error", "case.root_not_mapping", "case root must be a mapping")
         return report
+    try:
+        validate_case_fields(data)
+    except ValueError as exc:
+        report.add("error", "case.unsupported_fields", str(exc))
+        return report
 
-    if data.get("source") is None and not data.get("sources"):
-        report.add("warning", "case.no_source", NO_SOURCE_WARNING)
+    try:
+        for warning in case_warnings(case):
+            report.add("warning", "case.no_source", warning)
+    except (TypeError, ValueError, OSError):
+        # The owning simulation/netlist adapter below reports malformed input.
+        pass
     parameters_ok = _validate_variables(case, report)
     plugins_ok = _validate_plugins(case, report)
     simulation = _validate_simulation_input(case, report) if parameters_ok else None
@@ -65,6 +74,12 @@ def validate_case(case: Case, strict: bool = False) -> ValidationReport:
     _validate_load_applicability(case, report, simulation, netlist_inputs)
     _validate_measurement(case, report, simulation)
     _validate_target(case, report)
+    try:
+        from .output import output_settings
+
+        output_settings(data.get("output"))
+    except (TypeError, ValueError) as exc:
+        report.add("error", "output.invalid", str(exc), "$.output")
     if data.get("identification") is not None:
         _validate_identification(case, report)
     if parameters_ok:
@@ -74,25 +89,36 @@ def validate_case(case: Case, strict: bool = False) -> ValidationReport:
 
 def _validate_variables(case: Case, report: ValidationReport) -> bool:
     try:
-        specs = variable_specs(case)
-        resolve_parameter_set(case)
+        specs = {item.name: item.spec for item in resolve_parameter_set(case).definitions}
     except (TypeError, ValueError) as exc:
         report.add("error", "parameter.invalid_roles", str(exc), "$.study")
         return False
     for name, spec in specs.items():
         path = f"$.variables.{name}"
-        if not isinstance(spec, dict):
-            report.add("error", "variable.spec_not_mapping", "variable spec must be a mapping", path)
-            continue
+        if spec.get("scale", "linear") not in {"linear", "log"}:
+            report.add("error", "variable.invalid_scale", "scale must be linear or log", path)
+        if spec.get("type", "") not in {"", "float", "number", "int", "bool", "str", "string"}:
+            report.add("error", "variable.invalid_type", "unsupported parameter type", path)
         _validate_variable_choices(spec, report, path)
         _validate_variable_bounds(spec, report, path)
+        if (
+            "bounds" in spec
+            and "role" not in spec
+            and name not in ((case.data.get("study") or {}).get("design_variables") or {})
+        ):
+            report.add(
+                "warning",
+                "variable.implicit_design",
+                "legacy bounds imply design search, not tolerance; declare role: design or explicit tolerance conditions",
+                path,
+            )
     return True
 
 
 def _validate_variable_choices(spec: dict[str, Any], report: ValidationReport, path: str) -> None:
     if "default" in spec:
         _validate_finite_tree(spec["default"], report, f"{path}.default")
-    choices = spec.get("choices")
+    choices = spec.get("choices", spec.get("values"))
     if choices is None:
         return
     if not isinstance(choices, list) or not choices:
@@ -234,7 +260,7 @@ def _validate_measurement(
     report: ValidationReport,
     simulation: ResolvedSimulationCase | None,
 ) -> None:
-    """`load_current: auto` meters the load, so there has to be a load."""
+    """Check reporting options; probe bindings belong to the simulation adapter."""
 
     measurement = case.data.get("measurement")
     if measurement is None:
@@ -248,15 +274,6 @@ def _validate_measurement(
         rf_measurement_options(measurement)
     except ValueError as exc:
         report.add("error", "measurement.invalid_periodic_options", str(exc), "$.measurement")
-    if measurement.get("load_current") == "auto":
-        load = case.data.get("load", {}) or {}
-        if isinstance(load, dict) and str(load.get("name", "none")) == "none":
-            report.add(
-                "error",
-                "measurement.auto_meter_without_load",
-                "measurement.load_current: auto inserts an ammeter in series with the load, but no load is declared",
-                "$.measurement.load_current",
-            )
     _validate_measurement_duration(case, report, simulation)
 
 
@@ -359,8 +376,10 @@ def _validate_study(case: Case, report: ValidationReport) -> None:
 
     try:
         from .core.models import Candidate
+        from .search import validate_search_settings
         from .study_config import CaseControlPolicy, candidate_case, study_spec_from_case
 
+        validate_search_settings(case)
         study = study_spec_from_case(case)
         projected_case = candidate_case(case)
         candidate = Candidate(
@@ -382,6 +401,13 @@ def _validate_target(case: Case, report: ValidationReport) -> None:
         return
     if not target:
         return
+    from .metrics import constraints_from_case, validate_metric_settings
+
+    try:
+        validate_metric_settings(case)
+        constraints_from_case(case)
+    except (TypeError, ValueError) as exc:
+        report.add("error", "target.invalid_constraints", str(exc), "$.target.constraints")
     objective = str(target.get("objective", "waveform_l2"))
     solver = _mapping_or_empty(case.data.get("solver"))
     if objective in {"impedance_match", "terminal_vi_fit"} and "ac" not in solver:
@@ -407,10 +433,9 @@ def _validate_target(case: Case, report: ValidationReport) -> None:
 
 def _validate_identification(case: Case, report: ValidationReport) -> None:
     try:
-        from .identification import IdentificationSettings, _bounded_latent_specs
+        from .identification import identification_inputs
 
-        IdentificationSettings.from_case(case)
-        _bounded_latent_specs(case)
+        identification_inputs(case)
     except (TypeError, ValueError) as exc:
         report.add("error", "identification.invalid", str(exc), "$.identification")
 
@@ -438,3 +463,10 @@ def _validate_target_waveform(
         return
     if not path.exists():
         report.add("error", "target.waveform_not_found", f"target waveform not found: {path}", "$.target.waveform_file")
+        return
+    from .metrics import load_target_waveform
+
+    try:
+        load_target_waveform(case)
+    except (OSError, TypeError, ValueError) as exc:
+        report.add("error", "target.invalid_waveform", str(exc), "$.target.waveform_file")

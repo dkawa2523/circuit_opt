@@ -1,176 +1,171 @@
 # Changelog
 
-## Unreleased
+## 0.22.1 — 2026-10-26
 
-- resolve every executable parameter into one fixed, calibration, operating,
-  control, design, or latent role; reject duplicate/conflicting ownership,
-  project optimizer inputs onto design variables only, retain constants as
-  ordinary solver defaults, and publish role-separated values in study result
-  tables without adding a second execution path;
-- reset the unsupported ML product surface after its evidence gates failed:
-  remove the four ML/corpus CLI commands, runtime ML/corpus/graph modules,
-  graph-only circuit metadata, fixed-pool benchmark code, and ML release-gate
-  attachment; keep the measured negative outcome as a short design record and
-  return `Circuit` to one ngspice-rendering responsibility. The optional
-  OptunaHub group remains isolated for reproduction of the existing
-  case-specific optimization figures and is not a runtime dependency;
-- route direct simulation, studies, and terminal identification through one
-  `execute_case` forward solve returning the canonical in-memory
-  `SimulationResult` together with its persisted `SimRecord`; add one
-  Case-specific evaluation adapter, calculate fresh metrics without a CSV
-  round trip, and restore cached/saved data to the same response type before
-  measurement;
-- add `pcd identify` for bounded latent effective-terminal parameters: fit
-  declared complex V/I scenarios, freeze the result for disjoint holdout
-  scenarios, replay both phases through ordinary ngspice without cache reuse,
-  and reject a low-loss result when its normalized local sensitivity matrix is
-  rank-deficient or ill-conditioned;
-- independently replay the selected design through the ordinary solver with
-  raw-cache reuse disabled; publish the replay as `best_candidate.json` and
-  the final acceptance decision while keeping search evaluations and history
-  separate;
-- centralize L, pi, and harmonic-pi matching connectivity and component roles
-  in one reviewed topology catalog consumed by both public-input compilation
-  and netlist generation; keep values, frequencies, losses, and limits explicit
-  in each case;
-- align the advanced RC sizing example's pulse window with its stored step-
-  response target so the declared waveform objective is attainable instead of
-  comparing against an incompatible source waveform;
-- keep the RC sizing example's installed resistor fixed and optimize only its
-  capacitor because one voltage waveform identifies the RC time constant, not
-  R and C separately;
-- reflect Differential Evolution mutations at continuous bounds instead of
-  clipping many distinct mutations onto duplicate endpoint proposals, and use
-  a seeded uniform fallback when evolution still repeats an evaluated point;
-- carry signed engineering constraint margins through result tables, study
-  histories, and the CLI, giving calculation and candidate search one useful
-  feasibility signal without adding another optimizer or execution path;
-- add one public-CLI release runner for the six supported user workflows;
-  strict-validate eight inputs, require a fresh run root, verify concise
-  electrical results and replay artifacts, distinguish intentional engineering
-  rejection from solver failure, and publish the circuit decision only; machine
-  learning is outside this release gate;
-- stop publishing one structured JSON file per explored candidate; keep all
-  candidate summaries in `study_history.json`, all Candidate x Scenario x
-  Control rows in `evaluations.csv`, and only the selected design in
-  `best_candidate.json`; move benchmark, figure, and literature readers to
-  those explicit sources and remove candidate-directory discovery from the
-  execution pipeline;
-- replace the 2,295-line custom report-surface generator and 244 kB widget
-  artifact with a source-summary projection that writes a readable Markdown
-  report, compact JSON status, and flat core/literature CSV tables; preserve
-  source hashes and the separation between benchmark reproduction, electrical
-  feasibility, and apparatus qualification while removing candidate-file and
-  UI-schema coupling;
-- remove three unreferenced compatibility branches after fixing the P1 paths:
-  root `sim_manifest.json` reads, duplicated historical candidate `selected`
-  values, and four-argument solver callables; use the current
-  `summary/data/debug`, indexed trial, and `SolverRunRequest` boundaries in
-  production and test adapters alike;
-- close the P1 real-ngspice user-workflow gate with one release matrix covering
-  saved-run analysis, Candidate/Scenario/Control studies, resonance/Q,
-  quasi-static R+jX and prescribed R(t), and target-waveform sizing; expose
-  study analysis/frequency/reference-plane context and a direct selected-
-  candidate evidence path, classify nonperiodic transients as periodic
-  `not_applicable`, and replace opaque raw components in acceptance examples;
-- replace the open-ended staged roadmap with a PCD v1 completion path: first
-  close five real-ngspice user workflows, then remove unused complexity,
-  demonstrate numeric-sizing solver savings, and finish release acceptance;
-  keep arbitrary circuit-graph generation, physical placement, self-consistent plasma,
-  and unproven Bayesian optimization outside the v1 critical path;
-- add a direction-aware Pareto decision table for multi-objective studies;
-  include only candidates with complete control-solver evidence and full
-  scenario feasibility, retain equal trade-off points, preserve the existing
-  lexicographic best decision, and distinguish sampled observed fronts from
-  complete declared grids;
-- add a seeded, dependency-free `DE/rand/1/bin` optimizer for bounded continuous
-  advanced-case variables; preserve feasibility-first constraint ordering and
-  record proposal generation, acceptance, failures, constraints, and duration
-  in the compact study history without changing public RF grid enumeration;
-- add an advanced, CSV-backed prescribed `R(t)` component with linear/hold
-  interpolation, explicit periodic closure, positive-resistance and timestep
-  checks, behavioral-ngspice rendering, content-addressed replay, fingerprinting,
-  observed terminal probes, and a real-solver analytic-divider regression;
-- add a bounded quasi-static `impedance_profile` workflow that validates a
-  monotonic passive R+jX time table, reuses exact one-point AC scenarios, and
-  publishes selected tuning, reflection, and power in `snapshot_response.csv`
-  without claiming dynamic plasma-state propagation;
-- report source-side forward and reflected AC wave power using the declared
-  reference impedance;
-- make `sim-run` concise by default and return the same user-facing summary
-  from `--json`;
-- separate a direct simulation into `summary.json`, canonical `data/`, and
-  replay-only `debug/`; remove duplicate `params.json` and the unreferenced
-  historical root-manifest read branch;
-- keep solver-reported operational failures as inspectable results while
-  allowing invalid configuration and unexpected evaluator, metric, parser, or
-  solver-adapter exceptions to propagate instead of fabricating failed data;
-- make typed solver settings and analysis requests the sole owner of
-  AC/transient/timeout validation, remove the duplicate per-rule diagnostics,
-  and reject invalid explicit timeouts instead of silently substituting a
-  default before creating a run directory;
-- make the simulation-input adapter the sole parser for source containers and
-  names, probe columns, and measurement/load-port mapping shape; reuse its
-  source resolver in netlist generation and replace parallel validation codes
-  with one actionable simulation-input diagnostic;
-- make circuit/load builders own section shape, required model parameters,
-  physical domains, imported-netlist policy, and return types; validate by
-  constructing the same in-memory model and allocate run artifacts only after
-  that construction succeeds;
-- remove the write-only interpreted-evaluation cache and its IDs; keep raw
-  simulation cache, immutable published generations, and the flat evaluation table as
-  separate responsibilities;
-- remove the unused final optimizer-state duplicate from `study_result.json`;
-- store each candidate control trial once, reference the selected trial by
-  index, and remove the historical duplicated-selection reader branch;
-- remove duplicated circuit/parameter observations from study rows and advance
-  the compact candidate and evaluation-table schemas to v2;
-- remove the redundant `--strict-exit` compatibility flag;
-- remove legacy flat artifact keys and implicit v1 artifact-path fallbacks;
-- invoke pytest and coverage through Python so the quality gate works under
-  Windows application-control policies;
-- add Radon and a single `architecture-audit` session combining Ruff
-  complexity checks, Pyrefly, Import Linter, and non-gating hotspot reports;
-- separate solver-neutral analysis requests/results, Case-to-probe compilation,
-  and ngspice output translation from electrical measurement calculations;
-- enforce that netlist/solver/simulation modules cannot import measurement or
-  metric implementations;
-- resolve solver settings, analyses, probes, measurement reference, and
-  netlist options once into a
-  typed `ResolvedSimulationCase`; make every solver consume
-  `SolverRunRequest` and remove the former Case-based compatibility invocation;
-- replace the monolithic analysis module with AC, periodic-transient, and
-  component-stress owners behind the existing import facade; reduce the
-  periodic-window calculation from Radon D to B and verify that persisted
-  canonical waveforms reproduce the in-memory RF metrics;
-- add a saved-run `analyze` use case that regenerates a concise electrical
-  summary and standard impedance/Smith, transient, power, and component-stress
-  figures without rerunning ngspice or conflating solver success with design
-  acceptance;
-- add multi-point power-response resonance, bracketed -3 dB bandwidth, and
-  loaded-Q measurements, plus an H1-relative voltage/current harmonic figure;
-  omit Q rather than extrapolating when a sweep does not contain both
-  half-power crossings;
-- remove the narrower `visualize-response` command and its duplicate
-  `response_plot.py` implementation after folding that workflow into
-  `analyze`;
-- replace the stale snapshot specification with a current, evidence-based
-  foundation renewal plan, including measured dependency/type/complexity
-  findings and staged responsibility boundaries, and remove superseded review
-  artifacts.
+- Consolidate the input, output, load-model, component-stress, architecture,
+  and figure specifications into one Japanese engineering manual. Include
+  complete YAML examples, measurement conventions, result interpretation,
+  and reproducible numerical demonstrations.
+- Replace the long implementation plan with a current roadmap; organize
+  individual studies and research notes separately, and repair their links.
+- Ship the same manual, generated SVG figures and runnable examples in the
+  wheel under `share/pcd`, preserving their relative paths without a second copy.
+- Keep numerical behavior unchanged. Retain frozen benchmark data and their
+  unique provenance documents separately from the current specification.
+
+## 0.22.0 — 2026-10-26
+
+- Pass the exact selected periodic window through power/RMS and harmonic
+  measurements. Probe spectra inherit the case's cycle count, settling policy,
+  and harmonic count; persist the actual window with the numerical tables.
+- Separate study export columns into `context.*`, `parameter.*`, and `signal.*`.
+  This changes the combined observation CSV headers and prevents arbitrary
+  probe names from replacing condition, phase, or candidate information.
+- Report plotted-data coverage. Entirely unavailable curves are `not_available`,
+  gaps are `partial`, and requested incomplete output exits nonzero while
+  preserving the numerical table and explaining the missing data on the figure.
+- Return null with a reason for undefined efficiency and normalized loss balance.
+  Share the finite power-ratio calculation across AC and transient measurements;
+  keep finite ratios at small power levels and reject unavailable constrained metrics.
+- Replace the cycle-count-only check with closed-form window regressions and
+  exercise arbitrary export aliases and unavailable transfer data without
+  introducing another schema or diagnostic framework.
+
+## 0.21.0 — 2026-10-25
+
+- Add one optional YAML `output` block for formats, physical/instrumented
+  schematics, waveforms, probe AC responses, explicit Bode ratios, and harmonics.
+  Replot saved data with `analyze --case` without another solver invocation.
+- Save the selected display voltage in AC as `voltage_V_re/im`, retaining
+  legacy `voltage_re/im` for source-port voltage. Allow named-network probes
+  and save signal catalogs with units, vectors, terminals, signs, and drive basis.
+- Export shared numerical tables for plots, frequency/operating metrics,
+  instantaneous power, and harmonics; preserve raw adaptive samples and
+  distinguish normalized 1 V peak reference excitation in figures.
+- Replace lossy main-path schematic extraction with complete branch/pin
+  representation, explicit partial status for unresolved topology, and real
+  current-meter symbols. Fix source-symbol endpoint orientation and polarity.
+- Add selected-condition, objective/margin, fit/holdout residual, and local
+  sensitivity views, plus streaming observation exports retaining evaluation context.
+- Separate numerical success from requested output completion; expose solver
+  vector failures at the public error field and return nonzero for partial output.
+- Remove obsolete path-layout code and tests tied to those private helpers;
+  consolidate current output documentation and preserve numerical regressions.
+
+## 0.20.0 — 2026-10-25
+
+- Extend `pcd.rf.v1` to component circuits, external SPICE, continuous sizing,
+  and compact terminal identification through the existing execution engine.
+- Group fixed/calibration/operating/design/control/latent parameters by owner;
+  reject tolerance ranges placed on fixed inputs and ambiguous scaled unit metadata.
+- Resolve explicit unit literals to SI once, with known-field/annotation dimension
+  checks. Keep raw SPICE syntax intact and make wave-reference Z0 configurable.
+- Accept inline impedance points and optional row IDs alongside CSV, preserving
+  explicit rows and pinned control settings without implicit Cartesian products.
+- Make `sim-run` and the supported Python API require explicit point selection
+  from multi-condition/candidate/control input; label netlist previews and saved
+  simulation scope. Add `validate-case --plan` using the shared resolved case.
+- Observe unambiguous imported voltage-source ports, suppress false missing-source
+  warnings, and reject duplicate preserved sources. Ambiguous imports require
+  explicit observations rather than guessed topology.
+- Compile standard complex V/I observations and explicit partition columns into
+  fit/holdout input. Declare error scales once and archive original input data
+  before phase splitting. Move known-truth acceptance to benchmarks.
+- Add minimal imported/fixed-transient/design examples, promote the compact fit
+  example, and remove the obsolete verbose fit input and duplicate CSV examples.
+- Reject engineering-acceptance gates with no declared engineering limits.
+- Replace misleading `best.search_completeness`/`search_limitation` output
+  with `evaluation_evidence`/`evidence_limitation`, and print optimizer
+  termination separately from evidence completeness and engineering acceptance.
+
+## 0.19.0 — 2026-10-25
+
+- Reject voltage/source columns used as load-current bindings; require a declared
+  current vector or the inserted load ammeter. Record the exact vector and
+  whether its direction is supplied by the user. Keep source voltage at the
+  selected source port and reject current vectors in voltage bindings.
+- Check parameter-domain fields at the shared boundary, including inline design
+  and control specifications, so misspelled bounds cannot become a fixed search.
+- Preserve observed controls across identification partitions. Separate unseen
+  conditions from explicit same-condition replicates and report duplicate V/I.
+- Save unavailable fit, holdout, and sensitivity evidence through one result path.
+  Treat open predicted impedance as unavailable terminal-fit evidence.
+- Render nullable open-circuit measurements consistently in text and JSON.
+- Preserve earlier analyses and record analyzer/environment/options/input hashes
+  separately from original simulation provenance.
+- Remove fit-only failure serialization, redundant partition checks, and three
+  private-helper-only tests; retain numerical and user-workflow regressions.
+- Use an electrically accepted role-factorial case for the wheel CI acceptance
+  check; a topology conformance golden intentionally violates its matching limit.
+
+## 0.18.0 — 2026-10-25
+
+- Reject duplicate YAML/JSON fields, unused owned settings, conflicting aliases,
+  missing parameter references, and fractional execution budgets.
+- Preserve declared scenario-table defaults and weights. Pin observed controls
+  without overwriting them or manufacturing tuning headroom.
+- Decide complete acceptance from individual conditions, independently of
+  floating-point rounding in weighted coverage.
+- Separate display voltage, differential load voltage, and source-port impedance
+  in canonical observations, measurements, figures, and saved metadata.
+- Separate AC marker frequency, periodic fundamental, and AC excitation source.
+  Require explicit voltage vectors for raw/imported sources.
+- Render current sources with current units/names and measure actual AC current
+  through a series ammeter; preserve numeric input precision in SPICE.
+- Validate successful adapter responses against requested time/frequency domains
+  and correctly execute ngspice's two-point linear-sweep edge case.
+- Align terminal least squares with declared weighted RMS and persist optimizer
+  termination separately from acceptance. Save unavailable fits without estimates.
+- Retry bounded Windows file-sharing conflicts during atomic result publication.
+- Refresh editable-install metadata when the dynamic version source or README
+  changes; verify imported and distribution versions agree.
+- Remove the residual cyclomatic-complexity gate and replace obsolete formatting
+  assumptions in tests with numeric and workflow assertions.
+- Analysis metadata now uses `load_reference_plane`, `impedance_reference_plane`,
+  `ac_frequency_Hz`, and `periodic_fundamental_Hz` in place of ambiguous plane/frequency fields.
+
+## 0.17.0 — 2026-10-25
+
+- Preserve native adaptive samples in periodic measurements and cycle comparisons;
+  prevent narrow pulses from disappearing from stress and power decisions.
+- Share complete AC and periodic operating-point measurements between studies
+  and saved-run reports; calculate ratios after complex interpolation and use
+  the declared reference impedance for wave power.
+- Share authored CSV structure checks across load tables, scenarios, profiles,
+  and target waveforms; reject duplicate headers and ambiguous target data.
+- Normalize weights before coverage, mean, and CVaR aggregation, including very
+  small and very large common weight scales.
+- Add bounded complex-terminal least squares through the same study evaluator;
+  count finite-difference proposals against the candidate budget and retain
+  feasibility-first selection and fresh final replay.
+- Apply an absolute floor to normalized local sensitivity rank, state its local
+  scope, require fixed observed controls, and isolate repeated identification
+  invocations so previous evidence remains stable.
+- Stream flat evaluation rows on disk and retain detailed trials only for the
+  selected candidate and observed Pareto front.
+- Allocate simulation and identification directories atomically.
+- Keep AC load voltage tied to the load port when a different transient output
+  node is selected, and retain optional missing source channels in periodic data.
+- Record Python, platform, and numerical-library versions with result provenance.
+- Keep time integration compatible with the declared NumPy 1.23 lower bound.
+- Reduce quality checks to Ruff, Pyrefly, import boundaries, and meaningful
+  behavior tests; remove redundant diagnostic dependencies and percentage gates.
+- Check built wheels outside the checkout, including minimum dependency minors.
+- Replace stale workflow/planning text and remove obsolete build/cache files
+  and retired documentation. Historical publication evidence remains explicitly
+  labeled as such; pending local export cleanup is recorded separately.
 
 ## 0.16.0
 
-- distinguish complete SPICE decks from title-less circuit fragments;
-- replace imported sources by exact name rather than inferred node conflict;
-- preserve unavailable current as missing data and enforce requested RF cycles;
-- provide the stable `pcd.api` extension surface and isolate plugin inputs;
-- add dataset identities and runtime fingerprints to `evaluations.csv`;
-- centralize saved-run artifact resolution and make preparation failures reuse
-  their original run directory;
-- provide an explicit, dry-run-by-default retention command for old study
-  generations without touching reusable caches;
-- document module ownership, supported extension boundaries, and generated
-  output responsibilities;
-- add the repository-scoped `$pcd-runner` Codex skill for validated ngspice,
-  study, benchmark, visualization, and result-inspection workflows.
+- Distinguish complete SPICE decks from title-less circuit fragments and replace
+  imported sources by exact name.
+- Keep fixed hardware, external conditions, and per-condition controls separate.
+- Preserve unavailable current as missing data and require declared RF cycles.
+- Expose the `pcd.api` extension surface with detached plugin inputs.
+- Record dataset identities and runtime/solver fingerprints.
+- Resolve saved-run artifacts centrally and provide preview-first generation
+  retention without deleting reusable raw solves.
+- Add the repository-local `pcd-runner` skill.
+
+Intermediate development experiments and retired interfaces are available in
+Git history. Current behavior is described by README and the input reference.

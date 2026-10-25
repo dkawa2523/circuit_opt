@@ -15,6 +15,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from .inputs import integer, reject_unknown
+
 # ngspice writes these temporary files in the solver working directory.  The
 # simulation persistence layer converts them to the stable paths below and
 # removes the temporary copies.
@@ -31,7 +33,7 @@ VOLTAGE_COLUMN = "voltage_V"
 CURRENT_COLUMN = "current_A"
 SOURCE_VOLTAGE_COLUMN = "source_voltage_V"
 LOAD_CURRENT_COLUMN = "load_current_A"
-AC_LOAD_VOLTAGE_COLUMN = "load_voltage_V"
+LOAD_VOLTAGE_COLUMN = "load_voltage_V"
 
 
 def _resolve(value: Any, params: Mapping[str, Any] | None) -> Any:
@@ -42,16 +44,6 @@ def _resolve(value: Any, params: Mapping[str, Any] | None) -> Any:
         if key in params:
             return params[key]
     return value
-
-
-def _integer(value: Any, field: str) -> int:
-    try:
-        number = float(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"{field} must be an integer") from exc
-    if not math.isfinite(number) or not number.is_integer():
-        raise ValueError(f"{field} must be an integer")
-    return int(number)
 
 
 @dataclass(frozen=True)
@@ -77,6 +69,7 @@ class TransientAnalysis:
         config: Mapping[str, Any],
         params: Mapping[str, Any] | None = None,
     ) -> TransientAnalysis:
+        reject_unknown(config, {"step_s", "stop_s"}, "solver.tran")
         return cls(
             step_s=float(_resolve(config.get("step_s", 1e-9), params)),
             stop_s=float(_resolve(config.get("stop_s", 1e-6), params)),
@@ -91,18 +84,23 @@ class AcSweep:
     points: int = 20
     start_hz: float = 1e6
     stop_hz: float = 1e8
+    source: str | None = None
 
     def __post_init__(self) -> None:
         sweep = self.sweep.strip().lower()
         if sweep not in {"lin", "dec", "oct"}:
             raise ValueError("AC sweep must be lin, dec, or oct")
-        if self.points <= 0:
-            raise ValueError("AC points must be a positive integer")
+        points = integer(self.points, "AC points", minimum=1)
         start = self.start_hz
         stop = self.stop_hz
         if not math.isfinite(start) or not math.isfinite(stop) or start <= 0 or stop <= 0 or stop < start:
             raise ValueError("AC frequencies must be positive and finite, with stop_Hz >= start_Hz")
+        if sweep == "lin" and ((points == 1) != (start == stop)):
+            raise ValueError(
+                "single-point linear AC requires frequency_Hz or equal endpoints; a range needs >= 2 points"
+            )
         object.__setattr__(self, "sweep", sweep)
+        object.__setattr__(self, "points", points)
         object.__setattr__(self, "start_hz", start)
         object.__setattr__(self, "stop_hz", stop)
 
@@ -112,17 +110,19 @@ class AcSweep:
         config: Mapping[str, Any],
         params: Mapping[str, Any] | None = None,
     ) -> AcSweep:
+        reject_unknown(config, {"frequency_Hz", "sweep", "points", "start_Hz", "stop_Hz", "source"}, "solver.ac")
         if "frequency_Hz" in config:
             conflicting = sorted({"sweep", "points", "start_Hz", "stop_Hz"} & set(config))
             if conflicting:
                 raise ValueError(f"AC frequency_Hz cannot be combined with {conflicting}")
             frequency = float(_resolve(config["frequency_Hz"], params))
-            return cls(sweep="lin", points=1, start_hz=frequency, stop_hz=frequency)
+            return cls(sweep="lin", points=1, start_hz=frequency, stop_hz=frequency, source=config.get("source"))
         return cls(
             sweep=str(config.get("sweep", "dec")),
-            points=_integer(config.get("points", 20), "AC points"),
+            points=integer(config.get("points", 20), "AC points", minimum=1),
             start_hz=float(_resolve(config.get("start_Hz", 1e6), params)),
             stop_hz=float(_resolve(config.get("stop_Hz", 1e8), params)),
+            source=config.get("source"),
         )
 
 
@@ -144,6 +144,7 @@ class AnalysisRequest:
         params: Mapping[str, Any] | None = None,
     ) -> AnalysisRequest:
         solver = config or {}
+        reject_unknown(solver, {"name", "executable", "timeout_s", "options", "tran", "ac"}, "solver")
         ac_config = solver.get("ac")
         if "ac" in solver and not isinstance(ac_config, Mapping):
             raise TypeError("solver.ac must be a mapping")
@@ -174,6 +175,39 @@ class SimulationResult:
     diagnostics: dict[str, Any] = field(default_factory=dict)
     frequency_response: pd.DataFrame | None = None
     probes: dict[str, np.ndarray] = field(default_factory=dict)
+
+    def validate_for(self, analysis: AnalysisRequest) -> None:
+        """A successful response must contain the requested numerical domain."""
+
+        if self.status != "ok":
+            return
+        if analysis.transient is not None:
+            frame = self.as_frame()
+            time = frame[TIME_COLUMN].to_numpy(float)
+            voltage = frame[VOLTAGE_COLUMN].to_numpy(float)
+            stop = analysis.transient.stop_s
+            tolerance = stop * 1e-9
+            if len(time) < 2 or not np.all(np.isfinite(time)) or not np.all(np.isfinite(voltage)):
+                raise ValueError("successful transient requires finite aligned time/voltage observations")
+            if np.any(np.diff(time) < 0) or abs(time[0]) > tolerance or abs(time[-1] - stop) > tolerance:
+                raise ValueError("transient result must cover [0, requested stop_s] in time order")
+        if analysis.ac is not None:
+            frame = self.frequency_response
+            required = ["frequency_Hz", "voltage_re", "voltage_im", "current_re", "current_im"]
+            if frame is None or frame.empty or not set(required) <= set(frame):
+                raise ValueError("successful AC analysis requires frequency and complex port observations")
+            if not np.all(np.isfinite(frame[required].to_numpy(float))):
+                raise ValueError("successful AC response must be finite")
+            sweep = analysis.ac
+            if sweep.sweep == "lin":
+                expected = np.linspace(sweep.start_hz, sweep.stop_hz, sweep.points)
+            else:
+                base = 10.0 if sweep.sweep == "dec" else 2.0
+                count = 1 + math.floor(math.log(sweep.stop_hz / sweep.start_hz, base) * sweep.points + 1e-9)
+                expected = sweep.start_hz * base ** (np.arange(count) / sweep.points)
+            actual = frame["frequency_Hz"].to_numpy(float)
+            if len(actual) != len(expected) or not np.allclose(actual, expected, rtol=1e-8, atol=0):
+                raise ValueError("AC result frequencies differ from the requested sweep")
 
     def as_frame(self) -> pd.DataFrame:
         """Return the canonical transient table, preserving missing current."""

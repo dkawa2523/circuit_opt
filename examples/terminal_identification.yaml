@@ -1,0 +1,27 @@
+# Electrical fit to synthetic observations. No truth values are input acceptance criteria.
+schema: pcd.rf.v1
+case_id: ccp_terminal_identification
+parameters:
+  calibration: {fixture_R_ohm: 2, fixture_L_H: "100 nH", plasma_L_eff_H: "250 nH"}
+  latent:
+    plasma_R_eff_ohm: {bounds: [8, 35], default: 28}
+    plasma_C_sheath_eq_F: {bounds: ["70 pF", "200 pF"], default: "90 pF", scale: log}
+source: {type: sine_voltage, amplitude_V: 1, frequency_Hz: frequency_Hz}
+circuit:
+  output_node: electrode
+  components:
+    - {ref: Rfixture, n1: src, n2: fixture_mid, value: fixture_R_ohm}
+    - {ref: Lfixture, n1: fixture_mid, n2: electrode, value: fixture_L_H}
+load:
+  type: ccp_lumped
+  reference_plane: electrode_terminal
+  evidence: {origin: synthetic_example, frequency_Hz: [10000000, 40680000]}
+  parameters: {R_eff_ohm: plasma_R_eff_ohm, L_eff_H: plasma_L_eff_H, C_sheath_eq_F: plasma_C_sheath_eq_F}
+analysis:
+  ac: {frequency_Hz: frequency_Hz}
+identification:
+  observations: {file: terminal_observations.csv}
+  error_scale_ohm: 100
+  fit_loss_max: 0.02
+  holdout_loss_max: 0.03
+  condition_number_max: 100

@@ -6,7 +6,7 @@ from collections.abc import Iterable
 
 import numpy as np
 
-from .series import clean_series, trapezoid_weights
+from .series import clean_series, interval_series, trapezoid_weights
 from .windows import PeriodicWindow, periodic_window
 
 
@@ -42,9 +42,7 @@ def harmonic_phasors(
     )
     if selected is None:
         return {}
-    mask = (time >= selected.start_s) & (time <= selected.end_s)
-    time = time[mask]
-    signal = signal[mask]
+    time, signal = interval_series(time, signal, start_s=selected.start_s, end_s=selected.end_s)
     if len(time) < 2 * len(requested) + 1:
         return {}
 

@@ -7,7 +7,6 @@ not equivalent to replacing a scalar C or L value at every time step.
 
 from __future__ import annotations
 
-import csv
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -17,6 +16,7 @@ from typing import Any, Literal
 
 from .case import Case, resolve_path
 from .simulation_input import resolve_analysis_request
+from .tables import read_csv_rows
 
 _PROFILE_FIELDS = {
     "profile",
@@ -152,22 +152,12 @@ def _read_profile_csv(
 ) -> tuple[list[float], list[float]]:
     if not path.is_file():
         raise ValueError(f"component {reference} profile file not found: {path}")
-    with path.open("r", encoding="utf-8-sig", newline="") as handle:
-        reader = csv.DictReader(handle)
-        fields = reader.fieldnames
-        if not fields:
-            raise ValueError(f"component {reference} profile CSV has no header: {path}")
-        if len(fields) != len(set(fields)):
-            raise ValueError(f"component {reference} profile CSV has duplicate column names: {path}")
-        missing = [name for name in (time_column, value_column) if name not in fields]
-        if missing:
-            raise ValueError(f"component {reference} profile CSV is missing columns {missing}: {path}")
-
-        times: list[float] = []
-        values: list[float] = []
-        for row in reader:
-            times.append(_finite_csv_number(row.get(time_column), reference, time_column, reader.line_num))
-            values.append(_finite_csv_number(row.get(value_column), reference, value_column, reader.line_num))
+    _columns, rows = read_csv_rows(path, (time_column, value_column))
+    times: list[float] = []
+    values: list[float] = []
+    for line, row in enumerate(rows, start=2):
+        times.append(_finite_csv_number(row[time_column], reference, time_column, line))
+        values.append(_finite_csv_number(row[value_column], reference, value_column, line))
     return times, values
 
 

@@ -21,8 +21,17 @@ def _finite_float(value: object) -> float | None:
 
 
 def _weighted_mean(items: list[tuple[float, float]]) -> float:
-    total = sum(weight for _value, weight in items)
-    return sum(value * weight for value, weight in items) / total
+    weights = _normalized_weights([weight for _value, weight in items])
+    return math.fsum(value * weight for (value, _original), weight in zip(items, weights, strict=True))
+
+
+def _normalized_weights(weights: list[float]) -> list[float]:
+    """Normalize positive weights without overflowing their original sum."""
+
+    scale = max(weights)
+    scaled = [weight / scale for weight in weights]
+    total = math.fsum(scaled)
+    return [weight / total for weight in scaled]
 
 
 def control_margin(selected: ControlState, available: tuple[ControlState, ...]) -> float | None:
@@ -36,6 +45,13 @@ def control_margin(selected: ControlState, available: tuple[ControlState, ...]) 
 
     margins: list[float] = []
     for name in selected.values:
+        if name in selected.numeric_ranges:
+            low, high = selected.numeric_ranges[name]
+            number = float(selected.values[name])
+            margins.append(
+                1.0 if low == high else max(0.0, min(1.0, 2.0 * min(number - low, high - number) / (high - low)))
+            )
+            continue
         values: list[float] = []
         for control in available:
             if name not in control.values:
@@ -69,18 +85,17 @@ def _weighted_cvar(items: list[tuple[float, float]], objective: Objective) -> fl
     """Average the worst ``alpha`` probability mass, including a split boundary."""
 
     reverse = objective.direction == "minimize"
-    ordered = sorted(items, key=lambda item: item[0], reverse=reverse)
-    total_weight = sum(weight for _value, weight in ordered)
-    tail_weight = objective.cvar_alpha * total_weight
-    remaining = tail_weight
-    weighted = 0.0
+    weights = _normalized_weights([weight for _value, weight in items])
+    ordered = sorted(zip((value for value, _weight in items), weights, strict=True), reverse=reverse)
+    remaining = objective.cvar_alpha
+    contributions: list[float] = []
     for value, weight in ordered:
         take = min(weight, remaining)
-        weighted += value * take
+        contributions.append(value * (take / objective.cvar_alpha))
         remaining -= take
-        if remaining <= 1e-15:
+        if remaining <= 0.0:
             break
-    return weighted / tail_weight
+    return math.fsum(contributions)
 
 
 def aggregate_objective(items: list[tuple[float, float]], objective: Objective) -> float | None:
@@ -88,6 +103,9 @@ def aggregate_objective(items: list[tuple[float, float]], objective: Objective) 
         return None
     if objective.aggregation == "mean":
         return _weighted_mean(items)
+    if objective.aggregation == "rms":
+        weights = _normalized_weights([weight for _value, weight in items])
+        return math.hypot(*(value * math.sqrt(weight) for (value, _raw), weight in zip(items, weights, strict=True)))
     if objective.aggregation == "cvar":
         return _weighted_cvar(items, objective)
     values = [value for value, _weight in items]
@@ -99,13 +117,22 @@ def aggregate_candidate(
     candidate: Candidate,
     scenarios: tuple[ScenarioResult, ...],
 ) -> CandidateResult:
+    if tuple(item.scenario.scenario_id for item in scenarios) != tuple(item.scenario_id for item in study.scenarios):
+        raise ValueError("candidate results must cover every declared scenario in study order")
     evaluations = tuple(item.selected for item in scenarios)
-    weights = {item.scenario_id: item.weight for item in study.scenarios}
-    total_weight = sum(weights.values())
-    successful_weight = sum(weights[item.request.scenario.scenario_id] for item in evaluations if item.raw.ok)
-    feasible_weight = sum(weights[item.request.scenario.scenario_id] for item in evaluations if item.feasible)
+    weights = dict(
+        zip(
+            (item.scenario_id for item in study.scenarios),
+            _normalized_weights([item.weight for item in study.scenarios]),
+            strict=True,
+        )
+    )
+    total_weight = math.fsum(weights.values())
+    successful_weight = math.fsum(weights[item.request.scenario.scenario_id] for item in evaluations if item.raw.ok)
+    feasible_weight = math.fsum(weights[item.request.scenario.scenario_id] for item in evaluations if item.feasible)
     violation = (
-        sum(weights[item.request.scenario.scenario_id] * item.total_violation for item in evaluations) / total_weight
+        math.fsum(weights[item.request.scenario.scenario_id] * item.total_violation for item in evaluations)
+        / total_weight
     )
 
     aggregates: dict[str, float | None] = {}
@@ -153,7 +180,7 @@ def evaluation_rank_key(study: StudySpec, result: EvaluationResult) -> tuple[flo
 def candidate_rank_key(study: StudySpec, result: CandidateResult) -> tuple[float, ...]:
     """Sort by evidence coverage, violation, objectives, then control margin."""
 
-    complete_and_feasible = result.success_fraction == 1.0 and result.feasible_fraction == 1.0
+    complete_and_feasible = result.feasible and result.success_fraction == 1.0 and result.feasible_fraction == 1.0
     key: list[float] = [
         0.0 if complete_and_feasible else 1.0,
         1.0 - result.success_fraction,
@@ -188,7 +215,8 @@ def candidate_is_pareto_eligible(study: StudySpec, result: CandidateResult) -> b
     """
 
     return (
-        result.success_fraction == 1.0
+        result.feasible
+        and result.success_fraction == 1.0
         and result.feasible_fraction == 1.0
         and result.total_violation == 0.0
         and all(evaluation.raw.ok for evaluation in result.control_evaluations)

@@ -113,6 +113,7 @@ def test_typed_execution_models_keep_their_own_invariants():
         {"measurement": {"current_source": "Vmissing"}},
         {"measurement": {"probes": "v(out)"}},
         {"measurement": {"probes": {"voltage_V": "v(extra)"}}},
+        {"measurement": {"probes": {"source_power_W": "v(extra)"}}},
         {"solver": {"options": []}},
         {"load": []},
         {"load": {"ports": []}},
@@ -129,7 +130,7 @@ def test_the_control_block_runs_only_a_transient_by_default():
     request = AnalysisRequest.from_config({"tran": {"step_s": 1e-9, "stop_s": 1e-6}})
     lines = render_control_lines(request, "out", _probe_plan())
     assert "tran 1e-09 1e-06 0 1e-09" in lines
-    assert "wrdata waveform.csv time v(out) i(Vsrc) v(src)" in lines
+    assert "wrdata waveform.csv time v(out) i(Vsrc) v(src) v(out)" in lines
     assert not any(line.startswith("ac ") for line in lines)
 
 
@@ -141,7 +142,7 @@ def test_requesting_a_sweep_adds_it_to_the_same_run():
     assert any(line.startswith("tran ") for line in lines)
     assert any(line.startswith("ac dec 10") for line in lines)
     assert "set numdgt=15" in lines
-    assert "wrdata ac.csv v(src) i(Vsrc) v(out)" in lines
+    assert "wrdata ac.csv v(src) i(Vsrc) v(out) v(out)" in lines
 
 
 def test_an_ac_only_case_does_not_run_or_write_a_transient():
@@ -151,7 +152,7 @@ def test_an_ac_only_case_does_not_run_or_write_a_transient():
     assert request.transient is None
     assert not any(line.startswith("tran ") for line in lines)
     assert not any("waveform.csv" in line for line in lines)
-    assert "wrdata ac.csv v(src) i(Vsrc) v(out)" in lines
+    assert "wrdata ac.csv v(src) i(Vsrc) v(out) v(out)" in lines
 
 
 def test_a_scenario_frequency_generates_one_exact_ac_point():
@@ -160,19 +161,22 @@ def test_a_scenario_frequency_generates_one_exact_ac_point():
         {"rf_frequency_Hz": 6.78e6},
     )
     lines = render_control_lines(request, "out", _probe_plan())
-    assert "ac lin 1 6.78e+06 6.78e+06" in lines
+    command = next(line.split() for line in lines if line.startswith("ac "))
+    assert command[:3] == ["ac", "lin", "1"]
+    assert list(map(float, command[3:])) == [6.78e6, 6.78e6]
 
 
 def test_extra_probes_are_saved_alongside_the_standard_vectors():
     lines = render_control_lines(AnalysisRequest.from_config({}), "out", _probe_plan("i(L1)", "v(mid)"))
-    assert "wrdata waveform.csv time v(out) i(Vsrc) i(L1) v(mid) v(src)" in lines
+    assert "wrdata waveform.csv time v(out) i(Vsrc) i(L1) v(mid) v(src) v(out)" in lines
     assert lines[0].startswith(".save v(out) i(Vsrc) i(L1) v(mid)")
 
 
-def test_ac_probes_are_written_after_the_standard_source_and_load_vectors():
+def test_ac_probes_follow_source_load_and_distinct_display_vectors():
     lines = render_control_lines(
         AnalysisRequest.from_config({"ac": {"frequency_Hz": 1e6}}),
-        "v(load)",
+        "v(mid)",
         _probe_plan(ac_vectors=("i(Vobserve_L1)",)),
+        load_voltage_vector="v(load)",
     )
-    assert "wrdata ac.csv v(src) i(Vsrc) v(load) i(Vobserve_L1)" in lines
+    assert "wrdata ac.csv v(src) i(Vsrc) v(load) v(mid) i(Vobserve_L1)" in lines

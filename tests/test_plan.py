@@ -562,15 +562,23 @@ def test_invalid_engineering_inputs_fail_at_the_compile_boundary(change, message
         compile_rf_case(data, Path.cwd())
 
 
-def test_impedance_table_has_one_canonical_shape(tmp_path):
+@pytest.mark.parametrize(
+    ("contents", "message"),
+    [
+        ("scenario_id,R,X\nnominal,25,-80\n", "missing columns"),
+        ("scenario_id,resistance_ohm,resistance_ohm,reactance_ohm\nnominal,25,250,-80\n", "duplicate column"),
+        ("scenario_id,resistance_ohm,reactance_ohm\nnominal,25,-80,250\n", "cells"),
+    ],
+)
+def test_impedance_table_has_one_canonical_shape(tmp_path, contents, message):
     data = _base()
     data["load"] = {
         "type": "impedance_table",
         "file": "bad.csv",
         "reference_plane": "electrode",
     }
-    (tmp_path / "bad.csv").write_text("scenario_id,R,X\nnominal,25,-80\n", encoding="utf-8")
-    with pytest.raises(ValueError, match="canonical columns"):
+    (tmp_path / "bad.csv").write_text(contents, encoding="utf-8")
+    with pytest.raises(ValueError, match=message):
         compile_rf_case(data, tmp_path)
 
 
@@ -676,7 +684,6 @@ def test_table_rows_can_be_complete_load_frequency_and_drive_points(tmp_path):
         (lambda data: data.__setitem__("network", None), "network must be a mapping"),
         (lambda data: data.__setitem__("load", []), "load must be a mapping"),
         (lambda data: data.__setitem__("conditions", []), "conditions must be a non-empty list"),
-        (lambda data: data.__setitem__("conditions", [{"drive_peak_V": 10}]), "id is required"),
     ],
 )
 def test_required_public_sections_fail_with_a_local_error(change, message):

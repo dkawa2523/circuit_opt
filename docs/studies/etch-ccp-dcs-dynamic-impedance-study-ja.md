@@ -1,5 +1,7 @@
 # 2周波＋DC重畳エッチングCCPの動的インピーダンス検証
 
+本書は記録された入力・モデル・探索予算についての個別検証である。現行の利用・入出力仕様は[統合マニュアル](../manual-ja.md)を参照する。
+
 ## 1. この問題で確認すること
 
 このベンチマークは、300 mm級の平行平板エッチングチャンバーを想定し、次の二つを分離して確認する。
@@ -248,13 +250,13 @@ on-state値をGP-UCBで安定して近似できることを示すが、単一波
 
 ## 7. 図と再現可能な証拠
 
-1. [装置と上下対応した詳細等価回路](../bench/figures/etch_ccp_dcs/01-apparatus-and-equivalent-circuit.svg)
-2. [入力波形と4つの時間変化素子](../bench/figures/etch_ccp_dcs/02-inputs-and-dynamic-elements.svg)
-3. [独立MNAとngspiceの順問題比較](../bench/figures/etch_ccp_dcs/03-forward-conformance.svg)
-4. [2 MHz / 60 MHz動的branch impedanceとSmith chart](../bench/figures/etch_ccp_dcs/04-dynamic-branch-impedance.svg)
-5. [GP-UCBの目的波形、未使用反射波、残差](../bench/figures/etch_ccp_dcs/05-gp-ucb-waveform-validation.svg)
-6. [GP-UCBの収束、素子値回収、時間変化profile](../bench/figures/etch_ccp_dcs/06-gp-ucb-identification.svg)
-7. [文献根拠、benchmark固有仮定、物理スケール確認](../bench/figures/etch_ccp_dcs/07-literature-basis-and-scope.svg)
+1. [装置と上下対応した詳細等価回路](../../bench/figures/etch_ccp_dcs/01-apparatus-and-equivalent-circuit.svg)
+2. [入力波形と4つの時間変化素子](../../bench/figures/etch_ccp_dcs/02-inputs-and-dynamic-elements.svg)
+3. [独立MNAとngspiceの順問題比較](../../bench/figures/etch_ccp_dcs/03-forward-conformance.svg)
+4. [2 MHz / 60 MHz動的branch impedanceとSmith chart](../../bench/figures/etch_ccp_dcs/04-dynamic-branch-impedance.svg)
+5. [GP-UCBの目的波形、未使用反射波、残差](../../bench/figures/etch_ccp_dcs/05-gp-ucb-waveform-validation.svg)
+6. [GP-UCBの収束、素子値回収、時間変化profile](../../bench/figures/etch_ccp_dcs/06-gp-ucb-identification.svg)
+7. [文献根拠、benchmark固有仮定、物理スケール確認](../../bench/figures/etch_ccp_dcs/07-literature-basis-and-scope.svg)
 
 結合PDFは `output/pdf/etch-ccp-dcs-dynamic-impedance-study.pdf`、全source path、SHA-256、solver version、誤差、
 全81格子候補、GP-UCB 600 trialのloss履歴と集約評価は `bench/figures/etch_ccp_dcs/figure_data.json` に保存している。

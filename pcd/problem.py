@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
+from .inputs import parameter_spec
+
 if TYPE_CHECKING:
     from .case import Case
 
@@ -179,7 +181,7 @@ def _declared_parameters(case: Case) -> tuple[dict[str, dict[str, Any]], dict[st
             name = str(raw_name)
             if name in specs:
                 raise ValueError(f"parameter {name!r} is declared in both {origins[name]} and {label}; declare it once")
-            specs[name] = dict(raw_spec) if isinstance(raw_spec, Mapping) else {"default": raw_spec}
+            specs[name] = parameter_spec(raw_spec, f"{label}.{name}")
             origins[name] = label
     return specs, origins
 
@@ -218,7 +220,11 @@ def _design_roles(
     elif isinstance(design, Mapping):
         for raw_name, raw_spec in design.items():
             name = str(raw_name)
-            inline[name] = _mapping(raw_spec, f"study.design_variables.{name}")
+            inline[name] = parameter_spec(
+                _mapping(raw_spec, f"study.design_variables.{name}"), f"study.design_variables.{name}"
+            )
+            if inline[name].get("role", "design") != "design":
+                raise ValueError(f"study.design_variables.{name}.role must be design")
             _assign_role(roles, locations, name, ParameterRole.DESIGN, f"study.design_variables.{name}")
     elif design is not None:
         raise ValueError("study.design_variables must be a list or mapping")
@@ -336,7 +342,7 @@ def _default_role(spec: Mapping[str, Any]) -> ParameterRole:
         return ParameterRole.DESIGN
     if "bounds" in spec:
         return ParameterRole.DESIGN
-    choices = spec.get("choices")
+    choices = spec.get("choices", spec.get("values"))
     if isinstance(choices, list) and len(choices) > 1:
         return ParameterRole.DESIGN
     return ParameterRole.FIXED

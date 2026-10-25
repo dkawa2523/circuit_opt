@@ -13,6 +13,7 @@ from .models import (
     ConstraintResult,
     EvaluationRequest,
     EvaluationResult,
+    MeasurementUnavailableError,
     MetricSet,
     RawResult,
     ScenarioResult,
@@ -185,9 +186,9 @@ class StudyRunner:
                 metrics = self._compute_metrics(request, raw)
                 self._require_objectives(metrics)
                 constraints.extend(item.evaluate(request, raw, metrics) for item in self.constraints)
-            except UnsettledMeasurementError as exc:
+            except MeasurementUnavailableError as exc:
                 raw = RawResult(
-                    status="not_settled",
+                    status="not_settled" if isinstance(exc, UnsettledMeasurementError) else "failed",
                     observations=raw.observations,
                     artifacts=raw.artifacts,
                     diagnostics={**dict(raw.diagnostics), "stage": "measure", "exception_type": type(exc).__name__},

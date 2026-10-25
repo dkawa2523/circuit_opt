@@ -10,6 +10,7 @@ import pandas as pd
 
 from pcd.probes import ComponentObservation
 from pcd.signals import time_average
+from pcd.signals.power import power_ratio
 
 from .ac import phasor_from_row
 from .transient import (
@@ -68,7 +69,7 @@ def transient_component_metrics(
     signal_columns = tuple(
         column for component in components for column in (component.voltage_column, component.current_column)
     )
-    measured, evidence = final_periodic_cycles(
+    measured, evidence, _window = final_periodic_cycles(
         waveform,
         fundamental_hz,
         signal_columns,
@@ -106,14 +107,19 @@ def transient_component_metrics(
     return out
 
 
-def component_loss_balance(metrics: Mapping[str, Any]) -> dict[str, float]:
+def component_loss_balance(metrics: Mapping[str, Any]) -> dict[str, Any]:
     """Compare summed explicit ESR/DCR loss with source-to-load network loss."""
 
     if "modeled_component_loss_W" not in metrics or "network_loss_W" not in metrics:
         return {}
     residual = float(metrics["network_loss_W"]) - float(metrics["modeled_component_loss_W"])
     source = abs(float(metrics.get("source_real_power_W", 0.0)))
-    return {
+    result: dict[str, Any] = {
         "component_loss_balance_residual_W": residual,
-        "component_loss_balance_fraction_of_source": abs(residual) / max(source, 1e-30),
+        "component_loss_balance_fraction_of_source": power_ratio(abs(residual), source),
     }
+    if result["component_loss_balance_fraction_of_source"] is None:
+        result["component_loss_balance_fraction_of_source_unavailable_reason"] = (
+            "a finite residual and a finite ratio to nonzero source real power are required"
+        )
+    return result

@@ -5,12 +5,15 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import platform
 import re
 import tempfile
+import time
 from collections.abc import Iterable, Mapping
 from copy import deepcopy
 from datetime import datetime, timezone
 from functools import lru_cache
+from importlib.metadata import version
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +40,17 @@ _WINDOWS_RESERVED_NAMES = {
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+@lru_cache(maxsize=1)
+def runtime_environment() -> dict[str, Any]:
+    """Record the numerical environment used to interpret solver evidence."""
+
+    return {
+        "python": platform.python_version(),
+        "platform": platform.platform(),
+        "libraries": {name: version(name) for name in ("numpy", "pandas", "scipy")},
+    }
 
 
 @lru_cache(maxsize=1)
@@ -98,12 +112,34 @@ def atomic_write_text(path: str | Path, text: str, *, encoding: str = "utf-8") -
         with os.fdopen(descriptor, "w", encoding=encoding, newline="") as handle:
             descriptor = -1
             handle.write(text)
-        temporary_path.replace(target)
+        for attempt in range(5):
+            try:
+                temporary_path.replace(target)
+                break
+            except PermissionError as exc:
+                if getattr(exc, "winerror", None) not in {32, 33} or attempt == 4:
+                    raise
+                time.sleep(0.01 * 3**attempt)
     finally:
         if descriptor >= 0:
             os.close(descriptor)
         if temporary_path is not None:
             temporary_path.unlink(missing_ok=True)
+
+
+def create_run_directory(root: str | Path, name: str) -> Path:
+    """Allocate a bounded run name atomically, preserving every previous run."""
+
+    root = Path(root).resolve()
+    for index in range(1000):
+        suffix = f"_{index:03d}" if index else ""
+        path = root / artifact_path_segment(name + suffix)
+        try:
+            path.mkdir(parents=True, exist_ok=False)
+        except FileExistsError:
+            continue
+        return path
+    raise RuntimeError(f"cannot create a unique run directory for {name!r} under {root}")
 
 
 def archive_data_files(

@@ -8,7 +8,7 @@ controls are owned by the StudyRunner and cannot leak into this space.
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from itertools import product
 from math import prod
@@ -18,6 +18,7 @@ from typing import Any
 import numpy as np
 
 from .case import Case
+from .inputs import integer, reject_unknown
 from .problem import candidate_role, project_candidate_case, resolve_parameter_set
 from .search_registry import get as get_optimizer
 from .search_registry import load_plugins, register
@@ -44,12 +45,16 @@ def feedback_rank(feedback: dict[str, Any]) -> tuple[float, ...] | None:
 def sample_param(rng: np.random.Generator, spec: dict[str, Any]) -> Any:
     """Draw one declared parameter value without changing its YAML type."""
 
-    if "choices" in spec:
-        choices = list(spec["choices"])
+    if "choices" in spec or "values" in spec:
+        choices = list(spec["choices"] if "choices" in spec else spec["values"])
         return choices[int(rng.integers(len(choices)))]
     if spec.get("type") == "bool":
         return bool(rng.integers(0, 2))
-    lo, hi = spec.get("bounds", [0.0, 1.0])
+    if "bounds" not in spec:
+        if "default" not in spec:
+            raise ValueError("random parameter requires choices, bounds, a bool type, or a default")
+        return spec["default"]
+    lo, hi = spec["bounds"]
     if spec.get("type") == "int":
         low, high = math.ceil(float(lo)), math.floor(float(hi))
         if low > high:
@@ -123,7 +128,7 @@ def _normalize_proposed_type(name: str, value: Any, kind: str) -> Any:
 def _validate_proposed_domain(name: str, value: Any, spec: dict[str, Any]) -> None:
     if isinstance(value, Real) and not isinstance(value, bool) and not math.isfinite(float(value)):
         raise ValueError(f"optimizer variable {name!r} must be finite")
-    choices = spec.get("choices")
+    choices = spec.get("choices", spec.get("values"))
     if choices is not None and value not in choices:
         raise ValueError(f"optimizer variable {name!r} must be one of {list(choices)!r}; got {value!r}")
     if "bounds" in spec:
@@ -143,6 +148,16 @@ class BaseOptimizer:
     case: Case
     seed: int | None = None
     history: list[dict[str, Any]] = field(default_factory=list)
+    outcome: dict[str, Any] = field(default_factory=dict, init=False)
+
+    def optimize(self, evaluate: Callable[[dict[str, Any]], dict[str, Any]], budget: int) -> None:
+        """Propose values; the shared callback owns evaluation and feedback."""
+
+        for _ in range(budget):
+            evaluate(self.ask())
+        self.outcome = {
+            "termination": "declared_grid_completed" if hasattr(self, "n_points") else "candidate_budget_exhausted"
+        }
 
     def ask(self) -> dict[str, Any]:
         raise NotImplementedError
@@ -163,11 +178,24 @@ class BaseOptimizer:
 
 
 def create_optimizer(case: Case, optimizer_name: str | None = None, seed: int | None = None) -> BaseOptimizer:
+    validate_search_settings(case, optimizer_name)
     load_plugins(case.data.get("plugins"), case.base_dir)
     config = case.data.get("optimizer", {}) or {}
-    name = optimizer_name or str(config.get("name", "random"))
+    name = str(config.get("name", "random")) if optimizer_name is None else optimizer_name
     factory = get_optimizer(name)
     return factory(project_candidate_case(case), seed=seed)
+
+
+def validate_search_settings(case: Case, optimizer_name: str | None = None) -> None:
+    config, run = case.data.get("optimizer") or {}, case.data.get("run") or {}
+    if not isinstance(config, Mapping) or not isinstance(run, Mapping):
+        raise ValueError("optimizer and run must be mappings")
+    name = optimizer_name if optimizer_name is not None else str(config.get("name", "random"))
+    if name in {"random", "grid", "differential_evolution", "least_squares"}:
+        reject_unknown(config, {"name", "seed"}, f"optimizer {name}")
+    reject_unknown(run, {"trials", "root"}, "run")
+    integer(run.get("trials", 1), "run.trials", minimum=1)
+    integer(config.get("seed", 0), "optimizer.seed", minimum=0)
 
 
 class RandomOptimizer(BaseOptimizer):
@@ -201,8 +229,8 @@ class GridOptimizer(BaseOptimizer):
         super().__init__(case=case, seed=seed)
         axes: list[tuple[str, list[Any]]] = []
         for name, spec in candidate_specs(case).items():
-            if "choices" in spec:
-                choices = list(spec["choices"])
+            if "choices" in spec or "values" in spec:
+                choices = list(spec["choices"] if "choices" in spec else spec["values"])
             elif "default" in spec and "bounds" not in spec:
                 choices = [spec["default"]]
             else:
@@ -248,3 +276,12 @@ def differential_evolution_optimizer(case: Case, seed: int | None = None) -> Bas
     from .continuous_search import DifferentialEvolutionOptimizer
 
     return DifferentialEvolutionOptimizer(case, seed=seed)
+
+
+@register("least_squares")
+def least_squares_optimizer(case: Case, seed: int | None = None) -> BaseOptimizer:
+    """Bounded terminal fitting using the ordinary evaluation callback."""
+
+    from .least_squares_search import LeastSquaresOptimizer
+
+    return LeastSquaresOptimizer(case, seed=seed)

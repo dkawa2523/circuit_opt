@@ -1,5 +1,9 @@
 # Core electrical benchmarks
 
+For current user workflows, YAML and output specifications, start with the
+[integrated engineering manual](../docs/manual-ja.md). This directory owns
+independent verification inputs and their provenance.
+
 This suite answers six separate questions about the generic circuit platform:
 
 1. Does each published network topology reproduce independent circuit algebra?
@@ -22,16 +26,10 @@ Literature transcription and apparatus-specific design challenges are kept in
 [`literature/`](literature/README.md). They are not folded into one universal
 load envelope.
 
-The smaller executable [`release/`](release/README.md) matrix checks the five
-supported user workflows end to end. It is both the P1 product-path acceptance
-record and the circuit portion of P4 release closure, while this benchmark
-suite remains the deeper electrical regression evidence. Its output separates
-workflow reproduction, circuit release readiness, the independent ML gate,
-and physical-process qualification.
-
-The separate [`ml/`](ml/README.md) area owns surrogate evidence and the P3
-fixed-pool ranking gate. It is not part of the electrical conformance suite and
-its failed 30% saving threshold does not become an optimizer feature.
+The executable [`release/`](release/README.md) matrix checks supported user
+workflows through the public CLI. This suite provides deeper independent
+electrical regression evidence. Neither result qualifies a chamber process.
+Machine learning is outside both acceptance decisions.
 
 ## Benchmark map
 

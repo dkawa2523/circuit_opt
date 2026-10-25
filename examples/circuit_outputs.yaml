@@ -1,0 +1,40 @@
+# One input for the circuit, saved probes, schematic and analysis figures.
+schema: pcd.rf.v1
+case_id: rc_outputs
+parameters:
+  fixed: {R: "1 kohm", C: "1 nF"}
+source: {type: sine_voltage, amplitude_V: 1, frequency_Hz: "1 MHz"}
+circuit:
+  output_node: out
+  components:
+    - {ref: R1, n1: src, n2: mid, value: R, observe: true}
+    - {ref: R2, n1: mid, n2: out, value: 470}
+    - {ref: C1, n1: out, n2: 0, value: C, observe: true}
+measurement:
+  voltage_node: mid
+  probes:
+    input_V: v(src)
+    filter_V: {vector: "v(out)", unit: V, label: "filter output"}
+    resistor_drop_V: v(src,mid)
+analysis:
+  ac: {sweep: dec, points: 10, start_Hz: "100 kHz", stop_Hz: "10 MHz"}
+  tran: {step_s: "10 ns", stop_s: "20 us"}
+output:
+  formats: [png, svg]
+  schematic: {view: physical}
+  plots:
+    - type: waveform
+      name: final_cycles
+      signals: [input_V, voltage_V, filter_V, component_R1_current_A]
+      time_s: ["18 us", "20 us"]
+    - type: bode
+      name: filter_transfer
+      numerator: filter_V
+      denominator: input_V
+    - type: ac
+      name: probe_response
+      signals: [filter_V, component_R1_current_A]
+    - type: harmonics
+      name: output_harmonics
+      signals: [filter_V]
+      count: 5

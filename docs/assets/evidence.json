@@ -1,0 +1,135 @@
+{
+  "platform_version": "0.22.1",
+  "generated_utc": "2026-10-25T23:28:46.491432+00:00",
+  "scope": "Synthetic or declared electrical circuits; no apparatus qualification or measured-noise precision claim",
+  "solver": {
+    "name": "ngspice_cli",
+    "version": "ngspice-46"
+  },
+  "runtime_modules": {
+    "count": 75,
+    "digest_algorithm": "SHA256 of compact sorted-key JSON array of sorted path/sha256 rows",
+    "sha256": "dffcb2e6657a5ee81616ca274cf0ac0e1a8b0f36739219e34c70bf2b2d573a68",
+    "comparison_to_0220": "Only pcd/__init__.py version string changed"
+  },
+  "inputs": [
+    {
+      "path": "examples/circuit_outputs.yaml",
+      "sha256": "fa9ff4908b6839028622e7a256ed245177b8a0d543dc16e376dbb709cdcc0258"
+    },
+    {
+      "path": "examples/terminal_identification.yaml",
+      "sha256": "133d2759dd60838cfc832b6938f3989eedac3917064d4d1f947842447e31aa60"
+    },
+    {
+      "path": "examples/terminal_observations.csv",
+      "sha256": "3bcf600c524519ed44dc72389aae991822fd604f5ba9f9503cde923311462674"
+    },
+    {
+      "path": "examples/circuit_transient.yaml",
+      "sha256": "72189bb7b514cc88c66e7ce9523914ce6f3e65eaa5bc86db4bd4abeebd0cf054"
+    },
+    {
+      "path": "examples/circuit_external.yaml",
+      "sha256": "d38231392936b3e7c4d3b751357af86513b56b7ae7877f6a37ec7d6475bc5c17"
+    },
+    {
+      "path": "examples/circuits/divider.cir",
+      "sha256": "e99d7dcfaba5abde585620c1e4925f1c53f0662e220d4a4e3968ef3bc4ceb9a3"
+    },
+    {
+      "path": "examples/circuit_design.yaml",
+      "sha256": "5b42f9d831d067678df690b7f48119be92dbad45a9be250fe084fbd85f971a66"
+    },
+    {
+      "path": "examples/advanced/target_rc.csv",
+      "sha256": "f4d1c4db18604e1e868663961fad5a25a2553f4ace15b104dab28dceebe7f18e"
+    },
+    {
+      "path": "bench/cases/role_factorial_search.yaml",
+      "sha256": "56280e2ed8535b143e5a0d8c7a613f6805efd509fac84d348e6bc70f1cf38dc8"
+    }
+  ],
+  "figures": [
+    {
+      "file": "rc-circuit.svg",
+      "sha256": "daf632e9863c3cbb26fb5fa4390e95cc8b95f2206305d207880b180a7ec71023",
+      "source_run_file": "runs/docs_0221/rc_outputs/sim_20261026_082101_ed886cd5/analysis/circuit.svg",
+      "visual_check": "PNG from the same render inspected for labels, units, reference planes and legibility"
+    },
+    {
+      "file": "rc-transfer.svg",
+      "sha256": "feac7bb4ba03341b424f3da0518aaebf93e0ccf2f75a72520581f834a5b943d7",
+      "source_run_file": "runs/docs_0221/rc_outputs/sim_20261026_082101_ed886cd5/analysis/filter_transfer.svg",
+      "visual_check": "PNG from the same render inspected for labels, units, reference planes and legibility"
+    },
+    {
+      "file": "terminal-fit.svg",
+      "sha256": "308361b1f7c9927c153a3970b33daaac99081736a599509cc59e767b2f26ace8",
+      "source_run_file": "runs/docs_0221/terminal/ccp_terminal_id-671adca0fb64fe0f/output/observed_predicted_and_residuals.svg",
+      "visual_check": "PNG from the same render inspected for labels, units, reference planes and legibility"
+    }
+  ],
+  "figure_settings": {
+    "rc": "examples/circuit_outputs.yaml without changes",
+    "terminal": "examples/terminal_identification.yaml with output={formats:[png,svg],schematic:false,plots:[]}; observations resolved to the same source CSV"
+  },
+  "numerical_checks": {
+    "rc_step": {
+      "tau_s": 1e-06,
+      "last_time_s": 2e-06,
+      "simulated_voltage_V": 4.322646958110161,
+      "ideal_instantaneous_step_voltage_V": 4.323323583816936,
+      "note": "The simulated source has a 2 ns rise time"
+    },
+    "external_divider": {
+      "input_resistance_ohm": 100.0,
+      "input_reactance_ohm": 0.0,
+      "source_peak_voltage_V": 1.0,
+      "source_real_power_W": 0.005
+    },
+    "rc_transfer": {
+      "frequency_points": 21,
+      "maximum_complex_error": 1.5700924586837752e-16,
+      "equation": "1 / (1 + j*2*pi*f*(1000+470)*1e-9)"
+    },
+    "continuous_design": {
+      "budget_candidates": 24,
+      "selected_C_F": 6.023559016149416e-10,
+      "initial_normalized_rmse": 0.34050982673127106,
+      "selected_normalized_rmse": 0.18060687648161794,
+      "selected_peak_abs_voltage_V": 4.818989600955566,
+      "declared_peak_max_V": 4.9,
+      "status": "meets_declared_acceptance",
+      "verification_cache_reused": false
+    },
+    "role_factorial": {
+      "candidate_condition_control_evaluations": 8,
+      "fresh_verification_evaluations": 2,
+      "status": "meets_declared_acceptance"
+    },
+    "terminal_identification": {
+      "status": "identified",
+      "estimated_latent": {
+        "plasma_R_eff_ohm": 18.00000000232847,
+        "plasma_C_sheath_eq_F": 1.2000000000301326e-10
+      },
+      "fit_points": 3,
+      "holdout_points": 2,
+      "fit_normalized_rms": 3.410730024092132e-11,
+      "holdout_normalized_rms": 2.6728018356389194e-11,
+      "local_rank": 2,
+      "local_condition_number": 3.8591604019249965,
+      "calibrated_fixture_resistance_ohm": 2.0,
+      "observed_terminal_resistance_ohm": 20.0,
+      "independent_measured_acquisition_verified": false
+    }
+  },
+  "reproduction": {
+    "manual_yaml_blocks": 14,
+    "standalone_manual_yaml_examples": 3,
+    "cli_and_api_checks": 19,
+    "local_evidence": "runs/docs_0221/manual_acceptance.json",
+    "note": "Run paths are repository-local records; the input files and this evidence are portable with the manual."
+  }
+}

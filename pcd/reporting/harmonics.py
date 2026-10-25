@@ -7,6 +7,10 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
+from pcd.analysis.traces import relative_harmonic_levels
+
 from .figures import _headless_pyplot, _save
 
 HarmonicLevels = tuple[list[str], list[float], float]
@@ -45,9 +49,13 @@ def _harmonic_panels(metrics: Mapping[str, Any]) -> list[tuple[str, str, Harmoni
 
 def _draw_harmonic_panel(axis: Any, title: str, unit: str, values: HarmonicLevels) -> None:
     labels, levels, fundamental = values
-    colors = ["tab:blue", *("tab:orange" for _ in labels[1:])]
-    axis.bar(labels, levels, color=colors, alpha=0.85)
-    axis.set_ylim(min(-20.0, min(levels) - 10.0), 5.0)
+    axis.plot(labels, [max(value, -120.0) for value in levels], "o-", color="tab:blue")
+    axis.axhline(-120.0, ls=":", color="grey", lw=0.8)
+    for label, level in zip(labels, levels, strict=True):
+        if level < -120:
+            axis.annotate("< -120", (label, -120), xytext=(0, 8), textcoords="offset points", ha="center", fontsize=8)
+    axis.set_ylim(-125.0, max(5.0, max(levels) + 5.0))
+    axis.set_xlabel("harmonic order; display floor -120 dBc (original values retained)")
     axis.set_ylabel("amplitude relative to H1 [dBc]")
     axis.set_title(f"{title}\nH1 = {fundamental:.4g} {unit}")
     axis.grid(alpha=0.25, axis="y")
@@ -59,7 +67,7 @@ def _harmonic_levels(values: Any) -> HarmonicLevels | None:
         return None
     fundamental = harmonics[0][1]
     labels = [f"H{order}" for order, _ in harmonics]
-    levels = [20.0 * math.log10(max(amplitude / fundamental, 1e-15)) for _, amplitude in harmonics]
+    levels = relative_harmonic_levels(np.asarray([amplitude for _, amplitude in harmonics])).tolist()
     return labels, levels, fundamental
 
 

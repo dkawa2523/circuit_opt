@@ -55,6 +55,21 @@ def test_objective_aggregation_supports_weighted_mean_worst_and_cvar():
     )
 
 
+@pytest.mark.parametrize("scale", [1.0, 1e-16, 1e300])
+def test_weighted_decisions_are_invariant_to_a_common_weight_scale(scale):
+    values = [(value, scale) for value in (10.0, 6.0, 2.0, 0.0)]
+    assert aggregate_objective(values, Objective("score", aggregation="mean")) == pytest.approx(4.5)
+    assert aggregate_objective(values, Objective("score", aggregation="cvar", cvar_alpha=0.5)) == pytest.approx(8.0)
+    scenarios = (Scenario("accepted", weight=scale), Scenario("failed", weight=scale))
+    trials = (_evaluation(scenarios[0], 1.0), _evaluation(scenarios[1], 2.0, status="failed", violation=1.0))
+    result = aggregate_candidate(
+        StudySpec("weights", scenarios=scenarios, objectives=(Objective("score"),)),
+        Candidate("design"),
+        tuple(ScenarioResult(scenario, trial, (trial,)) for scenario, trial in zip(scenarios, trials, strict=True)),
+    )
+    assert result.success_fraction == result.feasible_fraction == 0.5
+
+
 def test_candidate_aggregation_ignores_failed_missing_and_invalid_metrics():
     scenarios = (
         Scenario("valid", weight=2.0),

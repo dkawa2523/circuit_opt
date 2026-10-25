@@ -15,8 +15,10 @@ from typing import Any
 
 from .case import Case
 from .component_models import observed_components
+from .inputs import reject_unknown
 from .probes import LOAD_AMMETER, RESERVED_PROBE_COLUMNS, NamedProbe, ProbePlan
 from .simulation import LOAD_CURRENT_COLUMN, SOURCE_VOLTAGE_COLUMN, AnalysisRequest
+from .sources import ac_source_name, source_vectors
 
 DEFAULT_SOLVER_TIMEOUT_S = 300.0
 
@@ -75,6 +77,26 @@ def _mapping_section(case: Case, name: str) -> Mapping[str, Any]:
         return {}
     if not isinstance(config, Mapping):
         raise TypeError(f"{name} must be a mapping")
+    if name == "measurement":
+        reject_unknown(
+            config,
+            {
+                "voltage_node",
+                "current_source",
+                "source_voltage",
+                "load_current",
+                "probes",
+                "reference_impedance_ohm",
+                "periodic_cycles",
+                "settling_comparisons",
+                "settling_tolerance",
+                "harmonic_count",
+            },
+            "measurement",
+        )
+        for field in ("voltage_node", "current_source", "source_voltage", "load_current"):
+            if field in config and (not isinstance(config[field], str) or not config[field].strip()):
+                raise ValueError(f"measurement.{field} must be a nonempty string")
     return config
 
 
@@ -98,7 +120,7 @@ def resolve_solver_settings(case: Case, solver_override: str | None = None) -> S
     config = _solver_config(case)
     executable = config.get("executable")
     return SolverSettings(
-        name=str(solver_override or config.get("name", "ngspice_cli")),
+        name=str(config.get("name", "ngspice_cli") if solver_override is None else solver_override),
         executable=str(executable) if executable else None,
         timeout_s=_solver_timeout(config.get("timeout_s", DEFAULT_SOLVER_TIMEOUT_S)),
     )
@@ -113,79 +135,13 @@ def resolve_analysis_request(
     return AnalysisRequest.from_config(_solver_config(case), params)
 
 
-def resolve_source_specs(case: Case) -> tuple[dict[str, Any], ...]:
-    """Resolve the mutually exclusive single/list source declarations once."""
-
-    declared = case.data.get("sources")
-    source = case.data.get("source")
-    if declared is not None and source is not None:
-        raise ValueError("use either source or sources, not both")
-    if declared is not None:
-        if not isinstance(declared, list):
-            raise TypeError("sources must be a list of mappings")
-        sources: list[dict[str, Any]] = []
-        for index, source in enumerate(declared):
-            if not isinstance(source, Mapping):
-                raise TypeError(f"sources[{index}] must be a mapping")
-            sources.append(dict(source))
-        return tuple(sources)
-
-    if source is None:
-        return ()
-    if not isinstance(source, Mapping):
-        raise TypeError("source must be a mapping")
-    return (dict(source),)
-
-
-def _effective_source_name(source: Mapping[str, Any], index: int) -> str:
-    return str(source.get("name", "Vsrc" if index == 0 else f"Vsrc{index}"))
-
-
-def _source_name(sources: tuple[dict[str, Any], ...], measurement: Mapping[str, Any]) -> str:
-    structured = [
-        (_effective_source_name(source, index), source) for index, source in enumerate(sources) if "raw" not in source
-    ]
-    names = [name for name, _source in structured]
-    if any(not name.strip() for name in names):
-        raise ValueError("structured source names must not be empty")
-    if len(names) != len(set(names)):
-        raise ValueError("structured source names must be unique")
-    requested = str(measurement.get("current_source", "")).strip()
-    if requested:
-        if names and requested not in names:
-            raise ValueError(f"measurement.current_source {requested!r} is not a declared structured source")
-        return requested
-    return names[0] if names else "Vsrc"
-
-
-def _active_source(sources: tuple[dict[str, Any], ...], name: str) -> Mapping[str, Any] | None:
-    for index, source in enumerate(sources):
-        if "raw" not in source and _effective_source_name(source, index) == name:
-            return source
-    return None
-
-
-def _source_voltage_vector(sources: tuple[dict[str, Any], ...], name: str) -> str:
-    source = _active_source(sources, name)
-    if source is None:
-        return "v(src)"
-    positive, negative = str(source.get("p", "src")), str(source.get("n", "0"))
-    return f"v({positive})" if negative == "0" else f"v({positive},{negative})"
-
-
-def _load_current_column(measurement: Mapping[str, Any]) -> str | None:
-    declared = measurement.get("load_current")
-    if not declared:
-        return None
-    return LOAD_CURRENT_COLUMN if str(declared).lower() == "auto" else str(declared)
-
-
 def _declared_probes(case: Case, measurement: Mapping[str, Any]) -> tuple[NamedProbe, ...]:
     raw = measurement.get("probes")
     if raw is None:
         raw = []
+    pairs: list[tuple[Any, str]]
     if isinstance(raw, Mapping):
-        pairs = [(str(vector), str(name)) for name, vector in raw.items()]
+        pairs = [(vector, str(name)) for name, vector in raw.items()]
     elif isinstance(raw, list):
         pairs = [(str(vector), str(vector)) for vector in raw]
     else:
@@ -194,36 +150,76 @@ def _declared_probes(case: Case, measurement: Mapping[str, Any]) -> tuple[NamedP
     for component in observed_components(case):
         pairs.extend(
             [
-                (component.voltage_vector, component.voltage_column),
-                (component.current_vector, component.current_column),
+                (
+                    {
+                        "vector": component.voltage_vector,
+                        "unit": "V",
+                        "label": f"{component.reference} voltage ({component.p} to {component.n})",
+                    },
+                    component.voltage_column,
+                ),
+                (
+                    {
+                        "vector": component.current_vector,
+                        "unit": "A",
+                        "label": f"{component.reference} current ({component.p} to {component.n})",
+                    },
+                    component.current_column,
+                ),
             ]
         )
-    by_column: dict[str, str] = {}
-    for vector, column in pairs:
+    by_column: dict[str, NamedProbe] = {}
+    for raw_vector, column in pairs:
+        if not column.strip() or any(char in column for char in "\r\n"):
+            raise ValueError("probe names must be nonempty single-line column names")
+        config = dict(raw_vector) if isinstance(raw_vector, Mapping) else {"vector": raw_vector}
+        reject_unknown(config, {"vector", "unit", "label"}, f"measurement.probes.{column}")
+        vector = config.get("vector")
+        if not isinstance(vector, str) or not vector.strip() or any(char in vector for char in "\r\n;"):
+            raise ValueError(f"probe {column!r} requires one nonempty SPICE vector")
+        probe = NamedProbe(vector.strip(), column, config.get("unit"), config.get("label"))
+        if probe.label is not None and (not isinstance(probe.label, str) or not probe.label.strip()):
+            raise ValueError(f"probe {column!r} label must be a nonempty string")
+        if probe.unit is not None and (not isinstance(probe.unit, str) or probe.unit != probe.resolved_unit):
+            raise ValueError(f"probe {column!r} unit does not match its voltage/current vector")
+        if probe.resolved_unit is None:
+            raise ValueError(f"probe {column!r} needs an explicit unit for a general SPICE expression")
         if column in RESERVED_PROBE_COLUMNS:
             raise ValueError(f"probe column {column!r} is reserved by the waveform/AC result format")
-        if column in by_column and by_column[column] != vector:
+        if column in by_column and by_column[column].vector != vector:
             raise ValueError(f"probe column {column!r} names both {by_column[column]!r} and {vector!r}")
-        by_column[column] = vector
-    return tuple(NamedProbe(vector, column) for column, vector in by_column.items())
+        by_column[column] = probe
+    return tuple(by_column.values())
 
 
 def _build_probe_plan(
     case: Case,
-    sources: tuple[dict[str, Any], ...],
     measurement: Mapping[str, Any],
 ) -> ProbePlan:
-    source = _source_name(sources, measurement)
+    source, source_voltage, source_current = source_vectors(case)
     declared = list(_declared_probes(case, measurement))
-    load_current = _load_current_column(measurement)
-    if load_current == LOAD_CURRENT_COLUMN:
+    load_current = measurement.get("load_current")
+    if load_current in {"auto", LOAD_CURRENT_COLUMN}:
+        load = _mapping_section(case, "load")
+        if load.get("name", "none") == "none":
+            raise ValueError(
+                "measurement.load_current: auto requires a declared load; use a named current probe for an embedded load"
+            )
+        load_current = LOAD_CURRENT_COLUMN
         declared.append(NamedProbe(f"i({LOAD_AMMETER})", LOAD_CURRENT_COLUMN))
+    elif load_current is not None:
+        probe = next((probe for probe in declared if probe.column == load_current), None)
+        if probe is None or not probe.is_current:
+            raise ValueError(
+                f"measurement.load_current {load_current!r} must name a declared current probe (i(branch) or @device[i]); "
+                "its positive direction must enter the load at the declared load ports"
+            )
     ac = tuple(declared)
-    source_voltage = _source_voltage_vector(sources, source)
     transient = (*ac, NamedProbe(source_voltage, SOURCE_VOLTAGE_COLUMN))
     return ProbePlan(
         source_name=source,
         source_voltage_vector=source_voltage,
+        source_current_vector=source_current,
         load_current_column=load_current,
         transient=transient,
         ac=ac,
@@ -235,7 +231,6 @@ def build_probe_plan(case: Case) -> ProbePlan:
 
     return _build_probe_plan(
         case,
-        resolve_source_specs(case),
         _mapping_section(case, "measurement"),
     )
 
@@ -272,13 +267,14 @@ def resolve_simulation_case(
         raise TypeError("solver.options must be a mapping")
     solver = resolve_solver_settings(case, solver_override)
     analysis = resolve_analysis_request(case, params)
-    sources = resolve_source_specs(case)
+    if analysis.ac is not None:
+        ac_source_name(case, analysis.ac.source)
     measurement = _mapping_section(case, "measurement")
     load = _mapping_section(case, "load")
     return ResolvedSimulationCase(
         solver=solver,
         analysis=analysis,
-        probes=_build_probe_plan(case, sources, measurement),
+        probes=_build_probe_plan(case, measurement),
         measurement=_measurement_reference(measurement, load),
         netlist_options=tuple((str(name), value) for name, value in options.items()),
     )

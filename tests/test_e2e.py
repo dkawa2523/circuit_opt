@@ -1,6 +1,6 @@
-"""End-to-end journeys, exercised through the installed console script.
+"""End-to-end journeys, exercised through the module CLI.
 
-Marked ``e2e`` so they run in ``quality-nightly`` rather than on every edit.
+Marked ``e2e`` for ``quality-pr`` and ``quality-nightly``; excluded by ``quality-fast``.
 They cover direct simulation, the unified scenario-aware study path, and the
 physical ngspice path.
 """
@@ -49,11 +49,84 @@ def pcd(*args: str, expect_success: bool = True) -> subprocess.CompletedProcess[
 
 
 @pytest.mark.skipif(not ngspice_available, reason="ngspice is not installed on this machine")
+def test_narrow_solver_resolved_pulses_cannot_pass_a_component_stress_limit(tmp_path):
+    result = pcd(
+        "run",
+        str(FIXTURES / "pulse_stress.yaml"),
+        "--output",
+        str(tmp_path),
+        "--require-acceptance",
+        "--json",
+        expect_success=False,
+    )
+    assert result.returncode == 1
+    study = json.loads(result.stdout)
+    assert study["verification"]["status"] == "verified"
+    assert study["best"]["status"] == "does_not_meet_declared_acceptance"
+    selected = selected_evaluation(read_best_candidate(study["run_root"])["scenarios"][0])
+    assert selected["metrics"]["component_Rnetwork_voltage_peak_V"] == pytest.approx(100.0)
+    assert selected["metrics"]["load_real_power_W"] > 0
+
+
+@pytest.mark.skipif(not ngspice_available, reason="ngspice is not installed on this machine")
+@pytest.mark.parametrize("budget", [1, 32])
+def test_terminal_least_squares_recovers_known_values_within_its_real_evaluation_budget(tmp_path, budget):
+    result = pcd(
+        "identify",
+        str(EXAMPLES / "terminal_identification.yaml"),
+        "--output",
+        str(tmp_path),
+        "--json",
+        "--trials",
+        str(budget),
+        expect_success=False,
+    )
+    identification = json.loads(result.stdout)
+    manifest_path = Path(identification["run_root"]) / identification["artifacts"]["input_manifest"]
+    manifest = json.loads(manifest_path.read_text())
+    observation = next(item for item in manifest["inputs"] if item["original_name"] == "terminal_observations.csv")
+    assert observation["status"] == "archived"
+    assert (manifest_path.parent / observation["artifact"]).read_bytes() == (
+        EXAMPLES / "terminal_observations.csv"
+    ).read_bytes()
+    assert result.returncode == (0 if budget == 32 else 1)
+    if budget == 32:
+        assert identification["status"] == "identified"
+        assert identification["estimated_latent"]["plasma_R_eff_ohm"] == pytest.approx(18.0, rel=1e-5)
+        assert identification["estimated_latent"]["plasma_C_sheath_eq_F"] == pytest.approx(120e-12, rel=1e-5)
+        assert identification["holdout"]["value"] < 1e-6
+    fit = json.loads(
+        (Path(identification["run_root"]) / identification["artifacts"]["fit_result"]).read_text(encoding="utf-8")
+    )
+    assert fit["n_candidates"] <= budget
+    assert fit["n_evaluations"] == 3 * fit["n_candidates"]
+
+
+@pytest.mark.skipif(not ngspice_available, reason="ngspice is not installed on this machine")
+def test_source_observation_does_not_replace_the_actual_ac_load_voltage(tmp_path, make_case):
+    from pcd.case import load_case
+
+    data = load_case(EXAMPLES / "advanced" / "rf_port_transient.yaml").data
+    data["source"].update(amplitude_V=1.0, ac_magnitude_V=1.0)
+    data["measurement"].update(voltage_node="src", reference_impedance_ohm=100.0)
+    data["solver"] = {"name": "ngspice_cli", "ac": {"frequency_Hz": 1e6}}
+    data["target"] = {"objective": "impedance_match"}
+    case = make_case(data)
+    simulation = json.loads(pcd("sim-run", str(case.path), "--run-root", str(tmp_path / "runs"), "--json").stdout)
+    report = json.loads(pcd("analyze", simulation["run_dir"], "--json").stdout)
+    metrics = report["analyses"]["ac"]
+    assert metrics["reflected_power_W"] == pytest.approx(0.0, abs=1e-15)
+    assert metrics["source_real_power_W"] == pytest.approx(0.005)
+    assert metrics["load_real_power_W"] == pytest.approx(0.0025)
+    assert metrics["network_loss_W"] == pytest.approx(0.0025)
+
+
+@pytest.mark.skipif(not ngspice_available, reason="ngspice is not installed on this machine")
 def test_simulation_only_journey_produces_the_boundary_artifacts(tmp_path):
     """RF/circuit engineer path: case -> netlist -> waveform, never metrics."""
 
     run_root = tmp_path / "sim_only"
-    pcd("sim-run", str(RC_CASE), "--solver", "ngspice_cli", "--run-root", str(run_root))
+    pcd("sim-run", str(EXAMPLES / "circuit_transient.yaml"), "--solver", "ngspice_cli", "--run-root", str(run_root))
 
     summaries = list(run_root.rglob("summary.json"))
     assert len(summaries) == 1
@@ -101,7 +174,7 @@ def test_production_safe_journey_uses_strict_validation_and_default_failure_exit
     assert result.returncode == 0
 
     run_root = tmp_path / "prod"
-    pcd("sim-run", str(RC_CASE), "--solver", "ngspice_cli", "--run-root", str(run_root))
+    pcd("sim-run", str(EXAMPLES / "circuit_transient.yaml"), "--solver", "ngspice_cli", "--run-root", str(run_root))
 
 
 def test_netlist_visualization_journey(tmp_path):
@@ -122,7 +195,15 @@ def test_real_ngspice_transient_produces_a_physical_waveform(tmp_path):
     """The installed solver produces the physical transient artifact."""
 
     run_root = tmp_path / "ngspice"
-    result = pcd("sim-run", str(RC_CASE), "--solver", "ngspice_cli", "--run-root", str(run_root), "--json")
+    result = pcd(
+        "sim-run",
+        str(EXAMPLES / "circuit_transient.yaml"),
+        "--solver",
+        "ngspice_cli",
+        "--run-root",
+        str(run_root),
+        "--json",
+    )
     summary = json.loads(result.stdout)
     assert summary["status"] == "ok"
     assert summary["solver"] == "ngspice_cli"
@@ -141,7 +222,7 @@ def test_real_ngspice_transient_produces_a_physical_waveform(tmp_path):
     assert frame["time_s"].is_monotonic_increasing
     assert frame.notna().all().all()
 
-    stop = 2.0e-6  # advanced/generic_rc_filter.yaml solver.tran.stop_s
+    stop = 2.0e-6  # circuit_transient.yaml analysis.tran.stop_s
     assert frame["time_s"].iloc[-1] == pytest.approx(stop, rel=0.05)
     # RC low-pass driven by a 0..5 V pulse: the output must stay inside the rail.
     assert frame["voltage_V"].abs().max() <= 5.0 + 1e-6
@@ -199,6 +280,8 @@ def test_real_ngspice_closed_loop_completes(tmp_path):
     payload = json.loads(result.stdout)
     assert payload["n_candidates"] == 3
     assert payload["n_failed_evaluations"] == 0
+    assert payload["best"]["evaluation_evidence"] == "complete"
+    assert payload["execution"]["optimizer_outcome"]["termination"] == "candidate_budget_exhausted"
     assert payload["best"]["aggregates"]["normalized_rmse"] >= 0.0
     assert payload["best"]["aggregates"]["peak_abs_voltage_V"] >= 0.0
     assert payload["pareto"]["front_candidates"] >= 1

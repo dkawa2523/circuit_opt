@@ -218,18 +218,19 @@ def test_malformed_solver_output_is_reported_as_a_parse_failure(tmp_path, monkey
     assert result.diagnostics["parse_error"] == "ValueError: bad data"
 
 
-def test_a_partial_transient_is_not_reported_as_success(tmp_path, monkeypatch):
+@pytest.mark.parametrize("step_s", [1e-9, 1e-6])
+def test_a_partial_transient_is_not_reported_as_success(tmp_path, monkeypatch, step_s):
     """ngspice can return zero after a time-step abort while leaving a partial CSV."""
 
     case = Case(
         path=EX / "generic_rc_filter.yaml",
-        data={"solver": {"executable": "ngspice", "tran": {"step_s": 1e-9, "stop_s": 1e-6}}},
+        data={"solver": {"executable": "ngspice", "tran": {"step_s": step_s, "stop_s": 1e-6}}},
     )
     monkeypatch.setattr(solver_module.shutil, "which", lambda exe: exe)
 
     def fake_run(cmd, **kwargs):
         time_s = np.array([0.0, 1e-9, 2e-9])
-        np.savetxt(Path(kwargs["cwd"]) / "waveform.csv", np.column_stack([time_s, time_s] * 4))
+        np.savetxt(Path(kwargs["cwd"]) / "waveform.csv", np.column_stack([time_s, time_s] * 5))
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
     monkeypatch.setattr(solver_module.subprocess, "run", fake_run)
@@ -273,7 +274,7 @@ def test_an_ac_only_run_succeeds_without_a_waveform_file(tmp_path, monkeypatch):
     def fake_run(cmd, **kwargs):
         np.savetxt(
             Path(kwargs["cwd"]) / "ac.csv",
-            [[1e6, 1.0, 0.0, 1e6, -0.02, 0.0, 1e6, 0.5, 0.0]],
+            [[1e6, 1.0, 0.0, 1e6, -0.02, 0.0, 1e6, 0.5, 0.0, 1e6, 0.5, 0.0]],
         )
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
@@ -305,8 +306,8 @@ def test_windows_runs_the_console_binary_without_opening_a_window(tmp_path, wind
     def fake_run(cmd, **kwargs):
         observed.update(cmd=cmd, kwargs=kwargs)
         t = np.array([0.0, 5e-7, 1e-6])
-        # wrdata writes a (scale, value) pair per vector: time, v(out), i(Vsrc), v(src).
-        np.savetxt(Path(kwargs["cwd"]) / "waveform.csv", np.column_stack([t, t] * 4))
+        # time, observed output, source current/voltage, and actual load voltage.
+        np.savetxt(Path(kwargs["cwd"]) / "waveform.csv", np.column_stack([t, t] * 5))
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
     windows_ngspice.setattr(solver_module.subprocess, "run", fake_run)

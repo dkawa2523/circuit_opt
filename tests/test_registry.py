@@ -147,4 +147,4 @@ def test_application_registries_are_separate_and_complete():
     assert "ngspice_cli" in sim_registry.available()["solver"]
     assert "dummy" not in sim_registry.available()["solver"]
     assert "waveform_l2" in metric_registry.available()
-    assert set(search_registry.available()) == {"differential_evolution", "grid", "random"}
+    assert {"differential_evolution", "grid", "random", "least_squares"} <= set(search_registry.available())

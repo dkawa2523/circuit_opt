@@ -84,5 +84,5 @@
 
 ## 追跡可能な元データ
 
-- 詳細な問題設定、式、文献、再現手順: [`../../docs/etch-ccp-dcs-dynamic-impedance-study-ja.md`](../../docs/etch-ccp-dcs-dynamic-impedance-study-ja.md)
+- 詳細な問題設定、式、文献、再現手順: [個別検証](../../docs/studies/etch-ccp-dcs-dynamic-impedance-study-ja.md)
 - 元ファイルの全ハッシュ値、誤差、81格子候補、GP-UCB 600 trialのloss履歴と集約評価: [`../../bench/figures/etch_ccp_dcs/figure_data.json`](../../bench/figures/etch_ccp_dcs/figure_data.json)

@@ -99,6 +99,7 @@ Keep these meanings distinct:
 - benchmark PASS means frozen behavior or a stated decision was reproduced;
 - none of these qualifies plasma chemistry, thermal lifetime, or process yield.
 
-For model interpretation, read `docs/rf-load-models.md`. For input fields and
-external netlists, read `docs/input-format.md`. For extension boundaries, read
-`docs/architecture.md`.
+For model interpretation, input fields, external netlists, output and extension
+boundaries, read [the integrated manual](../../../docs/manual-ja.md), sections
+4–10 and 14–15. The manual is the current specification; research notes and
+publication snapshots describe their own stated scope.

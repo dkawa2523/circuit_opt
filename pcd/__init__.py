@@ -1,3 +1,3 @@
 """Reusable scenario-aware electrical design-study engine."""
 
-__version__ = "0.16.0"
+__version__ = "0.22.1"

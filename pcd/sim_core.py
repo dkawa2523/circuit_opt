@@ -13,7 +13,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import sys
 import time
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
@@ -23,11 +22,12 @@ from typing import Any
 from . import __version__
 from .artifacts import (
     archive_data_files,
-    artifact_path_segment,
     atomic_write_text,
+    create_run_directory,
     file_sha256,
     package_source_sha256,
     rewrite_data_file_paths,
+    runtime_environment,
     utc_now,
     write_json,
     yaml_dump,
@@ -35,6 +35,7 @@ from .artifacts import (
 from .case import Case, case_warnings, fill_default_params, resolve_path
 from .netlist import Circuit, NetlistInputs, build_netlist_inputs, render_ngspice_netlist
 from .netlist_import import flatten_netlist_file
+from .probes import signal_catalog
 from .sim_registry import invoke_solver
 from .simulation import AC_ARTIFACT, AC_FILE, TRANSIENT_ARTIFACT, WAVEFORM_FILE, SimulationResult
 from .simulation_input import (
@@ -88,6 +89,8 @@ class SimRecord:
     diagnostics: dict[str, Any] = field(default_factory=dict)
     provenance: dict[str, Any] = field(default_factory=dict)
     case_files: dict[str, str] = field(default_factory=dict)
+    signals_file: str = "data/signals.json"
+    output_result: dict[str, Any] | None = None
 
     def summary(self) -> dict[str, Any]:
         """Return the small result a simulation user should read first."""
@@ -95,11 +98,14 @@ class SimRecord:
         solver = self.provenance.get("solver") or {}
         artifacts = {
             "waveform": self.waveform_file,
+            "signals": self.signals_file,
             **({"frequency_response": self.frequency_response_file} if self.frequency_response_file else {}),
             "debug_manifest": DEBUG_MANIFEST_FILE,
         }
         return {
             "schema": "simulation_summary.v1",
+            "scope": "single_resolved_parameter_point",
+            "params": self.params,
             "case_id": self.case_id,
             "run_dir": str(self.run_dir),
             "status": self.status,
@@ -109,6 +115,7 @@ class SimRecord:
             "artifacts": artifacts,
             "warnings": self.warnings,
             "error": self.error,
+            **({"output": self.output_result} if self.output_result is not None else {}),
         }
 
     def manifest(self) -> dict[str, Any]:
@@ -129,12 +136,14 @@ class SimRecord:
                 "netlist": self.netlist_file,
                 "waveform": self.waveform_file,
                 "solver_log": self.solver_log_file,
+                "signals": self.signals_file,
                 **({"frequency_response": self.frequency_response_file} if self.frequency_response_file else {}),
             },
             "warnings": self.warnings,
             "error": self.error,
             "diagnostics": self.diagnostics,
             "provenance": self.provenance,
+            **({"output": self.output_result} if self.output_result is not None else {}),
         }
 
 
@@ -169,7 +178,7 @@ def _build_provenance(case: Case, params: dict[str, Any], settings: SolverSettin
     provenance = {
         "platform_version": __version__,
         "implementation_sha256": package_source_sha256(),
-        "python_version": sys.version.split()[0],
+        "environment": runtime_environment(),
         "case_path": str(case.path),
         "case_data_sha256": _digest(case.data),
         "params_sha256": _digest(params),
@@ -193,21 +202,11 @@ def _run_root(case: Case, run_root: str | Path | None) -> Path:
 
 def _make_run_dir(root: Path, run_id: str | None, params: dict[str, Any]) -> Path:
     if run_id:
-        return _ensure_unique_dir(root / artifact_path_segment(run_id))
+        return create_run_directory(root, run_id)
     # The digest names the directory; it is not a security primitive, and
     # usedforsecurity=False does not change it, so names stay reproducible.
     digest = hashlib.sha1(repr(sorted(params.items())).encode("utf-8"), usedforsecurity=False).hexdigest()[:8]
-    return _ensure_unique_dir(root / f"sim_{time.strftime('%Y%m%d_%H%M%S')}_{digest}")
-
-
-def _ensure_unique_dir(path: Path) -> Path:
-    if not path.exists():
-        return path
-    for i in range(1, 1000):
-        candidate = path.with_name(artifact_path_segment(f"{path.name}_{i:03d}"))
-        if not candidate.exists():
-            return candidate
-    raise RuntimeError(f"cannot create unique run directory near {path}")
+    return create_run_directory(root, f"sim_{time.strftime('%Y%m%d_%H%M%S')}_{digest}")
 
 
 # -----------------------------------------------------------------------------
@@ -351,19 +350,37 @@ def _prepare_case_in_dir(
         load=netlist_inputs.load_name,
         solver=solver,
         measurement={
+            "drive_basis": (case.data.get("metadata") or {}).get("drive_basis", "declared_or_imported"),
             "voltage_node": measurement.voltage_node or circuit.output_node,
             "current_source": probes.source_name,
+            "source_voltage_vector": probes.source_voltage_vector,
+            "source_current_vector": probes.source_current_vector or f"i({probes.source_name})",
+            "load_voltage_column": "load_voltage_V",
             "load_ports": {
                 "p": measurement.load_positive or circuit.output_node,
                 "n": measurement.load_negative,
             },
             "load_current": probes.load_current_column,
-            "reference_plane": measurement.reference_plane,
+            "load_current_vector": next(
+                (probe.vector for probe in probes.ac if probe.column == probes.load_current_column), None
+            ),
+            "load_current_positive_direction": "into_load" if probes.load_current_column else None,
+            "load_current_binding": "inserted_load_ammeter"
+            if probes.load_current_column == "load_current_A"
+            else ("user_declared_current_probe" if probes.load_current_column else None),
+            "load_reference_plane": measurement.reference_plane,
+            "impedance_reference_plane": "source_port",
+            "output_voltage_vector": (
+                f"v({measurement.voltage_node})"
+                if measurement.voltage_node is not None
+                else f"v({measurement.load_positive or circuit.output_node},{measurement.load_negative})"
+            ),
         },
         warnings=case_warnings(case) + circuit.warnings(),
         provenance=_build_provenance(case, full_params, simulation.solver),
         case_files=case_files,
     )
+    write_json(record.run_dir / record.signals_file, signal_catalog(simulation.probes, record.measurement))
     _write_record(case, record)
     return record
 
@@ -400,6 +417,9 @@ def execute_case(
         warnings=warnings,
         run_seconds=time.perf_counter() - start,
         diagnostics=result.diagnostics,
+        error=str(result.diagnostics.get("error") or "solver reported a failure; see debug/solver.log")
+        if result.status != "ok"
+        else None,
         frequency_response_file=AC_ARTIFACT if result.frequency_response is not None else None,
     )
     _write_record(case, final)
@@ -440,9 +460,23 @@ def _run_solver(record: SimRecord, simulation: ResolvedSimulationCase) -> Simula
     result = invoke_solver(simulation.solver.name, request)
     if not isinstance(result, SimulationResult):
         raise TypeError(f"solver '{simulation.solver.name}' must return SimulationResult")
+    result.validate_for(simulation.analysis)
     result.as_frame().to_csv(record.run_dir / record.waveform_file, index=False)
     if result.frequency_response is not None:
         result.frequency_response.to_csv(record.run_dir / AC_ARTIFACT, index=False)
+    write_json(
+        record.run_dir / record.signals_file,
+        signal_catalog(
+            simulation.probes,
+            record.measurement,
+            transient_columns=tuple(result.as_frame().columns)
+            if result.status == "ok" and simulation.analysis.transient is not None
+            else (),
+            ac_columns=tuple(result.frequency_response.columns)
+            if result.status == "ok" and result.frequency_response is not None
+            else (),
+        ),
+    )
     (record.run_dir / record.solver_log_file).write_text(result.log or "", encoding="utf-8")
     _remove_solver_scratch(record.run_dir)
     return result

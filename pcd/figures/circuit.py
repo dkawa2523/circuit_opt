@@ -137,11 +137,15 @@ class CircuitDiagram:
         symbol_start = (start[0] + ux * lead, start[1] + uy * lead)
         symbol_end = (end[0] - ux * lead, end[1] - uy * lead)
         self.wire(start, symbol_start)
-        element = factory().at(symbol_start).to(symbol_end)
+        element = factory().at(symbol_start).theta(math.degrees(math.atan2(dy, dx))).to(symbol_end)
         if label is not None:
             kwargs = {"loc": label_location} if label_location else {}
             element = element.label(label, **kwargs)
         self.drawing.add(element)
+        if not _same_point(tuple(element.absanchors["start"]), symbol_start) or not _same_point(
+            tuple(element.absanchors["end"]), symbol_end
+        ):
+            raise ValueError(f"{name or 'component'} symbol terminals do not meet the requested wires")
         self.wire(symbol_end, end)
         placement = PlacedComponent(
             name=name or getattr(factory, "__name__", type(element).__name__),

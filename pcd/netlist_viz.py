@@ -1,394 +1,336 @@
-"""Drawing a parsed netlist as a conventional schematic.
+"""Complete connectivity drawings using Schemdraw symbols and shared geometry.
 
-Layout model, in one sentence: the longest non-ground path becomes a horizontal
-series chain, anything tied to ground hangs below it, and a series element
-feeding a single grounded element collapses into one vertical branch.
-
-Parsing lives in :mod:`pcd.netlist_parse`; this module only draws.
+A spanning forest places nodes. Every remaining branch gets its own route;
+parallel edges, disconnected sections and extra sources are never discarded.
 """
 
 from __future__ import annotations
 
-import itertools
+import math
+import re
+from collections import Counter, defaultdict, deque
 from pathlib import Path
 from typing import Any
 
-from .netlist_parse import Coupling, NetlistEdge, ParsedNetlist, node_sort_key, parse_netlist
-
-#: Grid spacing between series elements, in schemdraw units.
-UNIT = 3.1
-
-GROUND = "0"
+from .figures.circuit import CircuitDiagram, CircuitStyle, CircuitViewport
+from .netlist_parse import NetlistEdge, ParsedNetlist, node_sort_key, parse_netlist
 
 
-def _is_grounded(edge: NetlistEdge) -> bool:
-    """True for an element with one terminal on ground: it is drawn as a shunt."""
-
-    return GROUND in {edge.n1, edge.n2}
-
-
-def _live_node(edge: NetlistEdge) -> str:
-    """The non-ground terminal of a grounded element."""
-
-    return edge.n2 if edge.n1 == GROUND else edge.n1
+def _instrument(edge: NetlistEdge) -> bool:
+    return (
+        edge.kind == "voltage"
+        and (edge.ref.lower().startswith("vobserve_") or edge.ref.lower() == "vload_meter")
+        and bool(re.fullmatch(r"(?:dc\s+)?[+-]?0(?:\.0*)?", edge.value.strip(), re.IGNORECASE))
+    )
 
 
-def render_netlist_schematic(netlist_path: str | Path, out: str | Path, title: str | None = None) -> None:
-    """Draw a netlist as a schematic PNG."""
+def _physical_edges(parsed: ParsedNetlist, view: str) -> tuple[list[NetlistEdge], dict[str, str], list[str]]:
+    parents: dict[str, str] = {}
 
-    import schemdraw
+    def find(node: str) -> str:
+        if node in parents:
+            parents[node] = find(parents[node])
+            return parents[node]
+        return node
 
-    _use_headless_backend()
-    parsed = parse_netlist(netlist_path)
-    out = Path(out)
-    out.parent.mkdir(parents=True, exist_ok=True)
-
-    main = _main_signal_path([n for n in parsed.nodes if n != "0"], parsed.edges)
-    with schemdraw.Drawing(show=False, unit=UNIT) as drawing:
-        drawing.config(fontsize=8)
-        if title:
-            _label_at(drawing, title, (UNIT * max(len(main), 3) / 2, UNIT * 1.8), fontsize=12)
-        undrawn = _draw_circuit(drawing, parsed, main) if main else list(parsed.couplings)
-        if not main:
-            _label_at(drawing, "no drawable two-terminal components", (0, 0), fontsize=10)
-        _draw_footer(drawing, parsed, main, undrawn)
-        drawing.save(str(out), dpi=170)
-
-
-def _use_headless_backend() -> None:
-    """Select matplotlib's file-only backend before any figure is created.
-
-    Rendering always writes a PNG and never shows a window.  Left to its
-    default, matplotlib picks an interactive backend when a display exists,
-    which allocates GUI resources during batch rendering and fails outright on
-    a headless CI runner.
-    """
-
-    import matplotlib
-
-    if matplotlib.get_backend().lower() != "agg":
-        matplotlib.use("Agg", force=True)
+    hidden = []
+    if view == "physical":
+        for edge in parsed.edges:
+            if _instrument(edge):
+                first, second = find(edge.n1), find(edge.n2)
+                if first != second:
+                    preferred = min(
+                        (first, second), key=lambda name: ("observe_" in name or "meter" in name, node_sort_key(name))
+                    )
+                    parents[second if preferred == first else first] = preferred
+                hidden.append(edge.ref)
+    mapping = {node: find(node) for node in parsed.nodes}
+    edges = [
+        NetlistEdge(e.ref, mapping[e.n1], mapping[e.n2], e.value, e.kind, tuple(mapping[n] for n in e.nodes))
+        for e in parsed.edges
+        if e.ref not in hidden
+    ]
+    return edges, mapping, hidden
 
 
-# -----------------------------------------------------------------------------
-# Layout
-# -----------------------------------------------------------------------------
-
-
-def _main_signal_path(nodes: list[str], edges: list[NetlistEdge]) -> list[str]:
-    """The longest non-ground path, preferring one that ends at a shunt."""
-
-    graph: dict[str, set[str]] = {n: set() for n in nodes}
+def _positions(edges: list[NetlistEdge]) -> dict[str, tuple[float, float]]:
+    graph: dict[str, set[str]] = defaultdict(set)
     for edge in edges:
-        if _is_grounded(edge):
-            continue
-        graph.setdefault(edge.n1, set()).add(edge.n2)
-        graph.setdefault(edge.n2, set()).add(edge.n1)
-    if not graph:
-        return []
-
-    grounded = {_live_node(e) for e in edges if _is_grounded(e)}
-
-    def score(path: list[str]) -> tuple[int, int, int]:
-        return (len(path), int(path[-1] in grounded), -node_sort_key(path[-1])[0])
-
-    start = "src" if "src" in graph else sorted(graph, key=node_sort_key)[0]
-    best = [start]
-
-    def walk(node: str, path: list[str]) -> None:
-        nonlocal best
-        if score(path) > score(best):
-            best = list(path)
-        for nxt in sorted(graph.get(node, set()), key=node_sort_key):
-            if nxt not in path:
-                walk(nxt, [*path, nxt])
-
-    walk(start, [start])
-    return best
-
-
-def _main_edges(main: list[str], edges: list[NetlistEdge]) -> list[NetlistEdge]:
-    """The edges along the main path, oriented left to right."""
-
-    out: list[NetlistEdge] = []
-    for n1, n2 in itertools.pairwise(main):
-        edge = next((e for e in edges if {e.n1, e.n2} == {n1, n2}), None)
-        if edge is None:
-            continue
-        oriented = edge if (edge.n1, edge.n2) == (n1, n2) else NetlistEdge(edge.ref, n1, n2, edge.value, edge.kind)
-        out.append(oriented)
-    return out
+        nodes = [node for node in edge.nodes if node != "0"]
+        for node in nodes:
+            graph[node].update(other for other in nodes if other != node)
+    remaining = set(graph)
+    points: dict[str, tuple[float, float]] = {}
+    base = 0.0
+    while remaining:
+        start = min(remaining, key=node_sort_key)
+        queue = deque([(start, 0)])
+        levels: dict[int, list[str]] = defaultdict(list)
+        seen = {start}
+        while queue:
+            node, level = queue.popleft()
+            levels[level].append(node)
+            for other in sorted(graph[node], key=node_sort_key):
+                if other not in seen:
+                    seen.add(other)
+                    queue.append((other, level + 1))
+        for level, nodes in levels.items():
+            for row, node in enumerate(nodes):
+                points[node] = (4.5 * level, base - 4.5 * row)
+        remaining -= seen
+        base -= 4.5 * (max(map(len, levels.values())) - 1) + 6.3
+    return points
 
 
-def _series_shunt_pairs(
-    edges: list[NetlistEdge], main_nodes: set[str]
-) -> list[tuple[NetlistEdge, NetlistEdge, str, str]]:
-    """Series element + its single grounded partner, drawn as one branch.
-
-    Without this, an L-match's series inductor and its shunt capacitor would be
-    drawn as two unrelated stubs instead of the branch they physically form.
-    """
-
-    grounded_by_node: dict[str, list[NetlistEdge]] = {}
-    for edge in edges:
-        if _is_grounded(edge):
-            grounded_by_node.setdefault(_live_node(edge), []).append(edge)
-
-    pairs = []
-    for edge in edges:
-        if _is_grounded(edge):
-            continue
-        on_main = (edge.n1 in main_nodes, edge.n2 in main_nodes)
-        if on_main[0] == on_main[1]:
-            continue
-        base, branch = (edge.n1, edge.n2) if on_main[0] else (edge.n2, edge.n1)
-        partners = grounded_by_node.get(branch, [])
-        if len(partners) == 1:
-            pairs.append((edge, partners[0], base, branch))
-    return pairs
+def _value(edge: NetlistEdge, parameters: dict[str, str]) -> str:
+    value = re.sub(r"\{([\w.]+)\}", lambda m: parameters.get(m[1].lower(), m[0]), edge.value)
+    if edge.kind in {"voltage", "current"}:
+        unit = "V" if edge.kind == "voltage" else "A"
+        sine = re.search(r"(?i)sin\(\s*([^\s,]+)[\s,]+([^\s,]+)[\s,]+([^\s,)]+)", value)
+        pulse = re.search(r"(?i)pulse\(\s*([^\s,]+)[\s,]+([^\s,]+)", value)
+        if sine:
+            return f"{sine[2]} {unit} peak, f={sine[3]} Hz"
+        if pulse:
+            return f"pulse {pulse[1]} to {pulse[2]} {unit}"
+    unit = {"resistor": "ohm", "capacitor": "F", "inductor": "H"}.get(edge.kind)
+    try:
+        number = float(value)
+    except ValueError:
+        return value if len(value) <= 65 else value[:62] + "..."
+    if not unit or number == 0:
+        return value + (" " + unit if unit else "")
+    power = max(-12, min(9, 3 * math.floor(math.log10(abs(number)) / 3)))
+    prefix = {-12: "p", -9: "n", -6: "u", -3: "m", 0: "", 3: "k", 6: "M", 9: "G"}[power]
+    return f"{number / 10**power:.4g} {prefix}{unit}"
 
 
-def _branch_offsets(n: int) -> list[float]:
-    """Fan several branches out horizontally so they do not overlap."""
-
-    return [0.0] if n <= 1 else [(-0.55 * (n - 1) / 2.0) + 0.55 * i for i in range(n)]
-
-
-# -----------------------------------------------------------------------------
-# Drawing
-# -----------------------------------------------------------------------------
-
-
-def _draw_circuit(drawing: Any, parsed: ParsedNetlist, main: list[str]) -> list[Coupling]:
-    """Draw the circuit; return the couplings that could not be drawn."""
-
-    source, shunts, collapsed = _partition_edges(parsed, main)
-    # Where each element ended up, so magnetic couplings can be tied to coils
-    # the three layout passes place independently.
-    coils: dict[str, Any] = {}
-    node_points = _draw_main_chain(drawing, parsed, main, source, coils)
-    _draw_shunts(drawing, shunts, node_points, coils)
-    _draw_collapsed_pairs(drawing, collapsed, node_points, coils)
-    return _draw_couplings(drawing, parsed.couplings, coils)
-
-
-def _partition_edges(
-    parsed: ParsedNetlist, main: list[str]
-) -> tuple[NetlistEdge | None, list[NetlistEdge], list[tuple[NetlistEdge, NetlistEdge, str, str]]]:
-    """Decide how each edge is drawn: the source, a shunt, or a collapsed pair.
-
-    Every edge lands in exactly one group, which is what keeps an element from
-    being drawn twice.
-    """
-
-    sources = [e for e in parsed.edges if e.kind in {"voltage", "current"} and _is_grounded(e)]
-    collapsed = _series_shunt_pairs(parsed.edges, set(main))
-    collapsed_ids = {id(edge) for pair in collapsed for edge in pair[:2]}
-    drawn_elsewhere = {id(e) for e in sources} | collapsed_ids
-    shunts = [e for e in parsed.edges if _is_grounded(e) and id(e) not in drawn_elsewhere]
-    return (sources[0] if sources else None), shunts, collapsed
-
-
-def _draw_main_chain(
-    drawing: Any, parsed: ParsedNetlist, main: list[str], source: NetlistEdge | None, coils: dict[str, Any]
-) -> dict[str, tuple[float, float]]:
-    """Draw the source and the horizontal series chain; return node positions."""
-
+def _factory(edge: NetlistEdge) -> Any:
     import schemdraw.elements as elm
 
-    if source:
-        drawing += _schemdraw_source(source).up().at((0.0, 0)).label(_clean_ref(source.ref), loc="left", fontsize=8)
-    else:
-        drawing += elm.Dot().at((0.0, UNIT))
-    drawing += elm.Line().right().length(UNIT * 0.45)
-
-    node_points = {main[0]: drawing.here}
-    drawing += elm.Dot()
-    _draw_node_label(drawing, main[0], drawing.here)
-    for edge in _main_edges(main, parsed.edges):
-        element = _schemdraw_element(edge).right().label(_clean_ref(edge.ref), loc="top", fontsize=8)
-        drawing += element
-        _remember_coil(coils, edge, element)
-        drawing += elm.Dot()
-        node_points[edge.n2] = drawing.here
-        _draw_node_label(drawing, edge.n2, drawing.here)
-
-    if source:
-        drawing.push()
-        drawing += elm.Ground().at((0, 0))
-        drawing.pop()
-    return node_points
-
-
-def _draw_shunts(
-    drawing: Any, shunts: list[NetlistEdge], node_points: dict[str, tuple[float, float]], coils: dict[str, Any]
-) -> None:
-    """Hang each grounded element below the node it connects to."""
-
-    import schemdraw.elements as elm
-
-    by_node: dict[str, list[NetlistEdge]] = {}
-    for edge in shunts:
-        node = _live_node(edge)
-        if node in node_points:
-            by_node.setdefault(node, []).append(edge)
-
-    for node, edges in by_node.items():
-        base = node_points[node]
-        for edge, offset in zip(edges, _branch_offsets(len(edges)), strict=True):
-            top = (base[0] + offset, base[1])
-            drawing.push()
-            if abs(offset) > 1e-9:
-                line = elm.Line().left() if offset < 0 else elm.Line().right()
-                drawing += line.length(abs(offset)).at(base)
-                drawing += elm.Dot()
-            element = _schemdraw_element(edge).down().at(top)
-            drawing += element
-            _remember_coil(coils, edge, element)
-            label_x = top[0] + (-0.72 if offset < 0 else 0.72)
-            _label_at(drawing, _clean_ref(edge.ref), (label_x, top[1] - UNIT * 0.48), 7)
-            drawing += elm.Ground()
-            drawing.pop()
-
-
-def _draw_collapsed_pairs(
-    drawing: Any,
-    pairs: list[tuple[NetlistEdge, NetlistEdge, str, str]],
-    node_points: dict[str, tuple[float, float]],
-    coils: dict[str, Any],
-) -> None:
-    """Draw a series element and its grounded partner stacked in one branch."""
-
-    import schemdraw.elements as elm
-
-    seen: dict[str, int] = {}
-    for edge, ground_edge, base, branch in pairs:
-        if base not in node_points:
-            continue
-        index = seen.get(base, 0)
-        seen[base] = index + 1
-        origin = node_points[base]
-        offset = -0.85 - index * 0.75
-        top = (origin[0] + offset, origin[1])
-
-        drawing.push()
-        drawing += elm.Line().left().at(origin).length(abs(offset))
-        drawing += elm.Dot()
-        _draw_node_label(drawing, branch, top, force=True)
-        element = _schemdraw_element(edge).down().at(top)
-        drawing += element
-        _remember_coil(coils, edge, element)
-        _label_at(drawing, _clean_ref(edge.ref), (top[0] + 0.72, top[1] - UNIT * 0.25), 7)
-        second = drawing.here
-        ground_element = _schemdraw_element(ground_edge).down()
-        drawing += ground_element
-        _remember_coil(coils, ground_edge, ground_element)
-        _label_at(drawing, _clean_ref(ground_edge.ref), (second[0] + 0.72, second[1] - UNIT * 0.45), 7)
-        drawing += elm.Ground()
-        drawing.pop()
-
-
-def _remember_coil(coils: dict[str, Any], edge: NetlistEdge, element: Any) -> None:
-    """Record where an inductor was drawn, keyed by ref, for coupling lines."""
-
-    if edge.kind == "inductor":
-        coils[_clean_ref(edge.ref).lower()] = element
-
-
-#: How far above the coils the coupling tie is routed, in schemdraw units.
-COUPLING_LIFT = 1.15
-
-
-def _draw_couplings(drawing: Any, couplings: list[Coupling], coils: dict[str, Any]) -> list[Coupling]:
-    """Tie magnetically coupled inductors together.
-
-    A `K` line is not a branch, so it has no place in the series/shunt layout.
-    The two coils are drawn wherever the circuit puts them and joined by a
-    dashed tie carrying the coupling coefficient -- the standard annotation
-    when a schematic does not place the windings side by side.  A transformer
-    symbol would require exactly that adjacency, which this layout cannot
-    promise.
-
-    The tie is routed *above* the coils rather than straight between them:
-    coupled inductors usually both sit in the horizontal chain, and a direct
-    line would then run along the wire and read as part of the circuit.
-    """
-
-    import schemdraw.elements as elm
-
-    undrawn: list[Coupling] = []
-    for index, coupling in enumerate(couplings):
-        first, second = (coils.get(ref.lower()) for ref in coupling.inductors)
-        if first is None or second is None:
-            undrawn.append(coupling)  # a coil inside an unexpanded subckt
-            continue
-
-        (x1, y1), (x2, y2) = tuple(first.center), tuple(second.center)
-        top = max(y1, y2) + COUPLING_LIFT + index * 0.5
-        for start, end in itertools.pairwise([(x1, y1), (x1, top), (x2, top), (x2, y2)]):
-            drawing += elm.Line().at(start).to(end).color("gray").linestyle("--")
-        _label_at(drawing, f"{_clean_ref(coupling.ref)}  k={coupling.coefficient:g}", ((x1 + x2) / 2, top + 0.3), 7)
-    return undrawn
-
-
-def _draw_footer(drawing: Any, parsed: ParsedNetlist, main: list[str], undrawn: list[Coupling]) -> None:
-    """Only what the drawing itself could not say."""
-
-    notes = []
-    if parsed.subckt_names:
-        notes.append("expanded subckts: " + ", ".join(parsed.subckt_names))
-    if undrawn:
-        notes.append(
-            "coupled (coils not drawn): "
-            + ", ".join(f"{c.ref}({c.inductors[0]},{c.inductors[1]}) k={c.coefficient:g}" for c in undrawn)
-        )
-    if notes:
-        _label_at(drawing, "   ".join(notes), (0, -1.45), fontsize=7)
-    _label_at(drawing, "rendered with Schemdraw", (UNIT * max(len(main), 3), -1.45), fontsize=7)
-
-
-# -----------------------------------------------------------------------------
-# schemdraw primitives
-# -----------------------------------------------------------------------------
-
-
-def _schemdraw_element(edge: NetlistEdge) -> Any:
-    import schemdraw.elements as elm
-
-    by_kind = {
+    if _instrument(edge):
+        return elm.MeterI
+    if edge.kind == "voltage":
+        low = edge.value.lower()
+        if "sin(" in low:
+            return elm.SourceSin
+        if "pulse(" in low:
+            return elm.SourcePulse
+        return lambda: elm.SourceV().reverse()
+    return {
         "resistor": elm.Resistor,
         "capacitor": elm.Capacitor,
         "inductor": elm.Inductor,
-        "voltage": elm.SourceSin,
+        "diode": elm.Diode,
         "current": elm.SourceI,
+        "behavioral": elm.SourceControlled,
+    }.get(edge.kind, elm.RBox)
+
+
+def render_netlist_schematic(
+    netlist_path: str | Path,
+    out: str | Path,
+    title: str | None = None,
+    *,
+    view: str = "physical",
+    netlist_mode: str = "auto",
+    signals: dict[str, Any] | None = None,
+    params: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    import matplotlib
+
+    matplotlib.use("Agg", force=True)
+    import matplotlib.pyplot as plt
+    import schemdraw.elements as elm
+
+    if view not in {"physical", "instrumented"}:
+        raise ValueError("schematic view must be physical or instrumented")
+    parsed = parse_netlist(netlist_path, netlist_mode=netlist_mode)
+    edges, mapping, hidden = _physical_edges(parsed, view)
+    points = _positions(edges)
+    parameters = {**parsed.parameters, **{name.lower(): str(value) for name, value in (params or {}).items()}}
+    issues = list(parsed.issues)
+    fig, axis = plt.subplots(figsize=(10, 6))
+    diagram = CircuitDiagram(axis, CircuitStyle(component_length=1.6, font_size=8.5))
+    centers: dict[str, tuple[float, float]] = {}
+    bounds = list(points.values()) or [(0.0, 0.0)]
+    used_pairs: Counter = Counter()
+    grounded: Counter = Counter()
+    extras = 0
+
+    def wire(a: tuple[float, float], b: tuple[float, float]) -> None:
+        diagram.wire(a, b)
+        bounds.extend((a, b))
+
+    def symbol(edge: NetlistEdge, a: tuple[float, float], b: tuple[float, float]) -> None:
+        label = edge.ref + "\n" + ("current probe (0 V)" if _instrument(edge) else _value(edge, parameters))
+        diagram.component(
+            _factory(edge), a, b, label=label, label_location="top" if a[1] == b[1] else "right", name=edge.ref
+        )
+        centers[edge.ref.lower()] = ((a[0] + b[0]) / 2, (a[1] + b[1]) / 2)
+        bounds.extend((a, b))
+        if edge.kind == "voltage" and not _instrument(edge):
+            axis.text(a[0] + 0.2, a[1] - 0.2, "+", fontsize=10, color="#35495c")
+
+    for edge in edges:
+        if len(edge.nodes) != 2:
+            continue
+        if "0" in edge.nodes and edge.n1 != edge.n2:
+            live = edge.n2 if edge.n1 == "0" else edge.n1
+            p = points[live]
+            index = grounded[live]
+            grounded[live] += 1
+            top = (p[0] + 2.2 * index, p[1])
+            bottom = (top[0], top[1] - 3.1)
+            wire(p, top)
+            symbol(edge, bottom if edge.n1 == "0" else top, top if edge.n1 == "0" else bottom)
+            diagram.ground(bottom)
+            bounds.append((bottom[0], bottom[1] - 0.6))
+            continue
+        p, q = points.get(edge.n1, (0.0, 0.0)), points.get(edge.n2, (0.0, 0.0))
+        pair = tuple(sorted((edge.n1, edge.n2)))
+        index = used_pairs[pair]
+        used_pairs[pair] += 1
+        if p[1] == q[1] and p[0] != q[0] and index == 0:
+            symbol(edge, p, q)
+        elif p[0] != q[0]:
+            extras += 1
+            lane = max(p[1], q[1], 0) + 2.4 * extras
+            a, b = (p[0], lane), (q[0], lane)
+            wire(p, a)
+            symbol(edge, a, b)
+            wire(b, q)
+        else:
+            # Same-level or self-loop branches route outside the node column.
+            extras += 1
+            x = max((point[0] for point in points.values()), default=0) + 3 + 2 * extras
+            a, b = (x, p[1]), (x, q[1] if p != q else q[1] + 3)
+            wire(p, a)
+            symbol(edge, a, b)
+            wire(b, (q[0], b[1]))
+            wire((q[0], b[1]), q)
+    for node, p in points.items():
+        diagram.node(p)
+        axis.text(p[0] - 0.12, p[1] + 0.35, node, fontsize=8, ha="right", color="#35495c")
+    # Multi-terminal symbols retain every pin through explicit named-net stubs.
+    block_x = max((point[0] for point in bounds), default=0) + 5
+    block_y = 0.0
+    roles = {
+        "bjt": ["C", "B", "E", "S"],
+        "mosfet": ["D", "G", "S", "B"],
+        "jfet": ["D", "G", "S"],
+        "tline": ["1+", "1-", "2+", "2-"],
     }
-    # RBox is the generic two-terminal box: diodes and unresolved subckts land
-    # here.  schemdraw has no element called `Box`.
-    return by_kind.get(edge.kind, elm.RBox)()
-
-
-def _schemdraw_source(edge: NetlistEdge) -> Any:
-    import schemdraw.elements as elm
-
-    return elm.SourceI() if edge.kind == "current" else elm.SourceSin()
-
-
-def _label_at(drawing: Any, text: str, point: tuple[float, float], fontsize: int = 8) -> None:
-    import schemdraw.elements as elm
-
-    drawing.push()
-    drawing += elm.Label().at(point).label(text, fontsize=fontsize)
-    drawing.pop()
-
-
-def _draw_node_label(drawing: Any, node: str, point: Any, force: bool = False) -> None:
-    if force or not node.startswith("Xload."):
-        _label_at(drawing, _short_node(node), (float(point[0]), float(point[1]) + 0.38), fontsize=7)
-
-
-def _clean_ref(ref: str) -> str:
-    return ref.replace("Xload:", "load.")
-
-
-def _short_node(node: str) -> str:
-    return node.replace("Xload.", "load.")
+    for edge in edges:
+        if len(edge.nodes) == 2:
+            continue
+        height = max(3.0, len(edge.nodes) * 0.9)
+        names = roles.get(edge.kind, [str(i + 1) for i in range(len(edge.nodes))])
+        pins = [
+            elm.IcPin(
+                name=names[i],
+                pin=node,
+                side="L",
+                slot=f"{len(edge.nodes) - i}/{len(edge.nodes)}",
+                lblsize=8.5,
+                pinlblsize=8.5,
+            )
+            for i, node in enumerate(edge.nodes)
+        ]
+        diagram.drawing.add(
+            elm.Ic(pins=pins, size=(4.2, height))
+            .theta(0)
+            .at((block_x, block_y))
+            .label(edge.ref + "\n" + edge.kind + "\n" + _value(edge, parameters), loc="center")
+        )
+        centers[edge.ref.lower()] = (block_x + 2.1, block_y + height / 2)
+        bounds.extend(((block_x - 4, block_y - 1), (block_x + 4.5, block_y + height + 1)))
+        block_y -= height + 2
+    for coupling in parsed.couplings:
+        first, second = (centers.get(ref.lower()) for ref in coupling.inductors)
+        if first is None or second is None:
+            issues.append(f"coupling has an unavailable winding: {coupling.ref}")
+            continue
+        top = max(p[1] for p in bounds) + 1.3
+        axis.plot(
+            [first[0], first[0], second[0], second[0]], [first[1], top, top, second[1]], "--", color="#6b7280", lw=1
+        )
+        axis.text(
+            (first[0] + second[0]) / 2, top + 0.15, f"{coupling.ref}: k={coupling.coefficient}", ha="center", fontsize=8
+        )
+        bounds.append((second[0], top + 1))
+    probe_groups: dict[tuple[str, str], list[str]] = defaultdict(list)
+    current_arrows: set[str] = set()
+    nodes_by_lower = {node.lower(): mapped for node, mapped in mapping.items()}
+    for name, item in (signals or {}).get("signals", {}).items():
+        vector = item.get("vector", "")
+        voltage = re.fullmatch(r"v\(([^(),]+)(?:,([^()]+))?\)", vector, re.IGNORECASE)
+        current = re.fullmatch(r"[+-]?i\(([^()]+)\)", vector, re.IGNORECASE)
+        if voltage and voltage[1].lower() in nodes_by_lower:
+            p = points.get(nodes_by_lower[voltage[1].lower()])
+            if p:
+                probe_groups[(vector, item.get("unit", ""))].append(item.get("label", name))
+                axis.plot([p[0]], [p[1]], "o", ms=4, mfc="white", mec="#2a6f97", zorder=10)
+        elif current:
+            ref = current[1].lower()
+            p = centers.get(ref) or centers.get(ref.removeprefix("vobserve_"))
+            if p:
+                probe_groups[(vector, item.get("unit", ""))].append(item.get("label", name))
+                if ref not in current_arrows:
+                    current_arrows.add(ref)
+                    branch_ref = ref.removeprefix("vobserve_")
+                    branch = next((edge for edge in edges if edge.ref.lower() in {ref, branch_ref}), None)
+                    vertical = branch is not None and (
+                        "0" in branch.nodes or points.get(branch.n1, (0, 0))[0] == points.get(branch.n2, (0, 0))[0]
+                    )
+                    if vertical:
+                        sign = 1 if branch is not None and branch.n1 == "0" else -1
+                        if branch is not None and "0" not in branch.nodes:
+                            sign = 1 if points[branch.n2][1] > points[branch.n1][1] else -1
+                        dx, dy = 0.0, 0.6 * sign
+                    else:
+                        sign = 1 if branch is None or points[branch.n2][0] > points[branch.n1][0] else -1
+                        dx, dy = 0.6 * sign, 0.0
+                    if vector.strip().startswith("-"):
+                        dx, dy = -dx, -dy
+                    axis.annotate(
+                        "",
+                        xy=(p[0] + dx / 2, p[1] + 0.7 + dy / 2),
+                        xytext=(p[0] - dx / 2, p[1] + 0.7 - dy / 2),
+                        arrowprops={"arrowstyle": "->", "color": "#2a6f97", "lw": 1},
+                    )
+    if not edges:
+        issues.append("no drawable components")
+    left, right = min(p[0] for p in bounds) - 2.2, max(p[0] for p in bounds) + 2.5
+    bottom, top = min(p[1] for p in bounds) - 2, max(p[1] for p in bounds) + 2
+    notes = []
+    if hidden:
+        notes.append("Physical circuit; blue arrows indicate positive current-probe direction.")
+    if any(len(edge.nodes) > 2 for edge in edges):
+        notes.append("Multi-terminal blocks use named nets; equal net names are electrically connected.")
+    notes.extend(
+        f"{', '.join(dict.fromkeys(names))}: {vector} [{unit}]" for (vector, unit), names in probe_groups.items()
+    )
+    if issues:
+        notes.insert(0, "PARTIAL DRAWING: " + "; ".join(dict.fromkeys(issues)))
+    if title:
+        axis.set_title(title, fontsize=11, pad=15)
+    note_text = "\n".join(notes)
+    if note_text:
+        axis.text(left, bottom - 0.3, note_text, fontsize=7.5, va="top", color="#a33322" if issues else "#35495c")
+        bottom -= max(1, len(notes)) * 0.48
+    width, height = right - left, top - bottom
+    fig.set_size_inches(min(20, max(7, width * 0.48)), min(26, max(4, height * 0.48)))
+    diagram.finish(CircuitViewport((left, right), (bottom - 0.5, top)))
+    destination = Path(out)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(destination, dpi=170, bbox_inches="tight")
+    plt.close(fig)
+    return {
+        **parsed.summary(),
+        "status": "partial" if issues else "complete",
+        "issues": list(dict.fromkeys(issues)),
+        "view": view,
+        "represented_components": [edge.ref for edge in edges],
+        "collapsed_measurement_sources": hidden,
+        "node_aliases": mapping,
+    }

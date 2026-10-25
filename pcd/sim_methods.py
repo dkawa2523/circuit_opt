@@ -17,8 +17,9 @@ from .rf_loads import (
 )
 from .sim_registry import register, register_solver
 from .simulation import SimulationResult
-from .simulation_input import SolverRunRequest, resolve_source_specs
+from .simulation_input import SolverRunRequest
 from .solver import ngspice_cli
+from .sources import source_specs
 from .spice import fundamental_hz, pick_value, resolve_value, spice_value
 from .topology_catalog import matching_topology
 
@@ -324,7 +325,7 @@ def _matches_case_source_name(case: Case, line: str) -> bool:
         return False
     names = {
         str(src.get("name", "Vsrc" if index == 0 else f"Vsrc{index}")).lower()
-        for index, src in enumerate(resolve_source_specs(case))
+        for index, src in enumerate(source_specs(case))
         if "raw" not in src
     }
     return parts[0].lower() in names

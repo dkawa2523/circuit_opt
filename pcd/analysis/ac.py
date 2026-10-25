@@ -7,7 +7,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from pcd.simulation import AC_LOAD_VOLTAGE_COLUMN
+from pcd.signals.power import power_ratio
+from pcd.simulation import LOAD_VOLTAGE_COLUMN
 
 #: Reference impedance for reflection coefficient / VSWR, in ohms.
 DEFAULT_Z0 = 50.0
@@ -55,7 +56,7 @@ def ac_power_flow(
     row: pd.Series,
     load_current_column: str | None = None,
     reference_impedance_ohm: float = DEFAULT_Z0,
-) -> dict[str, float]:
+) -> dict[str, Any]:
     """Electrical port power from peak AC phasors.
 
     ``load_real_power_W`` is accepted power at the named load reference plane;
@@ -74,7 +75,7 @@ def ac_power_flow(
     reflected_voltage = 0.5 * (source_voltage - z0 * source_current)
     forward_power = abs(forward_voltage) ** 2 / (2.0 * z0)
     reflected_power = abs(reflected_voltage) ** 2 / (2.0 * z0)
-    out = {
+    out: dict[str, Any] = {
         "source_real_power_W": source_power,
         "source_voltage_rms_V": source_voltage_rms,
         "source_current_rms_A": source_current_rms,
@@ -82,7 +83,7 @@ def ac_power_flow(
         "forward_power_W": forward_power,
         "reflected_power_W": reflected_power,
     }
-    load_voltage = phasor_from_row(row, AC_LOAD_VOLTAGE_COLUMN)
+    load_voltage = phasor_from_row(row, LOAD_VOLTAGE_COLUMN)
     load_current_phasor = phasor_from_row(row, load_current_column) if load_current_column else None
     if load_voltage is None or load_current_phasor is None:
         return out
@@ -93,9 +94,13 @@ def ac_power_flow(
         {
             "load_real_power_W": load_power,
             "network_loss_W": network_loss,
-            "transfer_efficiency": load_power / source_power if abs(source_power) > 1e-30 else 0.0,
+            "transfer_efficiency": power_ratio(load_power, source_power),
         }
     )
+    if out["transfer_efficiency"] is None:
+        out["transfer_efficiency_unavailable_reason"] = (
+            "finite load power and a finite ratio to nonzero source real power are required"
+        )
     return out
 
 
@@ -203,7 +208,7 @@ def frequency_sweep_metrics(
 
 
 def _power_response(ac: pd.DataFrame, load_current_column: str | None) -> tuple[str, np.ndarray]:
-    load_voltage = _phasor_array(ac, AC_LOAD_VOLTAGE_COLUMN)
+    load_voltage = _phasor_array(ac, LOAD_VOLTAGE_COLUMN)
     load_current = _phasor_array(ac, load_current_column) if load_current_column else None
     if load_voltage is not None and load_current is not None:
         load_power = 0.5 * np.real(load_voltage * np.conj(load_current))
@@ -262,8 +267,12 @@ def at_frequency(ac: pd.DataFrame, frequency_hz: float) -> pd.Series:
     if ac.empty:
         raise ValueError("frequency response is empty")
     target = frequency_hz
+    if not np.isfinite(target) or target <= 0:
+        raise ValueError("requested frequency must be positive and finite")
     ordered = ac.sort_values("frequency_Hz").reset_index(drop=True)
     frequencies = ordered["frequency_Hz"].to_numpy(float)
+    if not np.all(np.isfinite(frequencies)) or np.any(frequencies <= 0) or np.any(np.diff(frequencies) <= 0):
+        raise ValueError("AC frequencies must be finite, positive, and unique")
     if target < frequencies[0] or target > frequencies[-1]:
         raise ValueError(
             f"frequency {target:g} Hz is outside the simulated sweep [{frequencies[0]:g}, {frequencies[-1]:g}] Hz"

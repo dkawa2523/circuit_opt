@@ -82,7 +82,7 @@ CASES = (
     CaseSpec(
         "terminal_identification",
         "effective terminal-parameter identification",
-        ROOT / "examples" / "advanced" / "ccp_terminal_identification.yaml",
+        ROOT / "examples" / "terminal_identification.yaml",
         "identification",
     ),
 )
@@ -153,7 +153,7 @@ def _check_transient(bundle: dict[str, Any]) -> tuple[dict[str, bool], dict[str,
         "solver_succeeded": simulation["status"] == "ok",
         "no_validation_or_runtime_warnings": not simulation["warnings"],
         "canonical_waveform_and_replay_manifest": _simulation_artifacts(bundle, ("waveform", "debug_manifest")),
-        "reference_plane_is_explicit": analysis["measurement"]["reference_plane"] == "load_terminal",
+        "reference_plane_is_explicit": analysis["measurement"]["load_reference_plane"] == "load_terminal",
         "periodic_measurement_settled": periodic["status"] == "ok" and bool(periodic["periodic_settled"]),
         "load_power_is_25W": 24.9 <= power <= 25.1,
         "standard_figures_exist": _analysis_artifacts(
@@ -177,7 +177,7 @@ def _check_frequency_sweep(bundle: dict[str, Any]) -> tuple[dict[str, bool], dic
         "canonical_ac_table_and_replay_manifest": _simulation_artifacts(
             bundle, ("frequency_response", "debug_manifest")
         ),
-        "reference_plane_is_explicit": analysis["measurement"]["reference_plane"] == "dummy_coil_terminal",
+        "reference_plane_is_explicit": analysis["measurement"]["load_reference_plane"] == "dummy_coil_terminal",
         "dense_frequency_sweep": int(sweep["sample_count"]) >= 8000,
         "resonance_is_bracketed": 13.0e6 <= frequency <= 14.5e6 and bandwidth > 0.0,
         "loaded_q_is_finite": math.isfinite(quality) and 10.0 <= quality <= 20.0,
@@ -321,14 +321,16 @@ def _check_terminal_identification(bundle: dict[str, Any]) -> tuple[dict[str, bo
     result = bundle["identification"]
     root = Path(str(result["run_root"]))
     sensitivity = result["identifiability"]
-    recovery = result.get("recovery") or {}
     checks = {
         "latent_fit_was_accepted": result["status"] == "identified" and bool(result["fit"]["passed"]),
         "unseen_frequencies_were_held_out": bool(result["holdout"]["passed"])
         and len(result["holdout"]["scenario_ids"]) == 2,
         "local_sensitivity_is_full_rank": bool(sensitivity["identifiable"])
         and int(sensitivity["rank"]) == int(sensitivity["required_rank"]) == 2,
-        "known_parameters_were_recovered": bool(recovery.get("passed")),
+        "known_parameters_were_recovered": math.isclose(
+            float(result["estimated_latent"]["plasma_R_eff_ohm"]), 18.0, rel_tol=0.08
+        )
+        and math.isclose(float(result["estimated_latent"]["plasma_C_sheath_eq_F"]), 1.2e-10, rel_tol=0.08),
         "identification_artifacts_exist": _artifact_files(
             root,
             result["artifacts"],

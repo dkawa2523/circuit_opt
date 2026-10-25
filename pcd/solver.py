@@ -12,6 +12,7 @@ optimizer keeps collecting observations instead of aborting the run.
 from __future__ import annotations
 
 import hashlib
+import re
 import shutil
 import subprocess
 import sys
@@ -22,13 +23,22 @@ from typing import Any
 import numpy as np
 
 from .ngspice_io import read_frequency_response, read_transient_output
-from .simulation import AC_FILE, AC_LOAD_VOLTAGE_COLUMN, WAVEFORM_FILE, SimulationResult, TransientAnalysis
+from .simulation import AC_FILE, LOAD_VOLTAGE_COLUMN, WAVEFORM_FILE, SimulationResult, TransientAnalysis
 from .simulation_input import DEFAULT_SOLVER_TIMEOUT_S, SolverRunRequest, SolverSettings
 
 
 def _failed(log: str, diagnostics: dict[str, Any]) -> SimulationResult:
     """A failure still has the waveform shape, so downstream code stays uniform."""
 
+    match = re.search(r"(?im)^\s*((?:error|fatal error):[^\n]+)", log)
+    reason = match[1].strip() if match else diagnostics.get("parse_error")
+    if not reason:
+        reason = (
+            "solver timed out"
+            if diagnostics.get("timed_out")
+            else "solver did not produce the requested observations; see debug/solver.log"
+        )
+    diagnostics = {**diagnostics, "error": reason}
     nan = np.array([np.nan])
     return SimulationResult(np.array([0.0]), nan, nan, status="failed", log=log, diagnostics=diagnostics)
 
@@ -201,7 +211,7 @@ def _transient_completion_failure(
     finite_time = np.asarray(result.time_s, dtype=float)
     finite_time = finite_time[np.isfinite(finite_time)]
     last_time_s = float(np.max(finite_time)) if finite_time.size else None
-    tolerance_s = max(requested.step_s * 1.01, requested.stop_s * 1e-9)
+    tolerance_s = requested.stop_s * 1e-9
     if last_time_s is not None and last_time_s >= requested.stop_s - tolerance_s:
         return None
     return {
@@ -262,7 +272,7 @@ def ngspice_cli(request: SolverRunRequest) -> SimulationResult:
         )
     try:
         if waveform.exists() and analysis.transient is not None:
-            result = read_transient_output(waveform, probes.transient_columns)
+            result = read_transient_output(waveform, (*probes.transient_columns, LOAD_VOLTAGE_COLUMN))
             incomplete = _transient_completion_failure(result, analysis.transient)
             if incomplete is not None:
                 detail = (
@@ -277,8 +287,9 @@ def ngspice_cli(request: SolverRunRequest) -> SimulationResult:
             empty = np.array([], dtype=float)
             result = SimulationResult(time_s=empty, voltage_V=empty, current_A=empty)
         if ac_path.exists() and analysis.ac is not None:
-            extras = [AC_LOAD_VOLTAGE_COLUMN, *probes.ac_columns]
+            extras = [LOAD_VOLTAGE_COLUMN, "voltage_V", *probes.ac_columns]
             result.frequency_response = read_frequency_response(ac_path, extras)
+        result.validate_for(analysis)
     except (OSError, ValueError) as exc:
         return _failed(log, {**diagnostics, "parse_error": f"{type(exc).__name__}: {exc}"})
     result.log = log

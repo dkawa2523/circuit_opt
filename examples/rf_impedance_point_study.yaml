@@ -12,7 +12,10 @@ network:
 
 load:
   type: impedance_table
-  file: rf_load_scenarios.csv
+  points:
+    - {scenario_id: strong_capacitive, resistance_ohm: 40, reactance_ohm: -140, weight: 1}
+    - {scenario_id: nominal, resistance_ohm: 25, reactance_ohm: -80, weight: 2}
+    - {scenario_id: weak_capacitive, resistance_ohm: 15, reactance_ohm: -35, weight: 1}
   reference_plane: electrode_terminal
   evidence: {origin: synthetic_example_table}
 

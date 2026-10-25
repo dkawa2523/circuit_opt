@@ -1,5 +1,7 @@
 # 2周波CCP・下部矩形バイアス回路の順問題と逆問題
 
+本書は記録された入力・モデル・探索予算についての個別検証である。現行の利用・入出力仕様は[統合マニュアル](../manual-ja.md)を参照する。
+
 ## 1. この検証で答える問い
 
 このベンチマークは、上部40 MHz励振、下部800 kHz矩形バイアスを持つCCP装置を、上下シース容量と
@@ -15,7 +17,7 @@ ngspiceで完全列挙する。逆問題では目的に使わなかったもう�
 
 ## 2. 装置、回路、観測点の対応
 
-![装置と縦方向等価回路](../bench/figures/dual_frequency_ccp/01-apparatus-and-equivalent-circuit.svg)
+![装置と縦方向等価回路](../../bench/figures/dual_frequency_ccp/01-apparatus-and-equivalent-circuit.svg)
 
 装置と回路は、上から下へ同じ順序で表す。
 
@@ -70,7 +72,7 @@ capacitorの電気的役割は[Song and Kushner](https://doi.org/10.1116/1.48639
 
 ## 4. 順問題: 既知 `R_p(t)` から装置出力を計算する
 
-![順問題の入力と出力](../bench/figures/dual_frequency_ccp/02-forward-observable-conformance.svg)
+![順問題の入力と出力](../../bench/figures/dual_frequency_ccp/02-forward-observable-conformance.svg)
 
 最終2 bias周期の2,501独立基準点で、次の一致を得た。
 
@@ -101,7 +103,7 @@ piecewise-linear `R_p(t)` の4値だけを未知量とした。
 
 ### 5.2 逆問題A: ウェハ電圧だけを使用
 
-![ウェハ電圧だけからの同定](../bench/figures/dual_frequency_ccp/03-inverse-from-wafer-voltage.svg)
+![ウェハ電圧だけからの同定](../../bench/figures/dual_frequency_ccp/03-inverse-from-wafer-voltage.svg)
 
 | 評価 | 結果 |
 |---|---:|
@@ -116,7 +118,7 @@ piecewise-linear `R_p(t)` の4値だけを未知量とした。
 
 ### 5.3 逆問題B: 上部反射電圧だけを使用
 
-![上部反射電圧だけからの同定](../bench/figures/dual_frequency_ccp/04-inverse-from-upper-reflection.svg)
+![上部反射電圧だけからの同定](../../bench/figures/dual_frequency_ccp/04-inverse-from-upper-reflection.svg)
 
 | 評価 | 結果 |
 |---|---:|
@@ -166,5 +168,5 @@ uv run --frozen python bench/figures/generate_dual_frequency_ccp_evidence.py
 ```
 
 入力hash、solver version、順問題誤差、全162候補、選択値、held-out誤差は
-[`figure_data.json`](../bench/figures/dual_frequency_ccp/figure_data.json)に保存している。図生成処理は保存済み結果を
+[`figure_data.json`](../../bench/figures/dual_frequency_ccp/figure_data.json)に保存している。図生成処理は保存済み結果を
 読むだけで、ngspiceやoptimizerを再実行しない。

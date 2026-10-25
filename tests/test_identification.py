@@ -12,18 +12,11 @@ import pytest
 
 from pcd.identification import (
     IdentificationSettings,
-    _axis_unit_value,
-    _axis_value,
     _bounded_latent_specs,
-    _fix_latent_specs,
-    _objective_value,
-    _recovery,
-    _selected_scenarios,
     _sensitivity_diagnosis,
     run_identification,
 )
 from pcd.results import read_evaluation_table
-from pcd.study_config import study_spec_from_case
 
 
 def _identification_case(make_case, tmp_path: Path):
@@ -100,6 +93,10 @@ def test_identification_uses_latent_columns_and_independent_holdout(make_case, t
     assert "latent.latent_R" in fit_table
     assert "design.latent_R" not in fit_table
     assert set(fit_table["scenario_id"]) == {"fit"}
+    original = (root / "fit" / "study_result.json").read_bytes()
+    repeated = run_identification(case, tmp_path / "runs")
+    assert Path(repeated["run_root"]) != root
+    assert (root / "fit" / "study_result.json").read_bytes() == original
 
 
 def test_identification_rejects_overlapping_fit_and_holdout(make_case, tmp_path):
@@ -176,25 +173,10 @@ def test_identification_requires_valid_bounded_latent_parameters(
         _bounded_latent_specs(type(case)(case.path, data))
 
 
-def test_identification_helpers_reject_unknown_scenarios_and_objectives(make_case, tmp_path):
-    case = _identification_case(make_case, tmp_path)
-    catalog = {scenario.scenario_id: scenario for scenario in study_spec_from_case(case).scenarios}
-
-    with pytest.raises(ValueError, match="unknown scenarios"):
-        _selected_scenarios(catalog, ["missing"], "identification.fit_scenarios")
-    with pytest.raises(ValueError, match="has no objective"):
-        _objective_value({})
-    with pytest.raises(ValueError, match="must be minimized"):
-        _objective_value({"study": {"objectives": [{"metric": "loss", "direction": "maximize"}]}})
-
-
-def test_log_axis_mapping_and_rank_deficiency_are_explicit():
-    spec = {"bounds": [1.0e-3, 1.0e1], "scale": "log"}
-    assert _axis_unit_value(1.0e-1, spec) == pytest.approx(0.5)
-    assert _axis_value(0.5, spec) == pytest.approx(1.0e-1)
-
+@pytest.mark.parametrize("matrix", [np.zeros((3, 2)), np.eye(2) * 1e-20])
+def test_numerically_empty_sensitivity_is_not_identifiable(matrix):
     singular, rank, condition, identifiable = _sensitivity_diagnosis(
-        np.zeros((3, 2)),
+        matrix,
         2,
         IdentificationSettings(
             fit_scenarios=("fit",),
@@ -210,61 +192,10 @@ def test_log_axis_mapping_and_rank_deficiency_are_explicit():
             recovery_relative_tolerance=0.1,
         ),
     )
-    assert singular.tolist() == [0.0, 0.0]
+    assert np.max(singular) <= 1e-20
     assert rank == 0
     assert condition is None
     assert identifiable is False
-
-
-def test_recovery_reports_each_parameter_and_rejects_name_mismatch(make_case, tmp_path):
-    settings = IdentificationSettings.from_case(_identification_case(make_case, tmp_path))
-    settings = replace(
-        settings,
-        expected={"latent_R": 4.0},
-        recovery_relative_tolerance=0.1,
-    )
-
-    passed = _recovery({"latent_R": 4.2}, settings)
-    failed = _recovery({"latent_R": 5.0}, settings)
-    assert passed is not None
-    assert passed["passed"] is True
-    assert failed is not None
-    assert failed["passed"] is False
-    assert failed["parameters"]["latent_R"]["relative_error"] == pytest.approx(0.25)
-
-    with pytest.raises(ValueError, match="every and only"):
-        _recovery({"other": 4.0}, settings)
-
-
-def test_fix_latent_values_handles_all_variable_blocks_and_missing_names():
-    data = {
-        "variables": {"root": {"role": "latent", "bounds": [1.0, 2.0], "scale": "log"}},
-        "source": {"variables": {"source_value": 1.0}},
-        "circuit": {"variables": {"circuit_value": {"bounds": [1.0, 2.0]}}},
-        "load": {"variables": {"load_value": {"bounds": [1.0, 2.0]}}},
-        "sources": [{"variables": {"second_source": {"bounds": [1.0, 2.0]}}}, None],
-    }
-    values = {
-        "root": 1.5,
-        "source_value": 2.0,
-        "circuit_value": 3.0,
-        "load_value": 4.0,
-        "second_source": 5.0,
-    }
-
-    _fix_latent_specs(data, values)
-
-    assert data["variables"]["root"] == {"role": "latent", "default": 1.5, "choices": [1.5]}
-    source = data["source"]
-    assert isinstance(source, dict)
-    source_value = source["variables"]["source_value"]
-    assert isinstance(source_value, dict)
-    assert source_value["default"] == 2.0
-    second_source = data["sources"][0]
-    assert isinstance(second_source, dict)
-    assert second_source["variables"]["second_source"]["choices"] == [5.0]
-    with pytest.raises(ValueError, match="not declared"):
-        _fix_latent_specs(data, {"missing": 1.0})
 
 
 def test_identification_partitions_must_cover_every_declared_scenario(make_case, tmp_path):
@@ -274,3 +205,69 @@ def test_identification_partitions_must_cover_every_declared_scenario(make_case,
 
     with pytest.raises(ValueError, match="must cover every scenario"):
         run_identification(type(case)(case.path, data), tmp_path / "runs")
+
+
+@pytest.mark.parametrize("failed_phase", ["fit", "holdout", "sensitivity"])
+def test_solver_failure_in_each_identification_phase_leaves_a_complete_result(make_case, tmp_path, failed_phase):
+    import json
+
+    from pcd.sim_registry import register_solver
+    from tests.fakes import fake_solver
+
+    solver_name = f"test_identification_failure_{failed_phase}"
+
+    @register_solver(solver_name)
+    def failing_solver(request):
+        response = fake_solver(request)
+        return (
+            replace(response, status="failed", log=f"injected {failed_phase} failure")
+            if failed_phase in request.run_dir.parts
+            else response
+        )
+
+    result = run_identification(
+        _identification_case(make_case, tmp_path),
+        tmp_path / "runs",
+        solver_override=solver_name,
+    )
+    assert result["status"] == "not_identified"
+    assert result["reason"] == f"{failed_phase}_evidence_unavailable"
+    assert (
+        json.loads((Path(result["run_root"]) / "identification_result.json").read_text())["status"] == "not_identified"
+    )
+    if failed_phase == "fit":
+        assert result["estimated_latent"] == {}
+        assert result["holdout"]["status"] == "not_run"
+    elif failed_phase == "sensitivity":
+        for evidence in result["identifiability"]["unavailable_evidence"]:
+            assert (Path(result["run_root"]) / evidence["artifacts"]["manifest"]).is_file()
+    else:
+        assert result["holdout"]["value"] is None
+        assert result["holdout"]["passed"] is False
+        assert (Path(result["run_root"]) / result["artifacts"]["holdout_result"]).is_file()
+
+
+def test_identification_preserves_inline_and_by_scenario_observed_controls(make_case, tmp_path):
+    case = _identification_case(make_case, tmp_path)
+    case.data["study"]["scenarios"][0]["controls"] = {"bias": 1}
+    case.data["study"]["controls"] = {
+        "variables": {"bias": {"choices": [1, 2]}},
+        "by_scenario": {"holdout": {"bias": 2}},
+    }
+    result = run_identification(case, tmp_path / "runs")
+    root = Path(result["run_root"])
+    assert set(read_evaluation_table(root / "fit")["control.bias"]) == {1}
+    assert set(read_evaluation_table(root / "holdout")["control.bias"]) == {2}
+
+
+def test_new_ids_alone_cannot_claim_an_unseen_condition_holdout(make_case, tmp_path):
+    case = _identification_case(make_case, tmp_path)
+    case.data["study"]["scenarios"][1]["values"]["condition"] = 1.0
+    with pytest.raises(ValueError, match="holdout repeats fit operating conditions"):
+        run_identification(case, tmp_path / "runs")
+    case.data["identification"]["holdout_mode"] = "replicates"
+    result = run_identification(case, tmp_path / "runs")
+    assert result["status"] == "identified"
+    assert result["validation"]["scope"] == "same_condition_repeatability_only"
+    assert result["validation"]["overlapping_conditions"] == [{"fit": "fit", "holdout": "holdout"}]
+    assert result["validation"]["independent_acquisition_verified"] is False

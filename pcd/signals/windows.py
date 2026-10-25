@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from .power import time_average
 from .series import clean_series
 
 
@@ -26,13 +27,17 @@ def _cycle_residual(
     values: np.ndarray,
     newer_end: float,
     period: float,
-    samples_per_cycle: int,
 ) -> float:
-    phase = np.linspace(0.0, period, samples_per_cycle, endpoint=False)
-    older = np.interp(newer_end - 2 * period + phase, time_s, values)
-    newer = np.interp(newer_end - period + phase, time_s, values)
-    scale = max(float(np.sqrt(np.mean(newer**2))), float(np.ptp(newer)), 1e-15)
-    return float(np.sqrt(np.mean((newer - older) ** 2)) / scale)
+    older_start, newer_start = newer_end - 2 * period, newer_end - period
+    # Compare at every knot from either cycle. A fixed phase grid can miss
+    # precisely the short pulse whose cycle-to-cycle change matters most.
+    older_knots = time_s[(time_s > older_start) & (time_s < newer_start)] - older_start
+    newer_knots = time_s[(time_s > newer_start) & (time_s < newer_end)] - newer_start
+    phase = np.unique(np.r_[0.0, older_knots, newer_knots, period])
+    older = np.asarray(np.interp(older_start + phase, time_s, values), dtype=float)
+    newer = np.asarray(np.interp(newer_start + phase, time_s, values), dtype=float)
+    scale = max(float(np.sqrt(time_average(newer**2, phase))), float(np.ptp(newer)), 1e-15)
+    return float(np.sqrt(time_average((newer - older) ** 2, phase)) / scale)
 
 
 def periodic_window(
@@ -43,7 +48,6 @@ def periodic_window(
     measure_cycles: int = 3,
     consecutive: int = 2,
     tolerance: float = 1e-3,
-    samples_per_cycle: int = 256,
 ) -> PeriodicWindow | None:
     """Select final whole cycles and report whether adjacent cycles agree.
 
@@ -68,9 +72,7 @@ def periodic_window(
     cycles = min(measure_cycles, full_cycles)
     required_cycles = max(measure_cycles, consecutive + 1)
     compared = min(consecutive, max(0, full_cycles - 1))
-    residuals = [
-        _cycle_residual(time, signal, end - offset * period, period, samples_per_cycle) for offset in range(compared)
-    ]
+    residuals = [_cycle_residual(time, signal, end - offset * period, period) for offset in range(compared)]
     residual = max(residuals) if residuals else None
     settled = (
         full_cycles >= required_cycles and compared == consecutive and residual is not None and residual <= tolerance

@@ -54,3 +54,22 @@ def trapezoid_weights(time_s: np.ndarray) -> np.ndarray:
     if len(time) > 2:
         weights[1:-1] = (delta[:-1] + delta[1:]) / 2.0
     return weights
+
+
+def interval_series(
+    time_s: np.ndarray,
+    *values: np.ndarray,
+    start_s: float,
+    end_s: float,
+) -> tuple[np.ndarray, ...]:
+    """Keep native samples in an interval, interpolating only its boundaries.
+
+    Adaptive solver knots carry narrow peaks and switching events. Replacing
+    them with a uniform plotting grid changes both stress and power evidence.
+    """
+
+    time, *signals = clean_series(time_s, *values)
+    if not len(time):
+        return (time, *signals)
+    grid = np.unique(np.r_[start_s, time[(time > start_s) & (time < end_s)], end_s])
+    return (grid, *(np.asarray(np.interp(grid, time, signal), dtype=float) for signal in signals))

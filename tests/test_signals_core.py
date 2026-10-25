@@ -61,3 +61,19 @@ def test_real_power_is_not_biased_by_dense_sampling():
     voltage = 10 * np.sin(2 * np.pi * f0 * time)
     current = 2 * np.sin(2 * np.pi * f0 * time)
     assert real_power(time, voltage, current) == pytest.approx(10.0, rel=2e-3)
+
+
+def test_settling_compares_narrow_events_at_native_solver_knots():
+    period, phase, width = 1e-6, 0.35713e-6, 1e-11
+    time = np.unique(
+        np.r_[
+            np.linspace(0, 8 * period, 801),
+            [cycle * period + phase + delta for cycle in range(8) for delta in (-width, 0, width)],
+        ]
+    )
+    signal = np.zeros_like(time)
+    for cycle in range(8):
+        signal[np.abs(time - (cycle * period + phase)) < width / 10] = 100.0 if cycle < 7 else 200.0
+    window = periodic_window(time, signal, 1 / period, tolerance=1e-4)
+    assert window is not None
+    assert not window.settled

@@ -55,7 +55,7 @@ from pcd.figures import (
 from pcd.ngspice_io import read_frequency_response
 from pcd.results import selected_evaluation as _current_selected_evaluation
 from pcd.results import study_artifact_path
-from pcd.simulation import AC_LOAD_VOLTAGE_COLUMN
+from pcd.simulation import LOAD_VOLTAGE_COLUMN
 from pcd.simulation_input import build_probe_plan
 
 HERE = Path(__file__).resolve().parent
@@ -238,7 +238,7 @@ def _extract_b5(candidate: dict[str, Any], candidate_path: Path) -> dict[str, An
     _study_root, generation_root = _candidate_roots(candidate_path)
     case = load_case(generation_root / "case.yaml")
     ac_columns = build_probe_plan(case).ac_columns
-    extra_columns = [AC_LOAD_VOLTAGE_COLUMN, *ac_columns]
+    extra_columns = [LOAD_VOLTAGE_COLUMN, *ac_columns]
     rows = []
     for item in candidate["scenarios"]:
         selected = _selected_evaluation(item)
@@ -250,8 +250,8 @@ def _extract_b5(candidate: dict[str, Any], candidate_path: Path) -> dict[str, An
         source_voltage = complex(float(ac_row["voltage_re"]), float(ac_row["voltage_im"]))
         source_current = -complex(float(ac_row["current_re"]), float(ac_row["current_im"]))
         load_voltage = complex(
-            float(ac_row[f"{AC_LOAD_VOLTAGE_COLUMN}_re"]),
-            float(ac_row[f"{AC_LOAD_VOLTAGE_COLUMN}_im"]),
+            float(ac_row[f"{LOAD_VOLTAGE_COLUMN}_re"]),
+            float(ac_row[f"{LOAD_VOLTAGE_COLUMN}_im"]),
         )
         load_current = complex(
             float(ac_row["load_current_A_re"]),

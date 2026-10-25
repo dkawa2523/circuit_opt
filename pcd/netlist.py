@@ -20,7 +20,8 @@ from .probes import LOAD_AMMETER, ProbePlan
 from .sim_registry import get as get_sim_method
 from .sim_registry import load_plugins as load_sim_plugins
 from .simulation import AC_FILE, LOAD_CURRENT_COLUMN, WAVEFORM_FILE, AcSweep, AnalysisRequest, TransientAnalysis
-from .simulation_input import MeasurementReference, ResolvedSimulationCase, resolve_source_specs
+from .simulation_input import MeasurementReference, ResolvedSimulationCase
+from .sources import ac_source_name, source_name, source_specs
 from .spice import param_ref_or_value, should_emit_spice_param, spice_value
 
 
@@ -133,10 +134,15 @@ def _selected_name(cfg: dict[str, Any], params: dict[str, Any], key: str, variab
     """
 
     if variable_key in cfg:
-        return str(params.get(str(cfg[variable_key]), cfg.get(key, default)))
+        parameter = str(cfg[variable_key])
+        if parameter not in params:
+            raise ValueError(f"{variable_key} references missing parameter {parameter!r}")
+        return str(params[parameter])
     raw = cfg.get(key, default)
     if isinstance(raw, str) and raw.startswith("$"):
-        return str(params.get(raw[1:], default))
+        if raw[1:] not in params:
+            raise ValueError(f"{key} references missing parameter {raw!r}")
+        return str(params[raw[1:]])
     return str(raw)
 
 
@@ -272,7 +278,7 @@ def render_source(
     """
 
     lines: list[str] = []
-    for i, src in enumerate(resolve_source_specs(case)):
+    for i, src in enumerate(source_specs(case)):
         if not src:
             continue
         if "raw" in src:
@@ -282,11 +288,20 @@ def render_source(
         render = SOURCE_RENDERERS.get(typ)
         if render is None:
             raise ValueError(f"unknown source type: {typ}. available={sorted(SOURCE_RENDERERS)}")
-        name = str(src.get("name", "Vsrc" if i == 0 else f"Vsrc{i}"))
-        line = render(name, str(src.get("p", "src")), str(src.get("n", "0")), src, params)
+        name = source_name(src, i)
+        prefix = "I" if typ == "current_dc" else "V"
+        if not name.upper().startswith(prefix):
+            raise ValueError(f"source {name!r} of type {typ!r} requires a {prefix}-prefixed SPICE name")
+        positive = str(src.get("p", "src"))
+        measured_positive = f"source_meter_{name}" if typ == "current_dc" else positive
+        line = render(name, measured_positive, str(src.get("n", "0")), src, params)
         if active_source is not None:
             line += _source_ac_suffix(src, params) if name == active_source else " AC 0"
         lines.append(line)
+        if typ == "current_dc":
+            # @I[current] remains the DC setting during AC analysis.
+            # A series zero-volt ammeter measures the actual complex current.
+            lines.append(f"Vmeasure_{name} {positive} {measured_positive} DC 0")
     return lines
 
 
@@ -310,10 +325,8 @@ def render_ngspice_netlist(
     output_node = measurement.voltage_node or circuit.output_node
     load_p = measurement.load_positive or circuit.output_node
     load_n = measurement.load_negative
-    if measurement.voltage_node is not None:
-        output_vector = f"v({output_node})"
-    else:
-        output_vector = f"v({load_p})" if load_n == "0" else f"v({load_p},{load_n})"
+    load_voltage_vector = f"v({load_p})" if load_n == "0" else f"v({load_p},{load_n})"
+    output_vector = f"v({output_node})" if measurement.voltage_node is not None else load_voltage_vector
 
     lines = [f"* Auto-generated simulation netlist for case: {case.case_id}"]
     if circuit.preamble:
@@ -325,7 +338,7 @@ def render_ngspice_netlist(
         *render_source(
             case,
             params,
-            active_source=probes.source_name if request.ac is not None else None,
+            active_source=ac_source_name(case, request.ac.source) if request.ac is not None else None,
         ),
     ]
     lines += ["", "* Circuit", *(comp.to_spice() for comp in circuit.components)]
@@ -336,7 +349,7 @@ def render_ngspice_netlist(
             load_subckt,
             *_load_instance(circuit.output_node, probes.load_current_column, measurement),
         ]
-    lines += ["", *render_control_lines(request, output_vector, probes)]
+    lines += ["", *render_control_lines(request, output_vector, probes, load_voltage_vector=load_voltage_vector)]
     return "\n".join(lines) + "\n"
 
 
@@ -344,20 +357,33 @@ def _render_transient(analysis: TransientAnalysis) -> str:
     # Repeat the requested sample step as ngspice's explicit tmax.  This makes
     # the numerical resolution independent of user/system `nostepsizelimit`
     # settings and gives time-profile components a checkable upper bound.
-    return f"tran {analysis.step_s:g} {analysis.stop_s:g} 0 {analysis.step_s:g}"
+    step, stop = spice_value(analysis.step_s), spice_value(analysis.stop_s)
+    return f"tran {step} {stop} 0 {step}"
 
 
 def _render_ac(sweep: AcSweep) -> str:
-    return f"ac {sweep.sweep} {sweep.points} {sweep.start_hz:g} {sweep.stop_hz:g}"
+    return f"ac {sweep.sweep} {sweep.points} {spice_value(sweep.start_hz)} {spice_value(sweep.stop_hz)}"
 
 
-def render_control_lines(request: AnalysisRequest, output_vector: str, probes: ProbePlan) -> list[str]:
+def render_control_lines(
+    request: AnalysisRequest,
+    output_vector: str,
+    probes: ProbePlan,
+    *,
+    load_voltage_vector: str | None = None,
+) -> list[str]:
     """Render ngspice control syntax from solver-neutral request/probe types."""
 
     voltage = output_vector if output_vector.strip().lower().startswith("v(") else f"v({output_vector})"
-    source_current = f"i({probes.source_name})"
-    transient_vectors = [voltage, source_current, *probes.transient_vectors]
-    ac_vectors = [probes.source_voltage_vector, source_current, voltage, *probes.ac_vectors]
+    source_current = probes.source_current_vector or f"i({probes.source_name})"
+    transient_vectors = [voltage, source_current, *probes.transient_vectors, load_voltage_vector or voltage]
+    ac_vectors = [
+        probes.source_voltage_vector,
+        source_current,
+        load_voltage_vector or voltage,
+        voltage,
+        *probes.ac_vectors,
+    ]
 
     saved: list[str] = []
     if request.transient is not None:
@@ -376,7 +402,17 @@ def render_control_lines(request: AnalysisRequest, output_vector: str, probes: P
     if request.transient is not None:
         lines += [_render_transient(request.transient), f"wrdata {WAVEFORM_FILE} time {' '.join(transient_vectors)}"]
     if request.ac is not None:
-        lines += [_render_ac(request.ac), f"wrdata {AC_FILE} {' '.join(ac_vectors)}"]
+        sweep = request.ac
+        write = f"wrdata {AC_FILE} {' '.join(ac_vectors)}"
+        if sweep.sweep == "lin" and sweep.points == 2 and sweep.start_hz != sweep.stop_hz:
+            # ngspice 46 collapses LIN 2 to one point. Execute the requested
+            # endpoints explicitly, preserving the canonical response domain.
+            for index, frequency in enumerate((sweep.start_hz, sweep.stop_hz)):
+                point = spice_value(frequency)
+                lines += [f"ac lin 1 {point} {point}", *(["set appendwrite"] if index else []), write]
+            lines.append("unset appendwrite")
+        else:
+            lines += [_render_ac(sweep), write]
     lines += ["quit", ".endc", ".end"]
     return lines
 

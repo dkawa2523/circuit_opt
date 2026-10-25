@@ -10,6 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
   "numpy>=1.23",
+  "scipy>=1.10,<2",
   "pandas>=1.5",
   "PyYAML>=6.0",
   # Figure geometry is verified against the 0.23 placement/anchor contract.
@@ -22,7 +23,8 @@ dependencies = [
 [project.scripts]
 pcd = "pcd.cli:main"
 
-# Runtime and study directories are never distributable; only `pcd` is.
+# Only `pcd` is a Python package; documentation and examples are data below.
+# Generated runs and tests are excluded from package discovery.
 [tool.setuptools.packages.find]
 include = ["pcd*"]
 exclude = ["runs*", "tests*"]
@@ -30,8 +32,25 @@ exclude = ["runs*", "tests*"]
 [tool.setuptools.package-data]
 pcd = ["py.typed"]
 
+# Install the same manual maintained in the repository, without a second copy.
+[tool.setuptools.data-files]
+"share/pcd/docs" = ["docs/manual-ja.md", "docs/roadmap-ja.md"]
+"share/pcd/docs/assets" = ["docs/assets/*.svg", "docs/assets/evidence.json"]
+"share/pcd/examples" = ["examples/*.yaml", "examples/*.csv", "examples/README.md"]
+"share/pcd/examples/circuits" = ["examples/circuits/*.cir"]
+"share/pcd/examples/advanced" = ["examples/advanced/*.yaml", "examples/advanced/*.csv"]
+"share/pcd/examples/advanced/plugins" = ["examples/advanced/plugins/*.py"]
+
 [tool.setuptools.dynamic]
 version = {attr = "pcd.__version__"}
+
+[tool.uv]
+# Refresh editable installs when metadata or shipped documentation changes.
+cache-keys = [
+  { file = "pyproject.toml" }, { file = "pcd/__init__.py" }, { file = "README.md" },
+  { file = "docs/manual-ja.md" }, { file = "docs/assets/*.svg" }, { file = "docs/assets/evidence.json" },
+  { file = "docs/roadmap-ja.md" }, { file = "examples/**" },
+]
 
 [dependency-groups]
 dev = [
@@ -40,14 +59,8 @@ dev = [
   "pyrefly>=1.2,<2",
   "pytest>=7",
   "pytest-cov>=4.1",
-  "hypothesis>=6.100",
   "types-PyYAML>=6.0",
   "import-linter>=2.0",
-  "bandit[toml]>=1.7.7",
-  "pip-audit>=2.7",
-  "detect-secrets>=1.5",
-  "vulture>=2.11",
-  "radon>=6.0,<7",
 ]
 
 # Optional dependencies for the reproducible OptunaHub/TPE benchmark only.
@@ -58,7 +71,6 @@ optuna-benchmark = [
   "cmaes>=0.12,<1",
   "evotorch>=0.6,<0.7",
   "greenlet>=3.2,<4",
-  "scipy>=1.10,<2",
   "torch>=2.3,<3",
 ]
 
@@ -84,7 +96,6 @@ select = [
   "PT",       # pytest style
   "RUF",      # ruff-specific
   "S",        # bandit subset
-  "C90",      # mccabe complexity
   "NPY",      # numpy correctness
 ]
 ignore = [
@@ -92,9 +103,6 @@ ignore = [
   "S603",  # subprocess call: running a solver is this tool's purpose
   "S607",  # partial path: ngspice is intentionally resolved via PATH
 ]
-
-[tool.ruff.lint.mccabe]
-max-complexity = 10
 
 [tool.ruff.lint.flake8-tidy-imports]
 ban-relative-imports = "parents"
@@ -110,7 +118,11 @@ known-first-party = ["pcd"]
 # -----------------------------------------------------------------------------
 [tool.pyrefly]
 project-includes = ["pcd", "tests", "bench", "noxfile.py"]
-project-excludes = ["**/__pycache__/**", "**/.venv/**", "runs/**"]
+project-excludes = [
+  "**/__pycache__/**", "**/.venv/**", "runs/**",
+  # This publication-only plugin needs the optional optuna-benchmark group.
+  "bench/figures/cases/plugins/optuna_samplers.py",
+]
 python-version = "3.10"
 
 # -----------------------------------------------------------------------------
@@ -121,8 +133,7 @@ testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "-ra --strict-markers --strict-config"
 markers = [
-  "property: Hypothesis property-based test",
-  "e2e: end-to-end CLI journey; run in quality-nightly",
+  "e2e: end-to-end CLI journey; run in quality-pr and quality-nightly",
 ]
 
 [tool.coverage.run]
@@ -132,19 +143,3 @@ source = ["pcd"]
 [tool.coverage.report]
 show_missing = true
 exclude_lines = ["pragma: no cover", "if TYPE_CHECKING:", "if __name__ == .__main__.:"]
-
-# -----------------------------------------------------------------------------
-# Security and dead code
-# -----------------------------------------------------------------------------
-[tool.bandit]
-exclude_dirs = ["tests", "runs"]
-# Running ngspice is the documented purpose of the solver layer; the call sites
-# use an argv list with an explicit timeout and never shell=True.
-skips = ["B404", "B603", "B607"]
-
-[tool.vulture]
-paths = ["pcd", "bench"]
-min_confidence = 80
-# Registry methods are bound by name at import time via @register, so no static
-# reference to them exists.  `pcd list` enumerates them.
-ignore_decorators = ["@register", "@metric_register", "@search_register", "@sim_register"]

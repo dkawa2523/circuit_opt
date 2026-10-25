@@ -13,8 +13,8 @@ circuit:
   builder: custom_series_lc
   output_node: out
   variables:
-    Lx: {bounds: [1.0e-9, 1.0e-6], scale: log, default: 1.0e-7}
-    Cx: {bounds: [1.0e-12, 1.0e-9], scale: log, default: 1.0e-10}
+    Lx: {role: design, bounds: [1.0e-9, 1.0e-6], scale: log, default: 1.0e-7}
+    Cx: {role: design, bounds: [1.0e-12, 1.0e-9], scale: log, default: 1.0e-10}
 load: {name: none}
 measurement: {voltage_node: out, current_source: Vsrc}
 solver:

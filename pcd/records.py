@@ -85,7 +85,18 @@ def frequency_response_path(record: dict[str, Any] | str | Path) -> Path | None:
 def load_waveform(record: dict[str, Any] | str | Path) -> pd.DataFrame:
     if isinstance(record, (str, Path)) and Path(record).is_file() and Path(record).suffix.lower() == ".csv":
         return pd.read_csv(record)
-    return pd.read_csv(waveform_path(read_sim_record(record)))
+    resolved = read_sim_record(record)
+    frame = pd.read_csv(waveform_path(resolved))
+    measurement = resolved.get("measurement") or {}
+    ports = measurement.get("load_ports") or {}
+    if (
+        not frame.empty
+        and measurement.get("load_current")
+        and "load_voltage_V" not in frame
+        and (measurement.get("voltage_node") != ports.get("p") or str(ports.get("n", "0")) != "0")
+    ):
+        raise ValueError("saved waveform has no load-port voltage; rerun this case to measure load power")
+    return frame
 
 
 def load_frequency_response(

@@ -123,8 +123,10 @@ def test_a_builder_must_return_a_circuit(make_case):
     ],
 )
 def test_each_source_type_renders_its_spice_form(make_case, source, expected):
-    case = make_case({"case_id": "src", "source": {"name": "Vsrc", "p": "src", "n": "0", **source}})
-    assert render_source(case, {})[0] == f"Vsrc src 0 {expected}"
+    name = "Isrc" if source["type"] == "current_dc" else "Vsrc"
+    case = make_case({"case_id": "src", "source": {"p": "src", "n": "0", **source}})
+    positive = "source_meter_Isrc" if source["type"] == "current_dc" else "src"
+    assert render_source(case, {})[0] == f"{name} {positive} 0 {expected}"
 
 
 def test_a_source_field_may_reference_a_design_variable(make_case):
@@ -161,7 +163,7 @@ def test_multiple_sources_are_all_rendered(make_case):
     assert len(render_source(case, {})) == 2
 
 
-def test_only_the_measured_source_excites_an_ac_analysis(make_case):
+def test_ac_excitation_is_selected_explicitly_independently_of_observations(make_case):
     case = make_case(
         {
             "case_id": "multi_ac",
@@ -177,10 +179,13 @@ def test_only_the_measured_source_excites_an_ac_analysis(make_case):
                 },
             ],
             "measurement": {"current_source": "Vrf"},
+            "solver": {"ac": {"frequency_Hz": 1e6, "source": "Vrf"}},
         }
     )
 
-    active_source = resolve_simulation_case(case).probes.source_name
+    ac = resolve_simulation_case(case).analysis.ac
+    assert ac is not None
+    active_source = ac.source
     lines = render_source(case, {}, active_source=active_source)
     assert lines[0].endswith("AC 0")
     assert lines[1].endswith("AC 4 0")
@@ -202,9 +207,10 @@ def test_only_the_measured_source_excites_an_ac_analysis(make_case):
     ],
 )
 def test_ac_source_magnitude_uses_the_declared_unit_aware_override(make_case, source, expected_suffix):
-    case = make_case({"case_id": "ac_source", "source": {"name": "Vsrc", "p": "src", "n": "0", **source}})
+    name = "Isrc" if source["type"] == "current_dc" else "Vsrc"
+    case = make_case({"case_id": "ac_source", "source": {"name": name, "p": "src", "n": "0", **source}})
 
-    assert render_source(case, {}, active_source="Vsrc")[0].endswith(expected_suffix)
+    assert render_source(case, {}, active_source=name)[0].endswith(expected_suffix)
 
 
 def test_floating_measured_source_uses_its_differential_voltage(make_case):
@@ -350,7 +356,8 @@ def test_one_frequency_drives_source_load_and_ac_from_the_same_scenario_value(ma
     assert "exact at 27120000 Hz" in text
     assert "Rpoint p nx 32" in text
     assert "Lpoint nx n" in text
-    assert "ac lin 1 2.712e+07 2.712e+07" in text
+    command = next(line.split() for line in text.splitlines() if line.startswith("ac "))
+    assert list(map(float, command[3:])) == [27.12e6, 27.12e6]
 
 
 def test_the_default_load_voltage_is_differential_across_declared_ports(make_case):
