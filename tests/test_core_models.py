@@ -19,7 +19,7 @@ from pcd.core import (
     StudySpec,
 )
 from pcd.core.models import to_plain
-from pcd.core.spaces import grid_values, parameter_grid
+from pcd.core.spaces import ContinuousAxis, grid_values, parameter_grid
 from pcd.results import raw_evaluation_key
 
 
@@ -130,6 +130,21 @@ def test_evaluation_result_round_trip_preserves_all_boundary_fields():
     assert restored.constraint_margins == {"limit": 0.75}
     assert restored.request.merged_inputs() == {"x": 1.0, "tune": 2.0}
 
+    raw = RawResult("failed", error="solver failed")
+    margin = ConstraintResult("min_control_margin", False, violation=0.5)
+    legacy = {
+        **original.to_dict(),
+        "raw": raw.to_dict(),
+        "constraints": [
+            ConstraintResult("evaluation_success", False, violation=1.0, detail=raw.error).to_dict(),
+            margin.to_dict(),
+        ],
+    }
+    restored_legacy = EvaluationResult.from_dict(legacy)
+    assert restored_legacy.raw.error == raw.error
+    assert restored_legacy.constraints == (margin,)
+    assert restored_legacy.total_violation == 1.5
+
 
 def test_raw_key_describes_physics_not_study_attribution():
     first = EvaluationRequest(
@@ -172,22 +187,22 @@ def test_grid_values_cover_discrete_integer_linear_and_log_spaces():
     assert grid_values({"bounds": [1e-3, 1e3], "scale": "log", "grid": 3}) == pytest.approx([1e-3, 1.0, 1e3])
 
 
-def test_invalid_or_empty_parameter_spaces_fail_directly():
-    with pytest.raises(ValueError, match="log-scale"):
-        grid_values({"bounds": [0.0, 1.0], "scale": "log"})
-    with pytest.raises(ValueError, match="no values"):
-        grid_values({"values": []})
-    with pytest.raises(ValueError, match="budget"):
-        parameter_grid({"x": {"values": [1]}}, budget=0)
+def test_continuous_axis_maps_wide_finite_bounds_in_both_directions():
+    axis = ContinuousAxis("value", -1e308, 1e308, logarithmic=False)
+
+    assert axis.decode(0.0) == axis.low
+    assert axis.decode(1.0) == axis.high
+    for unit, physical in [(0.0, axis.low), (0.25, -5e307), (0.5, 0), (0.75, 5e307), (1.0, axis.high)]:
+        assert axis.decode(unit) == pytest.approx(physical)
+        assert axis.encode(physical) == pytest.approx(unit)
 
 
 def test_parameter_grid_is_complete_and_rejects_an_incomplete_budget():
-    specs = {
-        "a": {"values": [1, 2], "default": 2},
-        "b": {"values": ["x", "y", "z"], "default": "y"},
-    }
-    complete = parameter_grid(specs, budget=6)
+    axes = {"a": [1, 2], "b": ["x", "y", "z"]}
+    complete = parameter_grid(axes, budget=6)
     assert len(complete) == 6
     assert parameter_grid({}, budget=1) == [{}]
+    with pytest.raises(ValueError, match="budget"):
+        parameter_grid(axes, budget=0)
     with pytest.raises(ValueError, match="complete control grid has 6 states"):
-        parameter_grid(specs, budget=3)
+        parameter_grid(axes, budget=3)

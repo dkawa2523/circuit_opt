@@ -10,7 +10,28 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
+
 from pcd.core.models import to_plain
+
+_IDENTIFIER_COLUMNS = (
+    "table_schema",
+    "dataset_id",
+    "study_id",
+    "case_schema",
+    "resolved_case_schema",
+    "runtime_fingerprint_sha256",
+    "solver_fingerprint_sha256",
+    "candidate_id",
+    "scenario_id",
+    "raw_cache_key",
+)
+
+
+def read_evaluation_csv(path: Path) -> pd.DataFrame:
+    """Preserve literal identifiers while letting pandas infer metric types."""
+
+    return pd.read_csv(path, converters=dict.fromkeys(_IDENTIFIER_COLUMNS, str))
 
 
 @contextmanager

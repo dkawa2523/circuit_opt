@@ -9,14 +9,14 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
 from .case import Case
 from .component_models import observed_components
-from .inputs import reject_unknown
-from .probes import LOAD_AMMETER, RESERVED_PROBE_COLUMNS, NamedProbe, ProbePlan
+from .inputs import DEFAULT_LOAD_REFERENCE_PLANE, load_plane_label, reject_unknown
+from .probes import LOAD_AMMETER, REPORT_ENERGY_COLUMNS, RESERVED_PROBE_COLUMNS, NamedProbe, ProbePlan
 from .simulation import LOAD_CURRENT_COLUMN, SOURCE_VOLTAGE_COLUMN, AnalysisRequest
 from .sources import ac_source_name, source_vectors
 
@@ -30,6 +30,10 @@ class SolverSettings:
     name: str = "ngspice_cli"
     executable: str | None = None
     timeout_s: float = DEFAULT_SOLVER_TIMEOUT_S
+    resolved_executable: str | None = field(default=None, repr=False, compare=False)
+    environment: tuple[tuple[str, str], ...] | None = field(default=None, repr=False, compare=False)
+    startup_fingerprint: dict[str, Any] | None = field(default=None, repr=False, compare=False)
+    executable_identity: dict[str, Any] | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         name = self.name.strip()
@@ -48,7 +52,7 @@ class MeasurementReference:
     voltage_node: str | None = None
     load_positive: str | None = None
     load_negative: str = "0"
-    reference_plane: str = "load_ports"
+    reference_plane: str = DEFAULT_LOAD_REFERENCE_PLANE
 
 
 @dataclass(frozen=True)
@@ -69,6 +73,7 @@ class SolverRunRequest:
     netlist_path: Path
     run_dir: Path
     simulation: ResolvedSimulationCase
+    plugin_paths: tuple[Path, ...] | None = None
 
 
 def _mapping_section(case: Case, name: str) -> Mapping[str, Any]:
@@ -106,12 +111,9 @@ def _solver_config(case: Case) -> Mapping[str, Any]:
 
 def _solver_timeout(value: Any) -> float:
     try:
-        timeout = float(value)
+        return float(value)
     except (TypeError, ValueError) as exc:
         raise ValueError("solver.timeout_s must be positive and finite") from exc
-    if not math.isfinite(timeout) or timeout <= 0:
-        raise ValueError("solver.timeout_s must be positive and finite")
-    return timeout
 
 
 def resolve_solver_settings(case: Case, solver_override: str | None = None) -> SolverSettings:
@@ -135,7 +137,9 @@ def resolve_analysis_request(
     return AnalysisRequest.from_config(_solver_config(case), params)
 
 
-def _declared_probes(case: Case, measurement: Mapping[str, Any]) -> tuple[NamedProbe, ...]:
+def _declared_probes(
+    case: Case, measurement: Mapping[str, Any], *, allow_legacy_energy_probes: bool
+) -> tuple[NamedProbe, ...]:
     raw = measurement.get("probes")
     if raw is None:
         raw = []
@@ -184,7 +188,7 @@ def _declared_probes(case: Case, measurement: Mapping[str, Any]) -> tuple[NamedP
             raise ValueError(f"probe {column!r} unit does not match its voltage/current vector")
         if probe.resolved_unit is None:
             raise ValueError(f"probe {column!r} needs an explicit unit for a general SPICE expression")
-        if column in RESERVED_PROBE_COLUMNS:
+        if column in RESERVED_PROBE_COLUMNS and not (allow_legacy_energy_probes and column in REPORT_ENERGY_COLUMNS):
             raise ValueError(f"probe column {column!r} is reserved by the waveform/AC result format")
         if column in by_column and by_column[column].vector != vector:
             raise ValueError(f"probe column {column!r} names both {by_column[column]!r} and {vector!r}")
@@ -195,16 +199,13 @@ def _declared_probes(case: Case, measurement: Mapping[str, Any]) -> tuple[NamedP
 def _build_probe_plan(
     case: Case,
     measurement: Mapping[str, Any],
+    *,
+    allow_legacy_energy_probes: bool = False,
 ) -> ProbePlan:
     source, source_voltage, source_current = source_vectors(case)
-    declared = list(_declared_probes(case, measurement))
+    declared = list(_declared_probes(case, measurement, allow_legacy_energy_probes=allow_legacy_energy_probes))
     load_current = measurement.get("load_current")
     if load_current in {"auto", LOAD_CURRENT_COLUMN}:
-        load = _mapping_section(case, "load")
-        if load.get("name", "none") == "none":
-            raise ValueError(
-                "measurement.load_current: auto requires a declared load; use a named current probe for an embedded load"
-            )
         load_current = LOAD_CURRENT_COLUMN
         declared.append(NamedProbe(f"i({LOAD_AMMETER})", LOAD_CURRENT_COLUMN))
     elif load_current is not None:
@@ -215,7 +216,7 @@ def _build_probe_plan(
                 "its positive direction must enter the load at the declared load ports"
             )
     ac = tuple(declared)
-    transient = (*ac, NamedProbe(source_voltage, SOURCE_VOLTAGE_COLUMN))
+    transient = (*ac, NamedProbe(source_voltage, SOURCE_VOLTAGE_COLUMN)) if source_voltage is not None else ac
     return ProbePlan(
         source_name=source,
         source_voltage_vector=source_voltage,
@@ -235,6 +236,25 @@ def build_probe_plan(case: Case) -> ProbePlan:
     )
 
 
+def bind_load_probe(plan: ProbePlan, *, attached: bool) -> ProbePlan:
+    """Measure an attached load at its own series branch, retaining named probes."""
+
+    column = plan.load_current_column
+    if column == LOAD_CURRENT_COLUMN and not attached:
+        raise ValueError(
+            "measurement.load_current: auto requires an attached load; use a named current probe for an embedded load"
+        )
+    if not attached or column in {None, LOAD_CURRENT_COLUMN}:
+        return plan
+    meter = NamedProbe(f"i({LOAD_AMMETER})", LOAD_CURRENT_COLUMN)
+    return replace(
+        plan,
+        load_current_column=LOAD_CURRENT_COLUMN,
+        transient=(*plan.transient, meter),
+        ac=(*plan.ac, meter),
+    )
+
+
 def _measurement_reference(
     measurement: Mapping[str, Any],
     load: Mapping[str, Any],
@@ -248,7 +268,7 @@ def _measurement_reference(
         voltage_node=str(measurement["voltage_node"]) if "voltage_node" in measurement else None,
         load_positive=str(ports["p"]) if "p" in ports else None,
         load_negative=str(ports.get("n", "0")),
-        reference_plane=str(load.get("reference_plane", "load_ports")),
+        reference_plane=load_plane_label(load.get("reference_plane")),
     )
 
 
@@ -256,6 +276,8 @@ def resolve_simulation_case(
     case: Case,
     params: Mapping[str, Any] | None = None,
     solver_override: str | None = None,
+    *,
+    allow_legacy_energy_probes: bool = False,
 ) -> ResolvedSimulationCase:
     """Compile the solver-facing case subset at the orchestration boundary."""
 
@@ -274,7 +296,7 @@ def resolve_simulation_case(
     return ResolvedSimulationCase(
         solver=solver,
         analysis=analysis,
-        probes=_build_probe_plan(case, measurement),
+        probes=_build_probe_plan(case, measurement, allow_legacy_energy_probes=allow_legacy_energy_probes),
         measurement=_measurement_reference(measurement, load),
         netlist_options=tuple((str(name), value) for name, value in options.items()),
     )

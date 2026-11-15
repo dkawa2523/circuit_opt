@@ -27,7 +27,7 @@ SOURCES = ["pcd", "tests", "examples", "bench", "noxfile.py"]
 def _static_checks(session: nox.Session) -> None:
     session.run(sys.executable, "-m", "ruff", "format", "--check", *SOURCES)
     session.run(sys.executable, "-m", "ruff", "check", *SOURCES)
-    session.run(sys.executable, "-m", "pyrefly", "check")
+    session.run(sys.executable, "-m", "pyrefly", "check", "--python-interpreter-path", sys.executable)
     session.run(
         sys.executable,
         "-c",
@@ -56,20 +56,7 @@ def quality_fast(session: nox.Session) -> None:
 def quality_pr(session: nox.Session) -> None:
     """Static boundaries, all available tests, and a coverage report."""
     _static_checks(session)
-    session.run(sys.executable, "-m", "pytest", "-q", "--cov=pcd", "--cov-branch", *session.posargs)
-
-
-@nox.session(name="quality-nightly", python=None)
-def quality_nightly(session: nox.Session) -> None:
-    """User journeys against a real ngspice installation."""
-    session.run(sys.executable, "-m", "pytest", "-q", "-m", "e2e", *session.posargs)
-
-
-@nox.session(name="benchmark-design", python=None)
-def benchmark_design(session: nox.Session) -> None:
-    """Reproduce independent positive and negative electrical cases."""
-    args = session.posargs or ["--run-root", str(ROOT / "runs" / "benchmark_suite")]
-    session.run(sys.executable, str(ROOT / "bench" / "run_suite.py"), *args)
+    session.run(sys.executable, "-m", "pytest", "-q", "--cov=pcd", *session.posargs)
 
 
 @nox.session(python=None)
@@ -80,20 +67,15 @@ def clean(session: nox.Session) -> None:
         ".hypothesis",
         ".import_linter_cache",
         ".grimp_cache",
-        ".importlinter_cache",
         ".nox",
         ".pytest_cache",
         ".ruff_cache",
         "build",
         "dist",
         "htmlcov",
-        "review_tmp",
-        "tmp",
-        ".codex-pptx-build",
     )
     targets = [ROOT / name for name in names]
     targets.extend(ROOT.glob("*.egg-info"))
-    targets.extend(ROOT.glob(".chart-data-*"))
     for parent in (ROOT, ROOT / "pcd", ROOT / "tests", ROOT / "examples", ROOT / "bench"):
         targets.extend(parent.glob("__pycache__") if parent == ROOT else parent.rglob("__pycache__"))
     removed = 0

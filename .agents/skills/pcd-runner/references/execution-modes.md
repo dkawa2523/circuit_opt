@@ -71,8 +71,7 @@ remains an explicitly labelled default-point preview.
 The command prints the run directory. Read `summary.json` first. Canonical
 waveform and AC data are under `data/`; the exact netlist, solver log, replay
 case, and detailed `manifest.json` are under `debug/`. Resolve paths from the
-summary or debug manifest rather than assuming filenames. Historical root
-manifests are not part of the current read contract. A solver-reported failure
+summary or debug manifest rather than assuming filenames. A solver-reported failure
 is nonzero by default but retains its run record; use `--allow-failure` only when that
 known result is intentionally being collected. Invalid input exits with code 2
 and does not manufacture a failed waveform. Unexpected implementation errors
@@ -99,10 +98,25 @@ omitting it retains data-only execution. Use `analyze RUN --case case.yaml` to
 read only revised output settings and regenerate figures from saved observations.
 Inspect `output.status` separately from solver/engineering status: requested
 missing signals or partial schematics produce a nonzero CLI exit and saved reasons.
+For a completed study or identification, `analyze` also accepts its saved
+directory or result JSON. It regenerates outputs at a new destination from
+the selected generation and preserved phase evidence. `--frequency-Hz` is
+for a single simulation only. Transient outputs include signed terminal
+energy from the first saved time sample when power is available.
 See `docs/manual-ja.md`, sections 9–11, for recipes, signal units/signs, and export scope.
-From 0.22, combined CSV columns distinguish `context.phase` and `parameter.*`
-from `signal.*`. Read plot `coverage` and nullable power ratios with their saved
-reasons; an unavailable efficiency cannot satisfy an engineering limit.
+Read plot `coverage` and nullable power ratios with their saved reasons.
+
+## Measure scattering at declared DUT ports
+
+```text
+uv run --frozen python -m pcd network-run {network.yaml} --out runs/network --json
+```
+
+Use a `pcd.network.v1` spec with a fixed DUT, port terminals, reference
+impedances and an AC sweep. Read `network_result.json` for the excitation runs
+and reference planes. Use `basis.csv` for rank, conditioning and availability
+at each frequency. Compare `scattering.csv` at solved points and use
+`waves.csv` for the observed V/I and wave convention. See the manual, section 9.2.
 
 ## Run a design study
 
@@ -118,6 +132,11 @@ explicitly wants an unacceptable design to produce a nonzero exit. An exact
 finite candidate grid cannot be truncated or changed by CLI overrides. For
 continuous public circuit design, use its declared exploratory optimizer,
 budget, and seed unless the user requests overrides.
+
+To continue a supported interrupted design search, repeat the same case,
+effective options and output root with `--resume` or `--resume g_<id>`.
+Check the recorded checkpoint replay count separately from raw-cache reuse and
+the fresh verification of the selected candidate.
 
 After completion, inspect the printed `run_root` and its `study_result.json`.
 Important fields are:
@@ -162,9 +181,13 @@ unavailable evidence returns `not_identified` with a phase-specific reason;
 follow only artifacts listed for phases actually executed. It links separate `fit/` and
 `holdout/` studies, aligned observation tables, local-sensitivity evidence,
 and each phase's cache-free selected-candidate replay. An `identified` result
-means the declared electrical fit/holdout and local-rank checks passed. It does
-not identify plasma chemistry, density, sheath geometry, or process yield.
+means the declared electrical fit/holdout and local-rank checks passed.
+When calibration realizations are declared, report the nominal result and
+the overall acceptance across the declared set separately.
 `run` proposes only `design` values; `identify` proposes only `latent` values.
+When observation groups are declared, report their partition separation,
+weights and holdout coverage as authored evidence, along with the stated
+condition scope. Acquisition independence requires supporting records.
 
 Produce a compact tabular summary when requested:
 
@@ -190,52 +213,36 @@ uv run --frozen python -m pcd result-prune {study-root} --keep 3 --apply --json
 ```
 
 The active and newest generations are preserved; the reusable raw cache is
-outside this pruning operation. The former interpreted-evaluation cache no
-longer exists.
+outside this pruning operation. Schedule applied generation pruning apart from
+reads of retired generations. For a separate preview of raw index retention:
 
-## Reproduce validation suites and curated outputs
+```text
+uv run --frozen python -m pcd result-prune {study-root} --raw-cache --keep 100 --max-bytes 10485760 --json
+```
 
-Run these only when the user explicitly asks for the full benchmark,
-regression evidence, or publication artifacts. The core suite performs 411
-real-ngspice evaluations when no matching cache is available.
+Either bound is sufficient. Review the preview before applying it with
+`--apply` and explicit authorization. The byte limit covers index files.
+Waveforms, solver logs, and archived inputs remain available for offline review.
 
-PCD user-workflow release acceptance uses a new root. The exact count depends
-on numerical-method convergence; read it from `release_result.json` rather than
-assuming the historical 0.16.0 count:
+## Reproduce validation suites
+
+For release acceptance use a fresh root. Read the evaluation count and pass
+criteria from `release_result.json` and `REPORT.md`:
 
 ```text
 uv run --frozen python bench/release/run_suite.py --run-root runs/release_acceptance
 ```
 
-Read `release_result.json` and `REPORT.md`. A suite PASS qualifies the expected
-circuit workflow reproduction only. Machine learning is outside this gate.
-Never reuse an existing run root to turn cached evaluations into release
-evidence.
-
-Core electrical suite:
+Core electrical suite and independent literature suite:
 
 ```text
 uv run --frozen python bench/run_suite.py --run-root runs/benchmark_suite
-```
-
-Literature/source-conformance suite:
-
-```text
 uv run --frozen python bench/literature/run_suite.py --run-root runs/literature/final_evaluation
 ```
 
-Regenerate the report and publication figures only after both source suites
-complete successfully:
-
-```text
-uv run --frozen python bench/reports/generate_case_report.py
-uv run --frozen python bench/figures/generate.py --run-root runs/benchmark_suite
-```
-
-Check `passed` in `runs/benchmark_suite/benchmark_result.json` and both
-`passed` and `benchmark_integrity_passed` in the literature evaluation. A
-benchmark case may intentionally be electrically infeasible and still PASS by
-reproducing its expected classification.
+Check `passed` in `benchmark_result.json` and `evaluation.json` respectively.
+The electrical decision and benchmark verdict are distinct. See
+[the benchmark index](../../../../bench/README.md) for the measured-data cases.
 
 For a requested code-quality gate after implementation work, use:
 

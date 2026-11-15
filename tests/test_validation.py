@@ -4,6 +4,13 @@ from __future__ import annotations
 
 import pytest
 
+from pcd.api import run_case_study, simulate_case
+from pcd.case import default_params
+from pcd.cli import main
+from pcd.inputs import parameter_spec
+from pcd.netlist import compile_netlist
+from pcd.simulation_input import resolve_simulation_case
+from pcd.study_config import study_spec_from_case
 from pcd.validation import validate_case
 
 
@@ -19,84 +26,91 @@ def _variable_case(make_case, spec):
 
 
 @pytest.mark.parametrize(
-    ("spec", "expected"),
+    ("spec", "message"),
     [
-        ({"choices": [], "default": 1}, "variable.empty_choices"),
-        ({"choices": "not-a-list"}, "variable.empty_choices"),
-        ({"choices": ["a", "b"], "default": "c"}, "variable.default_not_in_choices"),
-        ({"bounds": [1]}, "variable.invalid_bounds"),
-        ({"bounds": "nope"}, "variable.invalid_bounds"),
-        ({"bounds": ["a", "b"]}, "variable.non_numeric_bounds"),
-        ({"bounds": [10, 1]}, "variable.bounds_reversed"),
-        ({"bounds": [float("nan"), 1]}, "variable.non_finite_bounds"),
-        ({"bounds": [1.2, 1.8], "type": "int"}, "variable.empty_integer_bounds"),
-        ({"choices": [1, float("inf")]}, "variable.non_finite_value"),
-        ({"bounds": [-1, 10], "scale": "log"}, "variable.log_bounds_non_positive"),
-        ({"bounds": [1, 10], "default": 99}, "variable.default_out_of_bounds"),
+        ({"choices": []}, "nonempty list"),
+        ({"choices": [1, float("inf")]}, "finite"),
+        ({"bounds": [1]}, "two-item list"),
+        ({"bounds": ["a", "b"]}, "numeric"),
+        ({"bounds": [10, 1]}, "finite and ordered"),
+        ({"bounds": [float("nan"), 1]}, "finite and ordered"),
+        ({"bounds": [1.2, 1.8], "type": "int"}, "contain an integer"),
+        ({"bounds": [-1, 10], "scale": "log"}, "positive"),
     ],
 )
-def test_each_variable_rule_emits_its_own_code(make_case, spec, expected):
-    assert expected in codes(validate_case(_variable_case(make_case, spec)))
+def test_parameter_input_owns_domain_validation(spec, message):
+    with pytest.raises(ValueError, match=message):
+        parameter_spec(spec, "variables.x")
 
 
-def test_a_well_formed_variable_produces_no_variable_diagnostics(make_case):
-    case = _variable_case(make_case, {"role": "design", "bounds": [1.0, 10.0], "scale": "log", "default": 5.0})
-    assert not {c for c in codes(validate_case(case)) if c.startswith("variable.")}
+def test_preflight_reports_the_parameter_error_from_execution_input(make_case):
+    case = _variable_case(make_case, {"bounds": [10, 1]})
+    with pytest.raises(ValueError, match="finite and ordered") as error:
+        default_params(case)
+
+    report = validate_case(case)
+    assert not report.ok
+    assert [(issue.code, issue.message) for issue in report.issues] == [("parameter.invalid", str(error.value))]
 
 
-def test_non_numeric_default_with_bounds_is_tolerated(make_case):
-    """A categorical default alongside bounds must not crash the validator."""
+def test_default_outside_a_valid_domain_is_an_input_warning(make_case):
+    case = _variable_case(make_case, {"role": "design", "bounds": [1, 10], "default": 99})
+    assert validate_case(case).ok
+    assert codes(validate_case(case, strict=True)) == {"variable.default_out_of_bounds"}
 
-    case = _variable_case(make_case, {"bounds": [1, 10], "default": "auto"})
-    assert "variable.default_out_of_bounds" not in codes(validate_case(case))
+
+@pytest.mark.parametrize(
+    ("section", "field", "code"),
+    [("target", "objective", "target.invalid_objective"), ("optimizer", "name", "optimizer.invalid")],
+)
+def test_removed_scoring_methods_fail_preflight_and_execution(rc_case, tmp_path, section, field, code):
+    rc_case.data[section][field] = "removed_method"
+    report = validate_case(rc_case, include_plan=True)
+    assert codes(report) == {code}
+    assert report.plan is None
+    with pytest.raises(ValueError, match=f"{code}.*removed_method"):
+        run_case_study(rc_case, tmp_path / "study", solver_override="test_fake")
+    assert not (tmp_path / "study").exists()
 
 
-def test_scalar_variable_spec_is_normalized_not_rejected(make_case):
-    """`variable_specs` wraps a bare scalar as {"default": value}."""
+def test_grid_plan_checks_the_builtin_domain_and_budget(rc_case):
+    rc_case.data["optimizer"]["name"] = "grid"
+    report = validate_case(rc_case, include_plan=True)
+    assert report.plan is None
+    assert "requires finite choices" in report.format_text()
 
-    case = make_case({"case_id": "scalar", "source": {"type": "sine_voltage"}, "variables": {"x": 5}})
-    assert "variable.spec_not_mapping" not in codes(validate_case(case))
+    rc_case.data["circuit"]["variables"]["C1"] = {"choices": [1e-9, 2e-9], "default": 1e-9, "role": "design"}
+    rc_case.data["run"]["trials"] = 1
+    assert "requires exactly 2 trials" in validate_case(rc_case).format_text()
+    rc_case.data["run"]["trials"] = 2
+    assert validate_case(rc_case, strict=True).ok
+
+
+def test_scoring_methods_do_not_gate_a_forward_simulation(make_case, tmp_path):
+    case = make_case(
+        {
+            "metadata": {"workflow": "simulation"},
+            "optimizer": {"name": "unused_optimizer"},
+            "target": {"objective": "unused_objective"},
+            "solver": {"name": "test_fake", "tran": {"stop_s": 2e-6}},
+        }
+    )
+    assert validate_case(case, strict=True, include_plan=True).ok
+    assert simulate_case(case, run_root=tmp_path / "run").status == "ok"
 
 
 # --- solver rules ----------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "solver",
-    [
-        {"name": "ngspice_cli", "tran": "nope"},
-        {"name": "ngspice_cli", "tran": {"step_s": -1, "stop_s": 1}},
-        {"name": "ngspice_cli", "tran": {"step_s": 10, "stop_s": 1}},
-        {"name": "ngspice_cli", "timeout_s": 0},
-        {"name": "ngspice_cli", "timeout_s": "soon"},
-        {"name": "ngspice_cli", "ac": {"sweep": "random"}},
-        {"name": "ngspice_cli", "ac": {"points": 1.5}},
-        {"name": "ngspice_cli", "ac": {"frequency_Hz": 0}},
-        {"name": "ngspice_cli", "ac": {"frequency_Hz": "rf_frequency_Hz", "points": 1}},
-    ],
-)
-def test_invalid_solver_settings_have_one_simulation_boundary_diagnostic(make_case, solver):
-    case = make_case({"case_id": "solver", "source": {"type": "sine_voltage"}, "solver": solver})
-    assert "simulation.invalid_input" in codes(validate_case(case))
+def test_invalid_solver_input_is_reported_at_the_simulation_boundary(make_case):
+    case = make_case({"source": {"type": "sine_voltage"}, "solver": {"name": "ngspice_cli", "timeout_s": "soon"}})
+    [issue] = validate_case(case).issues
+    assert issue.code == "simulation.invalid_input"
+    assert "timeout_s" in issue.message
 
 
-@pytest.mark.parametrize("name", ["dummy", "missing_solver"])
-def test_unknown_solver_is_rejected_before_execution(make_case, name):
-    case = make_case({"case_id": "solver", "source": {"type": "sine_voltage"}, "solver": {"name": name}})
-
-    assert "solver.unknown" in codes(validate_case(case))
-
-
-def test_removed_dummy_solver_is_rejected_even_when_a_plugin_is_present(make_case):
-    case = make_case(
-        {
-            "case_id": "solver",
-            "source": {"type": "sine_voltage"},
-            "plugins": [__file__],
-            "solver": {"name": "dummy"},
-        }
-    )
-
+def test_unknown_solver_is_rejected_before_execution(make_case):
+    case = make_case({"source": {"type": "sine_voltage"}, "solver": {"name": "missing_solver"}})
     assert "solver.unknown" in codes(validate_case(case))
 
 
@@ -127,41 +141,71 @@ def test_invalid_rf_load_parameters_use_the_model_build_boundary(make_case):
     assert "reactance_ohm" in issues[0].message
 
 
-def test_valid_rf_load_parameters_still_require_reference_plane_and_origin(make_case):
+@pytest.mark.parametrize(
+    ("source_type", "ac", "message"),
+    [
+        ("unsupported", {"frequency_Hz": 13.56e6}, "unknown source type"),
+        ("sine_voltage", {"sweep": "dec", "points": 10}, "requires a single AC frequency"),
+        ("sine_voltage", {"frequency_Hz": 27.12e6}, "must equal the requested AC frequency"),
+    ],
+)
+def test_preflight_preview_and_simulation_share_the_compiled_input(
+    make_case, tmp_path, capsys, source_type, ac, message
+):
     case = make_case(
         {
-            "case_id": "load_scope",
-            "source": {"type": "sine_voltage", "frequency_Hz": 13.56e6},
+            "case_id": "point_scope",
+            "source": {"type": source_type, "frequency_Hz": 13.56e6},
             "load": {
                 "name": "impedance_point",
                 "resistance_ohm": 20,
                 "reactance_ohm": -80,
                 "model_frequency_Hz": 13.56e6,
-            },
-        }
-    )
-
-    assert {"load.missing_reference_plane", "load.missing_characterization"} <= codes(validate_case(case))
-
-
-def test_impedance_point_rejects_a_broadband_ac_sweep(make_case):
-    case = make_case(
-        {
-            "case_id": "point_sweep",
-            "source": {"type": "sine_voltage", "frequency_Hz": 13.56e6},
-            "load": {
-                "name": "impedance_point",
-                "resistance_ohm": 20,
-                "reactance_ohm": -80,
-                "model_frequency_Hz": 13.56e6,
-                "reference_plane": "electrode",
                 "characterization": {"origin": "measured"},
             },
-            "solver": {"name": "ngspice_cli", "ac": {"sweep": "dec", "points": 10}},
+            "solver": {"ac": ac},
         }
     )
 
-    assert "load.impedance_point_requires_ac_point" in codes(validate_case(case))
+    report = validate_case(case, strict=True)
+    assert not report.ok
+    assert message in report.format_text()
+    netlist = tmp_path / "preview.cir"
+    with pytest.raises(SystemExit) as exit_status:
+        main(["sim-netlist", str(case.path), "--out", str(netlist)])
+    assert exit_status.value.code == 2
+    assert message in capsys.readouterr().out
+    with pytest.raises(ValueError, match=message):
+        simulate_case(case, run_root=tmp_path / "runs")
+    assert not netlist.exists()
+    assert not (tmp_path / "runs").exists()
+
+
+def test_equivalent_load_with_no_plane_label_keeps_its_explicit_terminals(make_case):
+    frequency = 13.56e6
+    case = make_case(
+        {
+            "case_id": "unlabelled_load",
+            "source": {"type": "sine_voltage", "frequency_Hz": frequency},
+            "load": {
+                "name": "impedance_point",
+                "ports": {"p": "electrode", "n": "return_node"},
+                "resistance_ohm": 20,
+                "reactance_ohm": -80,
+                "model_frequency_Hz": frequency,
+                "reference_plane": None,
+                "characterization": {"origin": "test"},
+            },
+            "solver": {"ac": {"frequency_Hz": frequency}},
+        }
+    )
+    assert validate_case(case, strict=True).ok
+    params = default_params(case)
+    simulation = resolve_simulation_case(case, params)
+    _, simulation, deck = compile_netlist(case, params, simulation)
+    assert "Xload electrode return_node load_model" in deck
+    assert simulation.measurement.reference_plane == "load_ports"
+    assert study_spec_from_case(case).metadata["reference_plane"] == "load_ports"
 
 
 def test_rf_load_metric_requires_transient_and_load_current(make_case):
@@ -177,14 +221,6 @@ def test_rf_load_metric_requires_transient_and_load_current(make_case):
 
 
 # --- source, plugin and target rules ---------------------------------------
-
-
-def test_missing_source_is_a_warning(make_case):
-    assert "case.no_source" in codes(validate_case(make_case({"case_id": "nosrc"})))
-
-
-def test_an_empty_source_mapping_uses_defaults_without_a_missing_source_warning(make_case):
-    assert "case.no_source" not in codes(validate_case(make_case({"case_id": "default_src", "source": {}})))
 
 
 def test_malformed_source_containers_are_errors(make_case):
@@ -247,7 +283,6 @@ def test_invalid_rf_measurement_options_are_rejected(make_case, measurement):
 def test_external_netlist_policies_are_owned_by_the_model_builder(make_case, field, value):
     case = make_case(
         {
-            "measurement": {"source_voltage": "v(src)"},
             "circuit": {
                 "builder": "from_netlist",
                 "netlist_file": "external.cir",
@@ -270,19 +305,14 @@ def test_external_netlist_policies_are_owned_by_the_model_builder(make_case, fie
         ("load", [], "simulation.invalid_input"),
         ("measurement", [], "simulation.invalid_input"),
         ("target", [], "target.not_mapping"),
-        ("plugins", {}, "plugins.not_list"),
-        ("plugins", [1], "plugin.invalid_path"),
+        ("plugins", {}, "plugin.invalid"),
+        ("plugins", [1], "plugin.invalid"),
     ],
 )
 def test_malformed_nested_sections_are_reported_without_crashing(make_case, section, value, expected):
-    case = make_case({"case_id": "bad", "source": {"type": "sine_voltage"}, section: value})
+    case = make_case({"case_id": "bad", "source": {"type": "sine_voltage", "frequency_Hz": 1e6}, section: value})
 
     assert expected in codes(validate_case(case))
-
-
-def test_missing_plugin_is_an_error(make_case):
-    case = make_case({"case_id": "p", "source": {"type": "sine_voltage"}, "plugins": ["nope.py"]})
-    assert "plugin.not_found" in codes(validate_case(case))
 
 
 def test_plugin_loading_and_solver_registration_are_validated_together(tmp_path, make_case):
@@ -297,8 +327,10 @@ def test_plugin_loading_and_solver_registration_are_validated_together(tmp_path,
         }
     )
 
-    invalid = codes(validate_case(case))
-    assert {"plugin.load_failed", "solver.unknown"} <= invalid
+    [issue] = validate_case(case).issues
+    assert issue.code == "plugin.invalid"
+    assert "SyntaxError" in issue.message
+    assert plugin.name in issue.message
 
     plugin.write_text(
         "from pcd.sim_registry import register\n"
@@ -307,12 +339,14 @@ def test_plugin_loading_and_solver_registration_are_validated_together(tmp_path,
         "    return None\n",
         encoding="utf-8",
     )
-    valid = codes(validate_case(case))
-    assert "plugin.load_failed" not in valid
-    assert "solver.unknown" not in valid
+    assert validate_case(case).ok
+    case.data.pop("plugins")
+    [issue] = validate_case(case).issues
+    assert issue.code == "solver.unknown"
+    assert "undeclared plugin" in issue.message
 
 
-def test_missing_target_waveform_is_an_error(make_case):
+def test_preflight_reports_the_waveform_reader_failure(make_case):
     case = make_case(
         {
             "case_id": "t",
@@ -320,23 +354,27 @@ def test_missing_target_waveform_is_an_error(make_case):
             "target": {"waveform_file": "absent.csv"},
         }
     )
-    assert "target.waveform_not_found" in codes(validate_case(case))
+    [issue] = validate_case(case).issues
+    assert issue.code == "target.invalid_waveform"
+    assert "absent.csv" in issue.message
 
 
-def test_target_waveform_path_must_be_pathlike(make_case):
+def test_scored_waveform_target_requires_a_file(make_case):
+    case = make_case({"case_id": "t", "source": {"type": "sine_voltage"}, "target": {"objective": "waveform_l2"}})
+    [issue] = validate_case(case).issues
+    assert issue.code == "target.no_waveform"
+    assert issue.level == "error"
+
+
+def test_known_target_duration_mismatch_is_an_input_error(make_case):
     case = make_case(
         {
-            "case_id": "t",
-            "source": {"type": "sine_voltage"},
-            "target": {"waveform_file": ["not", "a", "path"]},
+            "solver": {"tran": {"stop_s": 1e-6}},
+            "target": {"objective": "waveform_l2", "waveform_file": "target.csv"},
         }
     )
-    assert "target.invalid_waveform_path" in codes(validate_case(case))
-
-
-def test_target_without_waveform_file_is_a_warning(make_case):
-    case = make_case({"case_id": "t", "source": {"type": "sine_voltage"}, "target": {"objective": "waveform_l2"}})
-    assert "target.no_waveform" in codes(validate_case(case))
+    (case.base_dir / "target.csv").write_text("time_s,voltage_V\n0,0\n2e-6,1\n", encoding="utf-8")
+    assert "target.waveform_outside_transient" in codes(validate_case(case))
 
 
 def test_a_frequency_domain_objective_does_not_require_a_waveform_target(make_case):
@@ -348,17 +386,13 @@ def test_a_frequency_domain_objective_does_not_require_a_waveform_target(make_ca
 
 
 def test_strict_mode_promotes_warnings_to_failure(make_case):
-    case = make_case({"case_id": "w"})
-    assert validate_case(case, strict=False).ok is True
-    assert validate_case(case, strict=True).ok is False
-
-
-def test_report_serialization_round_trips(make_case):
-    report = validate_case(make_case({"case_id": "w"}))
-    payload = report.to_dict()
-    assert payload["ok"] == report.ok
-    assert len(payload["issues"]) == len(report.issues)
-    assert report.format_text()
+    case = _variable_case(make_case, {"bounds": [1, 10], "default": 1})
+    normal = validate_case(case).to_dict()
+    strict = validate_case(case, strict=True).to_dict()
+    assert normal["ok"] is True
+    assert strict["ok"] is False
+    assert strict["issues"] == normal["issues"]
+    assert [issue["code"] for issue in strict["issues"]] == ["variable.implicit_design"]
 
 
 def test_auto_metering_without_a_load_is_an_error(make_case):
@@ -374,15 +408,16 @@ def test_auto_metering_without_a_load_is_an_error(make_case):
     )
     report = validate_case(case)
     assert not report.ok
-    assert any("requires a declared load" in item.message for item in report.issues)
+    assert any("requires an attached load" in item.message for item in report.issues)
 
 
 def test_auto_metering_with_a_load_is_accepted(make_case):
     case = make_case(
         {
             "case_id": "with_load",
+            "variables": {"load_model": {"role": "fixed", "default": "resistor"}},
             "source": {"type": "sine_voltage", "name": "Vsrc", "amplitude_V": 1, "frequency_Hz": 1e6},
-            "load": {"name": "resistor", "R_ohm": 50},
+            "load": {"name_variable": "load_model", "R_ohm": 50},
             "measurement": {"load_current": "auto"},
             "solver": {"name": "ngspice_cli", "tran": {"step_s": 1e-9, "stop_s": 1e-6}},
         }
@@ -399,12 +434,13 @@ def test_a_fractional_stop_is_valid_when_the_measurement_window_is_long_enough(m
             "load": {"name": "resistor", "R_ohm": 50},
             "measurement": {"load_current": "auto"},
             "solver": {"name": "ngspice_cli", "tran": {"step_s": 1e-10, "stop_s": 3.0e-7}},
+            "target": {"objective": "rf_load"},
         }
     )
     assert not [i for i in validate_case(case).issues if i.code == "solver.insufficient_rf_cycles"]
 
 
-def test_a_record_shorter_than_the_measurement_window_is_reported(make_case):
+def test_a_short_record_only_warns_when_scoring_requires_a_settled_window(make_case):
 
     case = make_case(
         {
@@ -415,20 +451,15 @@ def test_a_record_shorter_than_the_measurement_window_is_reported(make_case):
             "solver": {"name": "ngspice_cli", "tran": {"step_s": 1e-11, "stop_s": 0.5 / 13.56e6}},
         }
     )
-    warnings = [i for i in validate_case(case).issues if i.code == "solver.insufficient_rf_cycles"]
-    assert len(warnings) == 1
-    assert "at least 3 cycles" in warnings[0].message
+    assert validate_case(case, strict=True).ok
+    case.data["target"] = {"objective": "rf_load"}
+    [warning] = validate_case(case).issues
+    assert warning.code == "solver.insufficient_rf_cycles"
+    assert "at least 3 cycles" in warning.message
 
+    case.data["source"] = {"type": "dc_voltage", "name": "Vsrc", "voltage_V": 1}
+    assert "target.rf_load_without_fundamental" in codes(validate_case(case))
 
-def test_the_cycle_check_is_skipped_without_a_power_measurement(make_case):
-    """Only cases asking for a power figure care about whole cycles."""
-
-    case = make_case(
-        {
-            "case_id": "no_power",
-            "source": {"type": "sine_voltage", "name": "Vsrc", "amplitude_V": 600, "frequency_Hz": 13.56e6},
-            "load": {"name": "resistor", "R_ohm": 50},
-            "solver": {"name": "ngspice_cli", "tran": {"step_s": 1e-10, "stop_s": 3.0e-7}},
-        }
-    )
-    assert not [i for i in validate_case(case).issues if i.code == "solver.insufficient_rf_cycles"]
+    case.data["target"]["fundamental_Hz"] = "$operating_f"
+    case.data["study"] = {"scenarios": [{"id": "f1", "values": {"operating_f": 13.56e6}}]}
+    assert validate_case(case, strict=True).ok

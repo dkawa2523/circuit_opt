@@ -6,7 +6,9 @@ stay the three-line declarations they should be.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
@@ -122,6 +124,48 @@ def test_a_changed_plugin_requires_a_fresh_process(tmp_path):
         load_plugin_files([plugin.name], tmp_path)
 
 
+def test_failed_plugin_cannot_provide_a_partial_registration(tmp_path):
+    name = "test_failed_plugin_binding"
+    plugin = _write_plugin(
+        tmp_path,
+        f"from pcd.api import register_metric\n@register_metric({name!r})\ndef metric(*_args):\n    return {{'loss': 1}}\n"
+        "raise ValueError('plugin error')\n",
+    )
+    with pytest.raises(ValueError, match="plugin error"):
+        load_plugin_files([plugin.name], tmp_path)
+
+    plugin.write_text("VALUE = 2\n", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="plugin import previously failed"):
+        load_plugin_files([plugin.name], tmp_path)
+    with pytest.raises(RuntimeError, match="came from a failed plugin import"):
+        metric_registry.get(name, plugins=())
+    with pytest.raises(RuntimeError, match="came from a failed plugin import"):
+        metric_registry.get(name)
+
+
+def test_generic_plugin_load_preserves_lazy_builtins(tmp_path, monkeypatch, registry):
+    plugin_api = ModuleType("test_registry_plugin_api")
+    vars(plugin_api)["register"] = registry.register
+    monkeypatch.setitem(sys.modules, plugin_api.__name__, plugin_api)
+
+    def builtin():
+        return "builtin"
+
+    builtin.__module__ = registry.builtins_module
+    monkeypatch.setattr(
+        "pcd.registry.importlib.import_module", lambda _name: registry.register("widget", "tool")(builtin)
+    )
+    plugin = _write_plugin(
+        tmp_path,
+        "from test_registry_plugin_api import register\n@register('widget', 'tool')\ndef replacement(): pass\n",
+    )
+    with pytest.warns(RuntimeWarning, match="test method conflict"):
+        load_plugin_files([plugin.name], tmp_path)
+    assert registry.get("widget", "tool", plugins=()) is builtin
+    with pytest.raises(ValueError, match="conflicting widget method"):
+        registry.get("widget", "tool", plugins=(plugin,))
+
+
 def test_a_missing_plugin_names_the_resolved_path(tmp_path):
     with pytest.raises(FileNotFoundError, match="plugin not found"):
         load_plugin_files(["absent.py"], tmp_path)
@@ -130,6 +174,29 @@ def test_a_missing_plugin_names_the_resolved_path(tmp_path):
 def test_no_plugins_is_not_an_error(tmp_path):
     load_plugin_files(None, tmp_path)
     load_plugin_files([], tmp_path)
+
+
+def test_a_case_cannot_select_another_cases_plugin_binding(tmp_path):
+    name = "test_case_plugin_binding"
+    first = _write_plugin(
+        tmp_path,
+        f"from pcd.api import register_metric\n@register_metric({name!r})\ndef metric(*_args):\n    return {{'loss': 1}}\n",
+        name="first.py",
+    )
+    second = _write_plugin(
+        tmp_path,
+        f"from pcd.api import register_metric\n@register_metric({name!r})\ndef metric(*_args):\n    return {{'loss': 2}}\n",
+        name="second.py",
+    )
+    load_plugin_files([first.name], tmp_path)
+    with pytest.warns(RuntimeWarning, match="metric method conflict"):
+        load_plugin_files([second.name], tmp_path)
+
+    assert metric_registry.get(name, plugins=(first,)).__module__.endswith("_first")
+    with pytest.raises(ValueError, match="conflicting metric method"):
+        metric_registry.get(name, plugins=(second,))
+    with pytest.raises(ValueError, match="undeclared plugin"):
+        metric_registry.get(name, plugins=())
 
 
 def test_an_absolute_plugin_path_is_used_as_given(tmp_path):

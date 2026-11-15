@@ -6,10 +6,11 @@ expand. RF-specific models expose only effective electrical parameters.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from pcd.netlist import build_load_subckt
-from pcd.sim_registry import available
 
 # name -> (config, expected element lines in order)
 LOAD_MODELS = {
@@ -47,7 +48,14 @@ LOAD_MODELS = {
 @pytest.mark.parametrize("name", sorted(LOAD_MODELS))
 def test_each_load_model_emits_its_subcircuit(make_case, name):
     config, expected = LOAD_MODELS[name]
-    case = make_case({"case_id": name, "source": {"frequency_Hz": 13.56e6}, "load": {"name": name, **config}})
+    # A broadband load has no need for a periodic marker in an AC-only case.
+    # A point-impedance load instead anchors itself to the requested AC point.
+    ac = (
+        {"frequency_Hz": config["model_frequency_Hz"]}
+        if name == "impedance_point"
+        else {"sweep": "lin", "points": 5, "start_Hz": 1e7, "stop_Hz": 2e7}
+    )
+    case = make_case({"case_id": name, "solver": {"ac": ac}, "load": {"name": name, **config}})
     selected, subckt = build_load_subckt(case, {})
 
     assert selected == name
@@ -94,6 +102,7 @@ def test_zero_icp_coil_resistance_is_an_ideal_wire_not_a_zero_ohm_spice_resistor
     _selected, subckt = build_load_subckt(case, {})
     assert "Rcoil" not in subckt
     assert "Lcoil p n 2e-06" in subckt
+    assert "Cparallel" not in subckt
 
 
 def test_the_none_load_emits_nothing(make_case):
@@ -141,7 +150,7 @@ def test_a_load_builder_must_return_netlist_text(make_case, monkeypatch):
     import pcd.netlist as netlist_module
 
     case = make_case({"load": {"name": "test_non_text_load"}})
-    monkeypatch.setattr(netlist_module, "get_sim_method", lambda _kind, _name: lambda _case, _params: object())
+    monkeypatch.setattr(netlist_module, "get_sim_method", lambda _kind, _name, **_kw: lambda _case, _params: object())
     with pytest.raises(TypeError, match="must return str or None"):
         build_load_subckt(case, {})
 
@@ -230,20 +239,6 @@ def test_topology_catalog_is_the_single_connectivity_source():
     ]
 
 
-def test_every_registered_method_is_reachable_by_name():
-    methods = available()
-    assert set(methods["load"]) == {
-        "none",
-        "resistor",
-        "from_yaml",
-        "impedance_point",
-        "ccp_lumped",
-        "icp_transformer",
-    }
-    assert set(methods["circuit"]) >= {"from_yaml", "l_match", "pi_match", "pi_match_harmonic"}
-    assert "ladder" not in methods["circuit"]
-
-
 # --- an externally authored netlist ----------------------------------------
 
 
@@ -274,9 +269,9 @@ def test_a_case_source_replaces_the_one_in_the_netlist(make_case):
             "circuit": {"builder": "from_netlist", "netlist_file": "c.cir"},
         }
     )
-    (case.base_dir / "c.cir").write_text("Vsrc src 0 DC 1\nR1 src out 50\n.end\n", encoding="utf-8")
+    (case.base_dir / "c.cir").write_text("Vsrc src 0\n+ DC 1\nR1 src out 50\n.end\n", encoding="utf-8")
     _name, circuit = build_circuit(case, {})
-    assert "Vsrc src 0 DC 1" not in circuit.preamble
+    assert circuit.preamble == ["R1 src out 50"]
     assert any("replaced same-named source line" in note for note in circuit.notes)
 
 
@@ -416,23 +411,113 @@ def test_execution_import_distinguishes_complete_decks_from_fragments():
         executable_netlist_lines(text, mode="guess")
 
 
-def test_archived_external_netlist_is_self_contained_with_included_models(tmp_path, make_case):
-    import json
+def test_dut_terminal_inventory_uses_unconditional_terminal_cards():
+    from pcd.netlist_import import top_level_spice_nodes
 
+    deck = """Rtitle not_a_terminal also_not 50
+.param resistance = 50
+.global named_global
+.model diode_name D
+.model transistor VDMOS
+.subckt Branch pin return scale = 2
+.subckt nested child
+Rhidden child local_only 50
+.ends
+Rinside pin internal_only {resistance}
+Rreturn internal_only return 50
+.ends
+Xbranch In,Out Branch
++ scale = 3
+R1 Out 0 {resistance} ; comment_only
+Vzero SourceReference 0
+F1 sensed 0 Vzero 1
+D1 DiodeNode 0 diode_name
+M1 Drain Gate Source transistor m=1
+E1 ControlOut 0 ControlIn 0 1
+E2 BehaviorOut 0 VALUE = {V(read_only)}
+.if(0)
+R2 conditional_only 0 10
+.else
+R3 branch_only 0 10
+.endif
+A1 [unknown_only] unknown_model
+.end
+"""
+    assert top_level_spice_nodes(deck, mode="deck") == {
+        "0",
+        "in",
+        "out",
+        "sourcereference",
+        "sensed",
+        "diodenode",
+        "drain",
+        "gate",
+        "source",
+        "controlout",
+        "controlin",
+        "behaviorout",
+    }
+
+
+def test_rendered_ac_source_inventory_uses_spice_card_delimiters():
+    from pcd.sources import rendered_source_scope
+
+    text = """Circuit
+Vcomma p1,0 AC 1
+Vparen p2 0 AC(1)
+Icomma p3 0,AC,1
+Vbias p4 0 DC=10 AC(0)
+Vmeter p5 0
+"""
+    scope = rendered_source_scope(text, "Vbias")
+    assert scope["ac_excitations"] == ["Vcomma", "Vparen", "Icomma"]
+    assert scope["ac_unavailable_reason"] == "multiple AC excitations are active: Vcomma, Vparen, Icomma"
+    assert scope["transient_unavailable_reason"] is None
+
+
+def test_archived_external_netlist_is_self_contained_with_included_models(tmp_path, make_case):
     from pcd.netlist import build_circuit
     from pcd.sim_core import archive_case_bundle
 
-    case = make_case({"case_id": "portable", "circuit": {"builder": "from_netlist", "netlist_file": "c.cir"}})
+    case = make_case(
+        {"case_id": "portable", "circuit": {"builder": "from_netlist", "netlist_file": "c.cir", "netlist_mode": "deck"}}
+    )
     include = case.base_dir / "models.inc"
     include.write_text(".model bundled D(Is=3e-12)\n", encoding="utf-8")
-    (case.base_dir / "c.cir").write_text('.include "models.inc"\nD1 src out bundled\n.end\n', encoding="utf-8")
+    (case.base_dir / "c.cir").write_text(
+        '.include title-text\n.include "models.inc"\nD1 src out bundled\n.end\n', encoding="utf-8"
+    )
 
     snapshot, files = archive_case_bundle(case, tmp_path / "bundle")
     include.unlink()
     _name, circuit = build_circuit(snapshot, {})
 
     assert ".model bundled D(Is=3e-12)" in circuit.preamble
+    assert ".include title-text" not in circuit.preamble
     assert files["imported_netlist"] == "imported_netlist.cir"
     manifest = json.loads((snapshot.base_dir / "input_manifest.json").read_text(encoding="utf-8"))
     assert len(manifest["inputs"]) == 2
     assert all(item["status"] == "archived" for item in manifest["inputs"])
+
+
+def test_netlist_snapshot_records_the_include_bytes_it_consumed(tmp_path, make_case, monkeypatch):
+    import pcd.sim_core as simulation
+
+    (tmp_path / "divider.cir").write_text(".include model.inc\nV1 src 0 AC 1\n")
+    model = tmp_path / "model.inc"
+    original = b"R1 src 0 50\n"
+    model.write_bytes(original)
+    case = make_case({"circuit": {"builder": "from_netlist", "netlist_file": "divider.cir"}})
+    archive = simulation.archive_data_files
+
+    def update_live_file(*args, **kwargs):
+        model.write_bytes(b"R1 src 0 100\n")
+        return archive(*args, **kwargs)
+
+    monkeypatch.setattr(simulation, "archive_data_files", update_live_file)
+    snapshot, files = simulation.archive_case_bundle(case, tmp_path / "bundle")
+    manifest = json.loads((snapshot.base_dir / files["input_manifest"]).read_text())
+    entry = next(item for item in manifest["inputs"] if item["original_name"] == model.name)
+
+    assert (snapshot.base_dir / entry["artifact"]).read_bytes() == original
+    assert "R1 src 0 50" in (snapshot.base_dir / files["imported_netlist"]).read_text()

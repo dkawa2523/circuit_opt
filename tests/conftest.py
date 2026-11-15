@@ -34,6 +34,17 @@ def topology_case() -> Case:
     return load_case(FIXTURES / "advanced_case.yaml")
 
 
+@pytest.fixture(scope="session")
+def ngspice() -> None:
+    """Require a batch-runnable solver for tests that use the real executable."""
+    from pcd.solver import diagnose_solver
+
+    diagnosis = diagnose_solver()
+    if not diagnosis["batch_runnable"]:
+        reason = "\n".join(diagnosis["notes"])
+        pytest.exit(f"ngspice is required for the selected tests. {reason}", returncode=1)
+
+
 @pytest.fixture
 def make_case(tmp_path: Path):
     """Write a case dict to disk and load it, so path resolution is exercised."""

@@ -11,8 +11,10 @@ This case reproduces two pieces of tabulated/textual evidence from
 Run from the repository root:
 
 ```powershell
-uv run python bench/literature/p1_colpo1999_icp/run.py
+uv run --frozen python bench/literature/p1_colpo1999_icp/run.py --run-root runs/literature/colpo1999
 ```
+
+Read `colpo1999_evaluation.json` in the run root for the numerical comparisons.
 
 The rounded component values predict 7.047, 13.888, and 19.817 MHz.  The
 middle value differs from the paper's 14.5 MHz label by about 4.2%, which is
@@ -23,7 +25,5 @@ off-resonance points, passivity, and the known dummy load.
 This validates fixture topology and a published known-load replay.  It does
 not validate a plasma-on state model, planar production ICP, matching-network
 range, density, uniformity, or process performance.  Figures 2 and 3 are not
-silently converted into precise golden data.  The separate `digitized/`
-challenge set carries two-reader marker pairing, axis calibration, exclusions,
-and extraction uncertainty, and is intentionally not treated as a tight
-experimental golden.
+silently converted into precise golden data. The [digitized challenge set](digitized/README.md)
+records two-reader marker pairing, axis calibration, exclusions and extraction uncertainty.

@@ -1,0 +1,1 @@
+source/*.s2p -text whitespace=cr-at-eol,-blank-at-eol,-blank-at-eof

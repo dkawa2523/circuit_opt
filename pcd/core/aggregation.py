@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 
 from .models import Candidate, CandidateResult, ControlState, EvaluationResult, Objective, ScenarioResult, StudySpec
 
@@ -18,6 +18,11 @@ def _finite_float(value: object) -> float | None:
     except (TypeError, ValueError):
         return None
     return number if math.isfinite(number) else None
+
+
+def _control_number(value: object) -> float | None:
+    # Numeric-looking categorical labels must retain their declared type.
+    return _finite_float(value) if isinstance(value, int | float) and not isinstance(value, bool) else None
 
 
 def _weighted_mean(items: list[tuple[float, float]]) -> float:
@@ -37,47 +42,31 @@ def _normalized_weights(weights: list[float]) -> list[float]:
 def control_margin(selected: ControlState, available: tuple[ControlState, ...]) -> float | None:
     """Return selected numeric-grid headroom on a 0 (edge) to 1 (center) scale.
 
-    Every axis must be numeric and finite in every available state to
-    participate. A single-valued numeric axis is neutral at 1.0, while
-    categorical axes are ignored. The minimum axis margin is returned because
-    one saturated actuator is sufficient to remove tuning headroom.
+    An axis needs a nonzero numeric range. Fixed and categorical values do
+    not provide headroom. Use the minimum margin of the remaining axes.
     """
 
     margins: list[float] = []
-    for name in selected.values:
+    for name, value in selected.values.items():
+        number = _control_number(value)
+        if number is None:
+            continue
         if name in selected.numeric_ranges:
             low, high = selected.numeric_ranges[name]
-            number = float(selected.values[name])
-            margins.append(
-                1.0 if low == high else max(0.0, min(1.0, 2.0 * min(number - low, high - number) / (high - low)))
-            )
-            continue
-        values: list[float] = []
-        for control in available:
-            if name not in control.values:
-                values = []
-                break
-            value = control.values[name]
-            if isinstance(value, bool):
-                values = []
-                break
-            number = _finite_float(value)
-            if number is None:
-                values = []
-                break
-            values.append(number)
-        if not values:
-            continue
-
-        selected_value = _finite_float(selected.values[name])
-        if selected_value is None:
-            continue
-        low, high = min(values), max(values)
+        else:
+            values = [_control_number(control.values.get(name)) for control in available]
+            numeric = [value for value in values if value is not None]
+            if not numeric or len(numeric) != len(available):
+                continue
+            low, high = min(numeric), max(numeric)
         if low == high:
-            margins.append(1.0)
             continue
-        distance = min(selected_value - low, high - selected_value)
-        margins.append(max(0.0, min(1.0, 2.0 * distance / (high - low))))
+        if not low < number < high:
+            margins.append(0.0)
+            continue
+        if not math.isfinite(high - low):
+            low, high, number = low / 2.0, high / 2.0, number / 2.0
+        margins.append(2.0 * (min(number - low, high - number) / (high - low)))
     return min(margins) if margins else None
 
 
@@ -120,10 +109,11 @@ def aggregate_candidate(
     if tuple(item.scenario.scenario_id for item in scenarios) != tuple(item.scenario_id for item in study.scenarios):
         raise ValueError("candidate results must cover every declared scenario in study order")
     evaluations = tuple(item.selected for item in scenarios)
+    declared_weights = {item.scenario_id: item.weight for item in study.scenarios}
     weights = dict(
         zip(
-            (item.scenario_id for item in study.scenarios),
-            _normalized_weights([item.weight for item in study.scenarios]),
+            declared_weights,
+            _normalized_weights(list(declared_weights.values())),
             strict=True,
         )
     )
@@ -146,7 +136,7 @@ def aggregate_candidate(
                 continue
             number = _finite_float(value)
             if number is not None:
-                values.append((number, weights[item.request.scenario.scenario_id]))
+                values.append((number, declared_weights[item.request.scenario.scenario_id]))
         aggregates[objective.metric] = aggregate_objective(values, objective)
 
     return CandidateResult(
@@ -165,74 +155,75 @@ def evaluation_rank_key(study: StudySpec, result: EvaluationResult) -> tuple[flo
     # A solver/measurement failure is unknown, not a small engineering
     # violation.  It must never beat an evaluated control merely because the
     # evaluated point exceeds a normalized limit by more than one.
-    key: list[float] = [
-        0.0 if result.raw.ok else 1.0,
+    return (
+        0.0 if result.evidence_available else 1.0,
         0.0 if result.feasible else 1.0,
         result.total_violation,
-    ]
+        *objective_rank(study, result.metrics.values),
+    )
+
+
+def objective_rank(study: StudySpec, values: Mapping[str, object]) -> tuple[float, ...]:
+    """Normalize objective direction for both control and candidate ordering."""
+
+    key = []
     for objective in study.objectives:
-        number = _finite_float(result.metrics.values.get(objective.metric))
-        fallback = float("inf")
-        key.append(fallback if number is None else (number if objective.direction == "minimize" else -number))
+        number = _finite_float(values.get(objective.metric))
+        key.append(float("inf") if number is None else (number if objective.direction == "minimize" else -number))
     return tuple(key)
 
 
 def candidate_rank_key(study: StudySpec, result: CandidateResult) -> tuple[float, ...]:
-    """Sort by evidence coverage, violation, objectives, then control margin."""
+    """Rank accepted, measured rejected, then incomplete candidates."""
 
-    complete_and_feasible = result.feasible and result.success_fraction == 1.0 and result.feasible_fraction == 1.0
-    key: list[float] = [
-        0.0 if complete_and_feasible else 1.0,
-        1.0 - result.success_fraction,
+    unavailable = {item.request.scenario.scenario_id for item in result.evaluations if not item.evidence_available}
+    evidence_shortfall = 0.0
+    if unavailable:
+        weights = _normalized_weights([scenario.weight for scenario in study.scenarios])
+        evidence_shortfall = math.fsum(
+            weight
+            for scenario, weight in zip(study.scenarios, weights, strict=True)
+            if scenario.scenario_id in unavailable
+        )
+    # Even a negligible weight cannot move missing evidence into the measured tier.
+    tier = 2.0 if unavailable else (0.0 if result.feasible else 1.0)
+    margin = result.control_margin
+    return (
+        tier,
+        evidence_shortfall,
         1.0 - result.feasible_fraction,
         result.total_violation,
-    ]
-    for objective in study.objectives:
-        number = _finite_float(result.aggregates.get(objective.metric))
-        fallback = float("inf")
-        key.append(fallback if number is None else (number if objective.direction == "minimize" else -number))
-    margin = result.control_margin
-    key.append(float("inf") if margin is None else -margin)
-    return tuple(key)
+        *objective_rank(study, result.aggregates),
+        float("inf") if margin is None else -margin,
+    )
 
 
 def _pareto_vector(study: StudySpec, result: CandidateResult) -> tuple[float, ...] | None:
-    values: list[float] = []
-    for objective in study.objectives:
-        number = _finite_float(result.aggregates.get(objective.metric))
-        if number is None:
-            return None
-        values.append(number if objective.direction == "minimize" else -number)
-    return tuple(values)
+    if (
+        not result.feasible
+        or result.total_violation
+        or not all(evaluation.evidence_available for evaluation in result.control_evaluations)
+    ):
+        return None
+    values = objective_rank(study, result.aggregates)
+    return values if all(map(math.isfinite, values)) else None
 
 
 def candidate_is_pareto_eligible(study: StudySpec, result: CandidateResult) -> bool:
     """Require complete electrical evidence and full declared feasibility.
 
-    ``success_fraction`` covers each scenario's selected control. Pareto
-    evidence is stricter: every explored control must have solved so a failed
-    alternative cannot hide a potentially better operating point.
+    Every explored control needs usable acceptance evidence so an unknown
+    alternative cannot hide a better operating point.
     """
 
-    return (
-        result.feasible
-        and result.success_fraction == 1.0
-        and result.feasible_fraction == 1.0
-        and result.total_violation == 0.0
-        and all(evaluation.raw.ok for evaluation in result.control_evaluations)
-        and _pareto_vector(study, result) is not None
-    )
+    return _pareto_vector(study, result) is not None
 
 
 def pareto_front(study: StudySpec, results: Iterable[CandidateResult]) -> tuple[CandidateResult, ...]:
     """Return the nondominated set among fully evidenced feasible candidates."""
 
     eligible = [
-        (result, vector)
-        for result in results
-        if candidate_is_pareto_eligible(study, result)
-        for vector in (_pareto_vector(study, result),)
-        if vector is not None
+        (result, vector) for result in results for vector in (_pareto_vector(study, result),) if vector is not None
     ]
 
     def dominates(left: tuple[float, ...], right: tuple[float, ...]) -> bool:

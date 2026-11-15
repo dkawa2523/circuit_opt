@@ -22,7 +22,7 @@ ElementFactory = Callable[[], Any]
 
 @dataclass(frozen=True)
 class CircuitStyle:
-    """Physical drawing constants shared by all publication schematics."""
+    """Drawing dimensions and style for a netlist schematic."""
 
     unit: float = 2.2
     component_length: float = 1.15
@@ -39,21 +39,6 @@ class CircuitViewport:
     ylim: tuple[float, float]
 
 
-@dataclass(frozen=True)
-class PlacedComponent:
-    """Auditable geometry for one fixed-length two-terminal symbol."""
-
-    name: str
-    span_start: Point
-    symbol_start: Point
-    symbol_end: Point
-    span_end: Point
-
-    @property
-    def symbol_length(self) -> float:
-        return math.dist(self.symbol_start, self.symbol_end)
-
-
 class CircuitDiagram:
     """Draw an orthogonal, fixed-symbol-length circuit into one Matplotlib axis."""
 
@@ -67,23 +52,9 @@ class CircuitDiagram:
             fontsize=self.style.font_size,
             color=self.style.color,
         )
-        self.anchors: dict[str, Point] = {}
-        self.placements: list[PlacedComponent] = []
-
-    def anchor(self, name: str, at: Point | None = None) -> Point:
-        """Declare or retrieve a logical node coordinate by name."""
-
-        if at is not None:
-            existing = self.anchors.get(name)
-            if existing is not None and not _same_point(existing, at):
-                raise ValueError(f"anchor {name!r} was already declared at {existing}, not {at}")
-            self.anchors[name] = at
-        if name not in self.anchors:
-            raise KeyError(f"unknown circuit anchor: {name}")
-        return self.anchors[name]
 
     def wire(self, start: Point, end: Point) -> None:
-        """Connect two named coordinates with a plain wire."""
+        """Connect two coordinates with a plain wire."""
 
         if not _same_point(start, end):
             self.drawing.add(elm.Line().at(start).to(end))
@@ -92,11 +63,6 @@ class CircuitDiagram:
         """Draw an electrical junction."""
 
         self.drawing.add(elm.Dot().at(at))
-
-    def port(self, at: Point, label: str, label_location: str) -> None:
-        """Draw a named open terminal."""
-
-        self.drawing.add(elm.Dot(open=True).at(at).label(label, loc=label_location))
 
     def ground(self, at: Point) -> None:
         """Draw a ground whose terminal anchor is *at*."""
@@ -147,31 +113,16 @@ class CircuitDiagram:
         ):
             raise ValueError(f"{name or 'component'} symbol terminals do not meet the requested wires")
         self.wire(symbol_end, end)
-        placement = PlacedComponent(
-            name=name or getattr(factory, "__name__", type(element).__name__),
-            span_start=start,
-            symbol_start=symbol_start,
-            symbol_end=symbol_end,
-            span_end=end,
-        )
-        self.placements.append(placement)
         return element
 
     def finish(self, viewport: CircuitViewport) -> None:
         """Render with a fixed viewport and equal x/y physical scale."""
 
-        self._audit_geometry()
         self.drawing.draw(show=False)
         self.axis.set_xlim(*viewport.xlim)
         self.axis.set_ylim(*viewport.ylim)
         self.axis.set_aspect("equal", adjustable="box")
         self.axis.set_axis_off()
-
-    def _audit_geometry(self) -> None:
-        expected = self.style.component_length
-        for placement in self.placements:
-            if not math.isclose(placement.symbol_length, expected, rel_tol=0.0, abs_tol=1e-9):
-                raise ValueError(f"{placement.name} symbol length drifted: {placement.symbol_length:g} != {expected:g}")
 
 
 def _same_point(first: Point, second: Point) -> bool:

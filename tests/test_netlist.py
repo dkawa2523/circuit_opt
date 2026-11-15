@@ -11,11 +11,11 @@ import pytest
 
 from pcd.case import default_params, load_case
 from pcd.netlist import (
-    SOURCE_RENDERERS,
     Circuit,
     Component,
     build_circuit,
     build_load_subckt,
+    build_netlist_inputs,
     render_ngspice_netlist,
     render_source,
     select_circuit_name,
@@ -139,6 +139,13 @@ def test_a_source_field_may_reference_a_design_variable(make_case):
     assert "SIN(0 600 1000000 0 0 0)" in render_source(case, {"Vamp": 600})[0]
 
 
+def test_implicit_sine_amplitude_is_shared_by_transient_and_ac(make_case):
+    case = make_case({"source": {}})
+    assert render_source(case, {"Vamp": 20, "freq": 1e6}, active_source="Vsrc") == [
+        "Vsrc src 0 SIN(0 20 1000000 0 0 0) AC 20 0"
+    ]
+
+
 def test_a_raw_source_line_bypasses_rendering(make_case):
     case = make_case({"case_id": "raw", "source": {"raw": "Vsrc src 0 EXP(0 1 1n 2n)"}})
     assert render_source(case, {}) == ["Vsrc src 0 EXP(0 1 1n 2n)"]
@@ -235,11 +242,6 @@ def test_floating_measured_source_uses_its_differential_voltage(make_case):
     assert "wrdata ac.csv v(src,return) i(Vrf)" in text
 
 
-def test_every_registered_source_type_is_callable():
-    assert {"sine_voltage", "dc_voltage", "pulse", "current_dc"} <= set(SOURCE_RENDERERS)
-    assert all(callable(fn) for fn in SOURCE_RENDERERS.values())
-
-
 # --- full netlist ----------------------------------------------------------
 
 
@@ -269,9 +271,44 @@ def test_the_netlist_carries_params_and_the_transient_block(rc_case):
 
 def _render(case):
     params = default_params(case)
-    _, circuit = build_circuit(case, params)
-    _, subckt = build_load_subckt(case, params)
-    return render_ngspice_netlist(case, circuit, subckt, params, resolve_simulation_case(case, params))
+    inputs = build_netlist_inputs(case, params)
+    return render_ngspice_netlist(
+        case, inputs.circuit, inputs.load_subckt, params, resolve_simulation_case(case, params)
+    )
+
+
+@pytest.mark.parametrize(
+    ("declarations", "component", "generated_name"),
+    [
+        ({}, {"ref": "R1", "n1": "src", "n2": "out", "value": 50, "observe": True}, "observe_R1_meter"),
+        ({"source": {"type": "current_dc"}}, None, "source_meter_Isrc"),
+        ({"load": {"name": "resistor"}, "measurement": {"load_current": "auto"}}, None, "out_metered"),
+    ],
+)
+def test_generated_meter_nodes_cannot_alias_authored_nodes(make_case, declarations, component, generated_name):
+    components = [{"raw": f"Rextra {generated_name.upper()} 0 50"}]
+    if component:
+        components.append(component)
+    case = make_case({"circuit": {"components": components}, **declarations})
+
+    with pytest.raises(ValueError, match=f"generated SPICE name '{generated_name}' collides"):
+        build_netlist_inputs(case, {})
+
+
+@pytest.mark.parametrize(("parameter", "node"), [("Xload", "Xload"), ("Rseries", "load_model")])
+def test_generated_load_names_do_not_conflict_with_a_parameter_or_a_node(make_case, tmp_path, parameter, node):
+    (tmp_path / "divider.cir").write_text(
+        f"V1 src 0 AC 1\n.param {parameter}=50\nR1 src {node} {{{parameter}}}\n.end\n"
+    )
+    case = make_case(
+        {
+            "circuit": {"builder": "from_netlist", "netlist_file": "divider.cir", "output_node": node},
+            "load": {"name": "resistor", "R_ohm": 50},
+            "solver": {"ac": {"frequency_Hz": 1e6}},
+        }
+    )
+
+    assert f"Xload {node} 0 load_model" in _render(case)
 
 
 def test_a_load_subcircuit_is_instantiated_at_its_ports(topology_case):

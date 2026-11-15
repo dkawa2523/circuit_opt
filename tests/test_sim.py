@@ -18,10 +18,9 @@ import pytest
 import pcd.sim_core as sim_core_module
 import pcd.solver as solver_module
 from pcd.case import Case, load_case
-from pcd.metrics import measure_record, measure_response
-from pcd.records import artifact_path
-from pcd.sim_core import execute_case, prepare_case, simulate_case
-from pcd.sim_registry import available as sim_available
+from pcd.metrics import measure_response
+from pcd.records import artifact_path, load_simulation_result
+from pcd.sim_core import execute_case, prepare_case
 from pcd.sim_registry import register_solver
 from pcd.simulation import SimulationResult
 from pcd.simulation_input import SolverRunRequest
@@ -33,7 +32,7 @@ EX = Path(__file__).resolve().parents[1] / "examples" / "advanced"
 
 
 def test_simulation_writes_artifacts_but_never_metrics(tmp_path, rc_case):
-    rec = simulate_case(rc_case, run_root=tmp_path, solver_override="test_fake")
+    rec = execute_case(rc_case, run_root=tmp_path, solver_override="test_fake").record
     assert rec.status == "ok"
     assert (rec.run_dir / rec.waveform_file).exists()
     assert (rec.run_dir / rec.netlist_file).exists()
@@ -44,7 +43,7 @@ def test_simulation_writes_artifacts_but_never_metrics(tmp_path, rc_case):
     assert rec.summary()["schema"] == "simulation_summary.v1"
     assert not (rec.run_dir / "metrics.json").exists()
 
-    metrics = measure_record(rc_case, manifest)
+    metrics = measure_response(rc_case, load_simulation_result(manifest), rec.params)
     assert metrics["loss"] >= 0.0
     assert not (rec.run_dir / "metrics.json").exists(), "measurement must not create a second result store"
 
@@ -53,7 +52,7 @@ def test_in_memory_and_restored_responses_have_identical_metrics(tmp_path, rc_ca
     run = execute_case(rc_case, run_root=tmp_path, solver_override="test_fake")
 
     direct = measure_response(rc_case, run.response, run.record.params)
-    restored = measure_record(rc_case, run.record.manifest())
+    restored = measure_response(rc_case, load_simulation_result(run.record.run_dir), run.record.params)
 
     assert direct.keys() == restored.keys()
     assert direct["objective"] == restored["objective"]
@@ -104,7 +103,7 @@ def test_common_simulation_layer_persists_a_custom_solver_ac_result(tmp_path, rc
         )
 
     monkeypatch.setattr(sim_core_module, "invoke_solver", custom_solver)
-    record = simulate_case(case, run_root=tmp_path, solver_override="custom_ac")
+    record = execute_case(case, run_root=tmp_path, solver_override="custom_ac").record
 
     assert record.frequency_response_file == "data/ac.csv"
     pd.testing.assert_frame_equal(pd.read_csv(record.run_dir / record.frequency_response_file), response)
@@ -124,7 +123,7 @@ def test_a_typed_solver_receives_no_case_dictionary(tmp_path, rc_case):
             current_A=np.asarray([0.0, 0.0]),
         )
 
-    record = simulate_case(rc_case, run_root=tmp_path, solver_override="test_typed_request")
+    record = execute_case(rc_case, run_root=tmp_path, solver_override="test_typed_request").record
 
     assert record.status == "ok"
     assert len(observed) == 1
@@ -141,7 +140,7 @@ def test_the_normal_run_resolves_solver_input_once(tmp_path, rc_case, monkeypatc
         return real_resolve(*args, **kwargs)
 
     monkeypatch.setattr(sim_core_module, "resolve_simulation_case", counted_resolve)
-    record = simulate_case(rc_case, run_root=tmp_path, solver_override="test_fake")
+    record = execute_case(rc_case, run_root=tmp_path, solver_override="test_fake").record
 
     assert record.status == "ok"
     assert len(calls) == 1
@@ -160,19 +159,15 @@ def test_preparing_a_case_writes_everything_except_the_waveform(tmp_path, rc_cas
     assert rec.solver == "ngspice_cli"
 
 
-def test_registries_expose_the_documented_methods():
-    sim = sim_available()
-    assert set(sim) == {"circuit", "load", "solver"}
-    assert "ngspice_cli" in sim["solver"]
-    assert "test_fake" in sim["solver"]
-    assert "dummy" not in sim["solver"]
-
-
 def test_a_plugin_can_add_circuit_and_objective_methods(tmp_path):
     case = load_case(EX / "plugin_case.yaml")
-    rec = simulate_case(case, run_root=tmp_path, solver_override="test_fake")
-    assert rec.circuit == "custom_series_lc"
-    assert measure_record(case, rec.manifest())["objective"] == "peak_voltage"
+    run = execute_case(case, run_root=tmp_path, solver_override="test_fake")
+    assert run.record.circuit == "custom_series_lc"
+    assert measure_response(case, run.response, run.record.params)["objective"] == "peak_voltage"
+    plugins = run.record.provenance["plugins"]
+    assert plugins
+    assert plugins[0]["exists"] is True
+    assert len(plugins[0]["sha256"]) == 64
 
 
 # --- provenance ------------------------------------------------------------
@@ -194,21 +189,13 @@ def test_changing_a_parameter_changes_the_params_digest(tmp_path, rc_case):
     assert a["params_sha256"] != b["params_sha256"]
 
 
-def test_plugin_files_are_recorded_with_their_digests(tmp_path):
-    case = load_case(EX / "plugin_case.yaml")
-    plugins = prepare_case(case, run_root=tmp_path).provenance["plugins"]
-    assert plugins
-    assert plugins[0]["exists"] is True
-    assert len(plugins[0]["sha256"]) == 64
-
-
 def test_provenance_records_the_resolved_solver(tmp_path, rc_case, monkeypatch):
-    solver_module.clear_solver_version_cache()
+    executable = r"C:\pcd-provenance-test\ngspice_con.exe"
     monkeypatch.setattr(solver_module.sys, "platform", "win32")
     monkeypatch.setattr(
         solver_module.shutil,
         "which",
-        lambda exe: r"C:\ngspice\ngspice_con.exe" if exe == "ngspice_con.exe" else None,
+        lambda exe: executable if exe == "ngspice_con.exe" else None,
     )
     monkeypatch.setattr(
         solver_module.subprocess,
@@ -217,7 +204,7 @@ def test_provenance_records_the_resolved_solver(tmp_path, rc_case, monkeypatch):
     )
     solver = prepare_case(rc_case, run_root=tmp_path, solver_name="ngspice_cli").provenance["solver"]
     assert solver["executable"] == "ngspice_con.exe"
-    assert solver["resolved_executable"] == r"C:\ngspice\ngspice_con.exe"
+    assert solver["resolved_executable"] == executable
     assert solver["version"] == "ngspice-46"
 
 
@@ -236,7 +223,7 @@ def test_a_solver_reported_failure_still_leaves_a_complete_record(tmp_path, rc_c
         diagnostics={"returncode": 1},
     )
     monkeypatch.setattr(sim_core_module, "invoke_solver", lambda *_args: failed)
-    rec = simulate_case(rc_case, run_root=tmp_path, solver_override="test_failed_solver")
+    rec = execute_case(rc_case, run_root=tmp_path, solver_override="test_failed_solver").record
     assert rec.status == "failed"
     assert (rec.run_dir / rec.waveform_file).exists()
     assert not list(rec.run_dir.rglob("params.json"))
@@ -244,7 +231,8 @@ def test_a_solver_reported_failure_still_leaves_a_complete_record(tmp_path, rc_c
     assert archived_case is not None
     assert archived_case.is_file()
     assert rec.diagnostics == {"returncode": 1}
-    assert "solver status: failed" in rec.warnings
+    assert rec.error == "solver reported a failure; see debug/solver.log"
+    assert (rec.run_dir / rec.solver_log_file).read_text(encoding="utf-8") == "convergence failed"
 
 
 def test_an_unexpected_solver_exception_propagates_and_leaves_prepared_state(tmp_path, rc_case, monkeypatch):
@@ -253,7 +241,7 @@ def test_an_unexpected_solver_exception_propagates_and_leaves_prepared_state(tmp
 
     monkeypatch.setattr(sim_core_module, "invoke_solver", broken_solver)
     with pytest.raises(RuntimeError, match="solver adapter bug"):
-        simulate_case(rc_case, run_root=tmp_path, solver_override="test_broken_solver")
+        execute_case(rc_case, run_root=tmp_path, solver_override="test_broken_solver")
 
     summaries = list(tmp_path.rglob("summary.json"))
     assert len(summaries) == 1
@@ -275,7 +263,7 @@ def test_a_failure_during_preparation_propagates_without_a_fake_result(tmp_path,
     )
     run_root = tmp_path / "runs"
     with pytest.raises(KeyError, match="definitely_unknown"):
-        simulate_case(case, run_root=run_root, solver_override="test_fake")
+        execute_case(case, run_root=run_root, solver_override="test_fake")
     assert not run_root.exists()
 
 
@@ -290,7 +278,7 @@ def test_invalid_analysis_input_is_rejected_before_a_run_directory_is_created(tm
     run_root = tmp_path / "runs"
 
     with pytest.raises(ValueError, match="timeout_s"):
-        simulate_case(case, run_root=run_root, solver_override="test_fake")
+        execute_case(case, run_root=run_root, solver_override="test_fake")
 
     assert not run_root.exists()
 

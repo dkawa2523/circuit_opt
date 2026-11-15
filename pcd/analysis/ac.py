@@ -2,16 +2,31 @@
 
 from __future__ import annotations
 
+import math
+from collections.abc import Mapping
 from typing import Any
 
 import numpy as np
 import pandas as pd
 
+from pcd.core.models import MeasurementUnavailableError
 from pcd.signals.power import power_ratio
-from pcd.simulation import LOAD_VOLTAGE_COLUMN
+from pcd.simulation import LOAD_VOLTAGE_COLUMN, same_frequency_hz
 
 #: Reference impedance for reflection coefficient / VSWR, in ohms.
 DEFAULT_Z0 = 50.0
+
+
+def reference_impedance_ohm(measurement: Mapping[str, Any] | None = None) -> float:
+    """Resolve the case's positive real reference for reflection and wave power."""
+
+    try:
+        value = float((measurement or {}).get("reference_impedance_ohm", DEFAULT_Z0))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("reference_impedance_ohm must be numeric") from exc
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError("reference_impedance_ohm must be positive and finite")
+    return value
 
 
 def input_impedance(ac: pd.DataFrame, z0: float = DEFAULT_Z0) -> pd.DataFrame:
@@ -56,6 +71,9 @@ def ac_power_flow(
     row: pd.Series,
     load_current_column: str | None = None,
     reference_impedance_ohm: float = DEFAULT_Z0,
+    *,
+    driven_port: bool = True,
+    power_balance_unavailable_reason: str | None = None,
 ) -> dict[str, Any]:
     """Electrical port power from peak AC phasors.
 
@@ -63,7 +81,41 @@ def ac_power_flow(
     it is not a plasma-species or heating-path allocation.
     """
 
-    z0 = reference_impedance_ohm
+    out = _source_power_flow(row, reference_impedance_ohm) if driven_port else {}
+    load_voltage = phasor_from_row(row, LOAD_VOLTAGE_COLUMN)
+    load_current_phasor = phasor_from_row(row, load_current_column) if load_current_column else None
+    if load_voltage is None or load_current_phasor is None:
+        return out
+
+    with np.errstate(over="ignore", invalid="ignore"):
+        load_power = 0.5 * float(np.real(load_voltage * np.conj(load_current_phasor)))
+    if not np.isfinite(load_power):
+        names = (
+            ("load_real_power_W", "network_loss_W", "transfer_efficiency") if driven_port else ("load_real_power_W",)
+        )
+        for name in names:
+            out[name] = None
+            out[f"{name}_unavailable_reason"] = "finite load-port voltage, current and real power are required"
+        return out
+    out["load_real_power_W"] = load_power
+    if not driven_port:
+        return out
+    if power_balance_unavailable_reason:
+        for name in ("network_loss_W", "transfer_efficiency"):
+            out[name] = None
+            out[f"{name}_unavailable_reason"] = power_balance_unavailable_reason
+        return out
+    source_power = out["source_real_power_W"]
+    out["network_loss_W"] = source_power - load_power
+    out["transfer_efficiency"] = power_ratio(load_power, source_power)
+    if out["transfer_efficiency"] is None:
+        out["transfer_efficiency_unavailable_reason"] = (
+            "finite load power and a finite ratio to nonzero source real power are required"
+        )
+    return out
+
+
+def _source_power_flow(row: pd.Series, z0: float) -> dict[str, Any]:
     if not np.isfinite(z0) or z0 <= 0:
         raise ValueError("reference_impedance_ohm must be positive and finite")
     source_voltage = complex(float(row["voltage_re"]), float(row["voltage_im"]))
@@ -75,7 +127,7 @@ def ac_power_flow(
     reflected_voltage = 0.5 * (source_voltage - z0 * source_current)
     forward_power = abs(forward_voltage) ** 2 / (2.0 * z0)
     reflected_power = abs(reflected_voltage) ** 2 / (2.0 * z0)
-    out: dict[str, Any] = {
+    return {
         "source_real_power_W": source_power,
         "source_voltage_rms_V": source_voltage_rms,
         "source_current_rms_A": source_current_rms,
@@ -83,25 +135,6 @@ def ac_power_flow(
         "forward_power_W": forward_power,
         "reflected_power_W": reflected_power,
     }
-    load_voltage = phasor_from_row(row, LOAD_VOLTAGE_COLUMN)
-    load_current_phasor = phasor_from_row(row, load_current_column) if load_current_column else None
-    if load_voltage is None or load_current_phasor is None:
-        return out
-
-    load_power = 0.5 * float(np.real(load_voltage * np.conj(load_current_phasor)))
-    network_loss = source_power - load_power
-    out.update(
-        {
-            "load_real_power_W": load_power,
-            "network_loss_W": network_loss,
-            "transfer_efficiency": power_ratio(load_power, source_power),
-        }
-    )
-    if out["transfer_efficiency"] is None:
-        out["transfer_efficiency_unavailable_reason"] = (
-            "finite load power and a finite ratio to nonzero source real power are required"
-        )
-    return out
 
 
 def half_power_bandwidth(
@@ -175,47 +208,59 @@ def frequency_sweep_metrics(
 ) -> dict[str, Any] | None:
     """Summarize a solver-produced multi-point AC sweep.
 
-    Half-power metrics use measured load real power when the saved probes make
-    it available.  Otherwise they use the accepted-power fraction
-    ``1 - |Gamma|^2`` at the declared reference impedance.
+    A declared load probe selects load real power. With no declared load
+    probe, the basis is the accepted-power fraction ``1 - |Gamma|^2``.
     """
 
     if len(ac) < 2:
         return None
     if not np.isfinite(z0) or z0 <= 0:
         raise ValueError("reference impedance must be positive and finite")
-    impedance = input_impedance(ac.sort_values("frequency_Hz").reset_index(drop=True), z0)
+    return summarize_impedance_sweep(input_impedance(ac, z0), load_current_column)
+
+
+def summarize_impedance_sweep(impedance: pd.DataFrame, load_current_column: str | None) -> dict[str, Any] | None:
+    """Summarize the computed impedance sweep shared by tables and figures."""
+
+    if len(impedance) < 2:
+        return None
+    impedance = impedance.sort_values("frequency_Hz")
     frequency = impedance["frequency_Hz"].to_numpy(float)
     if not np.all(np.isfinite(frequency)) or np.any(frequency <= 0) or np.any(np.diff(frequency) <= 0):
         raise ValueError("AC sweep frequency must be finite, positive, and unique")
     reflection = impedance["reflection_magnitude"].to_numpy(float)
-    if not np.all(np.isfinite(reflection)):
-        raise ValueError("AC sweep reflection magnitude must be finite")
-
-    best_index = int(np.argmin(reflection))
+    available = np.flatnonzero(np.isfinite(reflection))
+    best_index = int(available[np.argmin(reflection[available])]) if len(available) else None
     basis, response = _power_response(impedance, load_current_column)
-    resonance = half_power_bandwidth(frequency, response)
-    if resonance is not None:
-        resonance = {"basis": basis, **resonance}
+    reason = None
+    resonance = None
+    if response is None or not np.all(np.isfinite(response)):
+        reason = f"{basis} requires finite observations at every sweep frequency"
+    elif band := half_power_bandwidth(frequency, response):
+        resonance = {"basis": basis, **band}
+    else:
+        reason = f"the sweep does not bracket a half-power band on the {basis} basis"
     return {
         "sample_count": len(impedance),
         "start_frequency_Hz": float(frequency[0]),
         "stop_frequency_Hz": float(frequency[-1]),
-        "sampled_best_match_frequency_Hz": float(frequency[best_index]),
-        "minimum_reflection_magnitude": float(reflection[best_index]),
+        "reflection_sample_count": len(available),
+        "sampled_best_match_frequency_Hz": None if best_index is None else float(frequency[best_index]),
+        "minimum_reflection_magnitude": None if best_index is None else float(reflection[best_index]),
         "half_power_resonance": resonance,
+        **({"half_power_unavailable_reason": reason} if reason is not None else {}),
     }
 
 
-def _power_response(ac: pd.DataFrame, load_current_column: str | None) -> tuple[str, np.ndarray]:
+def _power_response(ac: pd.DataFrame, load_current_column: str | None) -> tuple[str, np.ndarray | None]:
+    if not load_current_column:
+        reflection = ac["reflection_magnitude"].to_numpy(float)
+        return "accepted_power_fraction", 1.0 - reflection**2
     load_voltage = _phasor_array(ac, LOAD_VOLTAGE_COLUMN)
-    load_current = _phasor_array(ac, load_current_column) if load_current_column else None
-    if load_voltage is not None and load_current is not None:
-        load_power = 0.5 * np.real(load_voltage * np.conj(load_current))
-        if np.all(np.isfinite(load_power)):
-            return "load_real_power_W", np.asarray(load_power, dtype=float)
-    reflection = ac["reflection_magnitude"].to_numpy(float)
-    return "accepted_power_fraction", 1.0 - reflection**2
+    load_current = _phasor_array(ac, load_current_column)
+    if load_voltage is None or load_current is None:
+        return "load_real_power_W", None
+    return "load_real_power_W", 0.5 * np.real(load_voltage * np.conj(load_current))
 
 
 def _phasor_array(frame: pd.DataFrame, column: str) -> np.ndarray | None:
@@ -264,6 +309,16 @@ def at_frequency(ac: pd.DataFrame, frequency_hz: float) -> pd.Series:
     load-table rows are never interpolated into new electrical conditions.
     """
 
+    return ac_frequency_sample(ac, frequency_hz)[0]
+
+
+def ac_frequency_sample(
+    ac: pd.DataFrame, frequency_hz: float, *, require_simulated: bool = False
+) -> tuple[pd.Series, dict[str, Any]]:
+    """Resolve a solved frequency or identify the bounds of an interpolated point."""
+
+    if "frequency_Hz" not in ac:
+        raise ValueError("canonical AC response is missing columns ['frequency_Hz']")
     if ac.empty:
         raise ValueError("frequency response is empty")
     target = frequency_hz
@@ -273,14 +328,18 @@ def at_frequency(ac: pd.DataFrame, frequency_hz: float) -> pd.Series:
     frequencies = ordered["frequency_Hz"].to_numpy(float)
     if not np.all(np.isfinite(frequencies)) or np.any(frequencies <= 0) or np.any(np.diff(frequencies) <= 0):
         raise ValueError("AC frequencies must be finite, positive, and unique")
+    closest = int(np.argmin(np.abs(frequencies - target)))
+    if same_frequency_hz(frequencies[closest], target):
+        return ordered.iloc[closest], {"frequency_basis": "simulated"}
+    if require_simulated:
+        raise MeasurementUnavailableError(
+            f"AC decision requires a solved sample at {target:g} Hz; "
+            "use solver.ac.frequency_Hz or include the operating point in the sweep"
+        )
     if target < frequencies[0] or target > frequencies[-1]:
         raise ValueError(
             f"frequency {target:g} Hz is outside the simulated sweep [{frequencies[0]:g}, {frequencies[-1]:g}] Hz"
         )
-    exact = np.flatnonzero(np.isclose(frequencies, target, rtol=1e-12, atol=0.0))
-    if len(exact):
-        return ordered.iloc[int(exact[0])]
-
     upper = int(np.searchsorted(frequencies, target, side="right"))
     lower = upper - 1
     fraction = (target - frequencies[lower]) / (frequencies[upper] - frequencies[lower])
@@ -293,4 +352,7 @@ def at_frequency(ac: pd.DataFrame, frequency_hz: float) -> pd.Series:
             values[column] = float(lo) + fraction * (float(hi) - float(lo))
         else:
             values[column] = lo if fraction <= 0.5 else hi
-    return pd.Series(values)
+    return pd.Series(values), {
+        "frequency_basis": "interpolated",
+        "frequency_bracket_Hz": [float(frequencies[lower]), float(frequencies[upper])],
+    }

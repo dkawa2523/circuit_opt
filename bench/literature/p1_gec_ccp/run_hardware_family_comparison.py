@@ -256,10 +256,8 @@ def _render_report(payload: dict[str, Any]) -> str:
 Regression status: **{status}**. This checks reproducibility of the declared
 platform challenge. It does not qualify a matcher or select a universal L1.
 
-The published operating conditions, reported apparatus spread, and the two
-counterfactual phase shifts are evaluated independently. No 80-row coverage
-score and no overall candidate ranking are produced because their relative
-weights have not been specified.
+The published operating conditions, reported apparatus spread and two
+counterfactual phase shifts are evaluated independently.
 
 | evidence family | L1 [uH] | feasible conditions | worst `|Gamma|` | controls at edge |
 |---|---:|---:|---:|---:|

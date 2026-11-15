@@ -78,16 +78,16 @@ accidental `gamma = nu` implementation is visible.
 
 ## Run
 
-From the repository root:
+From the repository root with ngspice on PATH:
 
 ```powershell
-uv run python bench/literature/p1_lee2020_icp/run_benchmark.py --require-ngspice
+uv run --frozen python bench/literature/p1_lee2020_icp/run_benchmark.py --output runs/literature/lee2020_icp.json
 ```
 
 For the equation and Python implementation only:
 
 ```powershell
-uv run python bench/literature/p1_lee2020_icp/run_benchmark.py --no-ngspice
+uv run --frozen python bench/literature/p1_lee2020_icp/run_benchmark.py --no-ngspice
 ```
 
 Use `--json` for machine-readable stdout or `--output path.json` to save a full

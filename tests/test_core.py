@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import pytest
 
@@ -55,13 +55,8 @@ def _study():
 
 
 def test_role_collisions_are_rejected_before_evaluation():
-    request = EvaluationRequest(
-        Candidate("c", {"shared": 1}),
-        Scenario("s", {"shared": 2}),
-        ControlState(),
-    )
     with pytest.raises(ValueError, match="belongs to both candidate and scenario"):
-        request.merged_inputs()
+        EvaluationRequest(Candidate("c", {"shared": 1}), Scenario("s", {"shared": 2}), ControlState())
 
 
 @pytest.mark.parametrize("weight", [0.0, -1.0, float("nan"), float("inf"), float("-inf")])
@@ -321,6 +316,32 @@ def test_control_margin_acceptance_selects_an_interior_operating_point():
     assert margin_constraint.value == 1.0
 
 
+def test_control_margin_acceptance_requires_a_range_in_each_condition():
+    class Controls:
+        def controls(self, study, candidate, scenario):
+            del study, candidate
+            grid = (-1.0, 0.0, 1.0) if scenario.scenario_id == "nominal" else (0.0,)
+            return tuple(ControlState({"tune": value}) for value in grid)
+
+    study = replace(_study(), control_margin_min=0.5)
+    result = StudyRunner(
+        study,
+        CountingEvaluator(),
+        metrics=(ScoreMetric(),),
+        control_policy=Controls(),
+    ).evaluate_candidate(Candidate("candidate", {"x": 0.0}))
+
+    assert result.successful
+    assert not result.feasible
+    assert result.control_margin is None
+    assert result.scenarios[0].control_margin == 1.0
+    fixed = result.scenarios[1].selected
+    constraint = next(item for item in fixed.constraints if item.name == "min_control_margin")
+    assert not constraint.satisfied
+    assert constraint.value is None
+    assert "nonzero range" in str(constraint.detail)
+
+
 def test_electrically_reachable_edge_is_retained_when_no_jointly_feasible_control_exists(tmp_path):
     class Controls:
         def controls(self, study, candidate, scenario):
@@ -449,25 +470,46 @@ def test_unsettled_metric_is_recorded_distinctly_from_a_backend_failure():
     assert all("still ringing" in str(item.raw.error) for item in result.evaluations)
 
 
-def test_missing_objective_metric_is_rejected_as_a_definition_error():
+@pytest.mark.parametrize("metrics", [{"other": None}, {"other": None, "loss": True}])
+def test_invalid_objective_metric_is_rejected_as_a_definition_error(metrics):
     class IncompleteMetric:
         def compute(self, request, raw):
             del request, raw
-            return MetricSet({"diagnostic_only": 1.0})
+            return MetricSet(metrics)
 
-    runner = StudyRunner(_study(), CountingEvaluator(), metrics=(IncompleteMetric(),))
+    study = replace(_study(), objectives=(Objective("other"), Objective("loss")))
+    runner = StudyRunner(study, CountingEvaluator(), metrics=(IncompleteMetric(),))
     with pytest.raises(ValueError, match="objective metric 'loss'"):
         runner.evaluate_candidate(Candidate("candidate", {"x": 1.0}))
+
+
+def test_explicitly_unavailable_objective_only_fails_the_affected_evaluation():
+    class OptionalScore:
+        def compute(self, request, raw):
+            del request
+            score = raw.observations["score"]
+            if score == 4.0:
+                return MetricSet({"loss": None, "loss_unavailable_reason": "undefined measurement"})
+            return MetricSet({"loss": score})
+
+    runner = StudyRunner(_study(), CountingEvaluator(), metrics=(OptionalScore(),))
+    complete, partial = runner.run([Candidate("partial", {"x": 2.0}), Candidate("complete", {"x": 3.0})])
+
+    assert complete.candidate.candidate_id == "complete"
+    assert complete.successful
+    assert partial.success_fraction == 0.5
+    assert "undefined measurement" in str(partial.evaluations[1].raw.error)
 
 
 def test_a_backend_reported_failure_needs_no_exception_or_result_store():
     class Failed:
         def evaluate(self, request):
             del request
-            return RawResult("failed")
+            return RawResult("failed", error="solver did not settle")
 
     result = StudyRunner(_study(), Failed(), metrics=(ScoreMetric(),)).evaluate_candidate(
         Candidate("candidate", {"x": 1.0})
     )
     assert result.success_fraction == 0.0
-    assert all(item.constraints[-1].detail == "failed" for item in result.evaluations)
+    assert result.total_violation == 1.0
+    assert all(item.raw.error == "solver did not settle" and not item.constraints for item in result.evaluations)

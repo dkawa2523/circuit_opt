@@ -13,14 +13,18 @@ import json
 import math
 import subprocess
 import sys
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
+import numpy as np
+
 from pcd import __version__
-from pcd.artifacts import atomic_write_text, write_json
+from pcd.artifacts import atomic_write_text, resolve_artifact_path, write_json
+from pcd.results import selected_evaluation
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -115,8 +119,15 @@ def _read_json(path: Path) -> dict[str, Any]:
     return payload
 
 
+def _nonempty_file(base: Path, declared: object) -> bool:
+    if not isinstance(declared, str) or not declared:
+        return False
+    path = resolve_artifact_path(base, declared).resolve()
+    return path.is_relative_to(base.resolve()) and path.is_file() and path.stat().st_size > 0
+
+
 def _artifact_files(base: Path, artifacts: dict[str, Any], names: tuple[str, ...]) -> bool:
-    return all(name in artifacts and (base / str(artifacts[name])).is_file() for name in names)
+    return all(_nonempty_file(base, artifacts.get(name)) for name in names)
 
 
 def _evaluation_rows(study: dict[str, Any], study_root: Path) -> list[dict[str, str]]:
@@ -191,21 +202,99 @@ def _check_time_varying_resistor(bundle: dict[str, Any]) -> tuple[dict[str, bool
     analysis = bundle["analysis"]
     transient = analysis["analyses"]["transient"]
     waveform = Path(str(simulation["run_dir"])) / str(simulation["artifacts"]["waveform"])
-    with waveform.open(encoding="utf-8", newline="") as handle:
-        columns = set(next(csv.reader(handle)))
+    trace = np.genfromtxt(waveform, delimiter=",", names=True, ndmin=1)
+    columns = {"time_s", "component_Rchamber_voltage_V", "component_Rchamber_current_A"}
+    terminal_response = False
+    if columns <= set(trace.dtype.names or ()) and len(trace) >= 250:
+        time = trace["time_s"]
+        profile = np.loadtxt(ROOT / "examples" / "advanced" / "time_varying_resistor.csv", delimiter=",", skiprows=1)
+        resistance = np.interp(time, profile[:, 0], profile[:, 1])
+        # Independent equation for the fixture's 10 V drive and 50 Ω source resistor.
+        current = 10.0 / (50.0 + resistance)
+        terminal_response = bool(
+            np.isfinite(time).all()
+            and np.all(np.diff(time) >= 0)
+            and np.isclose(time[0], 0.0, atol=1e-12)
+            and np.isclose(time[-1], 2.5e-6, atol=1e-12)
+            and np.allclose(trace["component_Rchamber_voltage_V"], current * resistance, rtol=1e-5, atol=1e-8)
+            and np.allclose(trace["component_Rchamber_current_A"], current, rtol=1e-5, atol=1e-8)
+        )
     checks = {
         "solver_succeeded": simulation["status"] == "ok",
         "no_validation_or_runtime_warnings": not simulation["warnings"],
         "canonical_waveform_and_replay_manifest": _simulation_artifacts(bundle, ("waveform", "debug_manifest")),
-        "component_terminal_probes_exist": {
-            "component_Rchamber_voltage_V",
-            "component_Rchamber_current_A",
-        }.issubset(columns),
-        "time_profile_was_sampled": int(transient["samples"]) >= 250,
+        "terminal_response_matches_the_prescribed_resistance": terminal_response,
+        "time_profile_was_sampled": int(transient["samples"]) == len(trace) >= 250,
         "nonperiodic_signal_not_misclassified": transient["periodic"]["status"] == "not_applicable",
         "transient_figure_exists": _analysis_artifacts(bundle, ("transient_response",)),
     }
     return checks, {"samples": int(transient["samples"]), "periodic_status": transient["periodic"]["status"]}
+
+
+def _evaluation_coverage(rows: list[dict[str, str]], history: list[dict[str, Any]], scenario_ids: set[str]) -> bool:
+    expected = {(str(item["trial"]), str(item["candidate_id"])): item["evaluation_count"] for item in history}
+    counts: Counter[tuple[str, str]] = Counter()
+    keys: set[tuple[str, str, str, str]] = set()
+    selections: Counter[tuple[str, str, str]] = Counter()
+    for row in rows:
+        trial, candidate, scenario = (row.get(name, "") for name in ("trial", "candidate_id", "scenario_id"))
+        if (trial, candidate) not in expected or scenario not in scenario_ids:
+            return False
+        try:
+            control = json.loads(row.get("control") or "null")
+        except json.JSONDecodeError:
+            return False
+        if not isinstance(control, dict):
+            return False
+        counts[trial, candidate] += 1
+        keys.add((trial, candidate, scenario, json.dumps(control, sort_keys=True)))
+        if row.get("selected_control", "").lower() in {"1", "true", "yes"}:
+            selections[trial, candidate, scenario] += 1
+    return (
+        bool(expected and scenario_ids)
+        and len(expected) == len(history)
+        and counts == expected
+        and len(keys) == len(rows)
+        and selections
+        == {(trial, candidate, scenario): 1 for trial, candidate in expected for scenario in scenario_ids}
+    )
+
+
+def _selected_replay_evidence(
+    study: dict[str, Any], root: Path, rows: list[dict[str, str]], scenario_ids: set[str]
+) -> bool:
+    best = study["best"]["candidate"]["candidate_id"]
+    candidate = _read_json(resolve_artifact_path(root, study["artifacts"]["best_candidate"]))
+    scenarios = candidate["scenarios"]
+    if candidate["candidate"]["candidate_id"] != best or len(scenarios) != len(scenario_ids):
+        return False
+    search_controls = {
+        row["scenario_id"]: json.loads(row["control"])
+        for row in rows
+        if row["candidate_id"] == best and row["selected_control"].lower() in {"1", "true", "yes"}
+    }
+    search_manifests = {resolve_artifact_path(root, row["artifact.manifest"]).resolve() for row in rows}
+    replay_manifests: set[Path] = set()
+    for scenario in scenarios:
+        replay = selected_evaluation(scenario)
+        request, raw = replay["request"], replay["raw"]
+        scenario_id = request["scenario"]["scenario_id"]
+        manifest = raw["artifacts"].get("manifest")
+        if (
+            request["candidate"]["candidate_id"] != best
+            or scenario["scenario"]["scenario_id"] != scenario_id
+            or search_controls.get(scenario_id) != request["control"]["values"]
+            or replay["from_cache"] is not False
+            or raw["status"] != "ok"
+            or not _nonempty_file(root, manifest)
+        ):
+            return False
+        replay_manifests.add(resolve_artifact_path(root, manifest).resolve())
+    return (
+        {scenario["scenario"]["scenario_id"] for scenario in scenarios} == scenario_ids
+        and len(replay_manifests) == len(scenario_ids)
+        and replay_manifests.isdisjoint(search_manifests)
+    )
 
 
 def _study_common(bundle: dict[str, Any], required: tuple[str, ...]) -> dict[str, bool]:
@@ -213,19 +302,29 @@ def _study_common(bundle: dict[str, Any], required: tuple[str, ...]) -> dict[str
     root = Path(str(study["run_root"]))
     rows = bundle["evaluation_rows"]
     verification = study.get("verification") or {}
+    artifacts = study["artifacts"]
+    complete = _artifact_files(root, artifacts, ("best_candidate", "history", "evaluation_table", *required))
+    history = (
+        json.loads(resolve_artifact_path(root, artifacts["history"]).read_text(encoding="utf-8")) if complete else []
+    )
+    scenario_ids = {str(item["scenario_id"]) for item in study["study"]["scenarios"]}
+    manifests = {row.get("artifact.manifest") for row in rows}
+    complete_audit = complete and len(manifests) == len(rows) and all(_nonempty_file(root, name) for name in manifests)
+    complete_table = len(rows) == int(study["n_evaluations"]) and _evaluation_coverage(rows, history, scenario_ids)
     return {
         "all_solver_evaluations_succeeded": int(study["n_failed_evaluations"]) == 0
-        and int(verification.get("n_failed_evaluations", 1)) == 0,
-        "fresh_solver_evidence": _cache_hits(rows) == 0,
+        and int(verification.get("n_failed_evaluations", 1)) == 0
+        and all(row.get("status") == "ok" for row in rows),
+        "complete_evaluation_evidence": study["best"]["evaluation_evidence"] == "complete",
+        "fresh_solver_evidence": all(row.get("from_cache", "").lower() in {"0", "false", "no"} for row in rows),
         "selected_candidate_was_replayed_fresh": verification.get("status") == "verified"
         and verification.get("cache_reused") is False
-        and int(verification.get("n_evaluations", 0)) == len(study["study"]["scenarios"]),
-        "complete_audit_and_selected_evidence": _artifact_files(
-            root,
-            study["artifacts"],
-            ("best_candidate", "history", "evaluation_table", *required),
-        ),
-        "evaluation_table_is_complete": len(rows) == int(study["n_evaluations"]),
+        and int(verification.get("n_evaluations", 0)) == len(scenario_ids)
+        and complete_table
+        and complete_audit
+        and _selected_replay_evidence(study, root, rows, scenario_ids),
+        "complete_audit_and_selected_evidence": complete_audit,
+        "evaluation_table_is_complete": complete_table,
     }
 
 
@@ -259,7 +358,7 @@ def _check_declared_rejection(bundle: dict[str, Any]) -> tuple[dict[str, bool], 
     checks.update(
         {
             "declared_grid_is_complete": int(study["n_evaluations"]) == 81
-            and study["best"]["search_completeness"] == "complete",
+            and study["execution"]["optimizer_outcome"]["termination"] == "declared_grid_completed",
             "electrical_rejection_is_not_solver_failure": study["best"]["status"]
             == "does_not_meet_declared_acceptance",
             "condition_coverage_is_reported": study["best"]["coverage"]
@@ -324,7 +423,10 @@ def _check_terminal_identification(bundle: dict[str, Any]) -> tuple[dict[str, bo
     checks = {
         "latent_fit_was_accepted": result["status"] == "identified" and bool(result["fit"]["passed"]),
         "unseen_frequencies_were_held_out": bool(result["holdout"]["passed"])
-        and len(result["holdout"]["scenario_ids"]) == 2,
+        and len(result["holdout"]["scenario_ids"]) == 2
+        and result["validation"]["scope"] == "declared_unseen_operating_conditions"
+        and result["validation"]["condition_parameters"] == ["frequency_Hz"]
+        and not result["validation"]["overlapping_conditions"],
         "local_sensitivity_is_full_rank": bool(sensitivity["identifiable"])
         and int(sensitivity["rank"]) == int(sensitivity["required_rank"]) == 2,
         "known_parameters_were_recovered": math.isclose(
@@ -336,8 +438,9 @@ def _check_terminal_identification(bundle: dict[str, Any]) -> tuple[dict[str, bo
             result["artifacts"],
             ("fit_result", "holdout_result", "fit_observations", "holdout_observations", "sensitivity"),
         ),
-        "fit_and_holdout_searches_used_fresh_evidence": bundle["cache_hits"] == 0,
     }
+    for phase in ("fit", "holdout"):
+        checks.update({f"{phase}_{name}": passed for name, passed in _study_common(bundle[phase], ()).items()})
     return checks, {
         "estimated_latent": result["estimated_latent"],
         "fit_loss": float(result["fit"]["value"]),
@@ -402,19 +505,16 @@ def _run_case(spec: CaseSpec, run_root: Path, log_dir: Path) -> dict[str, Any]:
         )
         identification_root = Path(str(result["run_root"]))
         identification = _read_json(identification_root / "identification_result.json")
-        fit = _read_json(identification_root / str(identification["artifacts"]["fit_result"]))
-        holdout = _read_json(identification_root / str(identification["artifacts"]["holdout_result"]))
-        fit_rows = _evaluation_rows(fit, identification_root / "fit")
-        holdout_rows = _evaluation_rows(holdout, identification_root / "holdout")
-        cache_hits = _cache_hits(fit_rows) + _cache_hits(holdout_rows)
-        evaluations = (
-            int(fit["n_evaluations"])
-            + int(fit["verification"]["n_evaluations"])
-            + int(holdout["n_evaluations"])
-            + int(holdout["verification"]["n_evaluations"])
-            + int(identification["identifiability"]["n_evaluations"])
-        )
-        bundle = {"identification": identification, "cache_hits": cache_hits}
+        bundle = {"identification": identification}
+        cache_hits = 0
+        evaluations = int(identification["identifiability"]["n_evaluations"])
+        for phase in ("fit", "holdout"):
+            result_path = identification_root / str(identification["artifacts"][f"{phase}_result"])
+            study = _read_json(result_path)
+            rows = _evaluation_rows(study, Path(str(study["run_root"])))
+            cache_hits += _cache_hits(rows)
+            evaluations += int(study["n_evaluations"]) + int(study["verification"]["n_evaluations"])
+            bundle[phase] = {"study": study, "evaluation_rows": rows}
         evidence = {"identification": str(identification_root / "identification_result.json")}
 
     checks, observed = CHECKERS[spec.case_id](bundle)
@@ -455,7 +555,7 @@ def _render_report(payload: dict[str, Any]) -> str:
         for case in payload["cases"]
     )
     return f"""<!-- generated by bench/release/run_suite.py; do not edit -->
-# PCD v1 release closure
+# PCD workflow acceptance
 
 Generated at {payload["generated_at"]} with `{payload["solver"]["version"]}`.
 
@@ -477,16 +577,15 @@ coverage are reproduced without a solver failure.
 | circuit analysis, deterministic optimization, and terminal identification foundation | **{payload["release_decision"]}** |
 | chamber/plasma process qualification | **OUT OF SCOPE** |
 
-No result here qualifies plasma chemistry, thermal lifetime, process yield, or
-a self-consistent plasma/circuit model. Machine learning is not part of this
-release gate.
 """
 
 
 def run_release_suite(run_root: Path) -> dict[str, Any]:
     run_root = run_root.resolve()
-    if run_root.exists():
-        raise FileExistsError(f"release run root already exists: {run_root}")
+    try:
+        run_root.mkdir(parents=True)
+    except FileExistsError as exc:
+        raise FileExistsError(f"release run root already exists: {run_root}") from exc
     log_dir = run_root / "logs"
     solver = _json_command("solver_diagnose", ["solver-diagnose"], log_dir)
     cases = [_run_case(spec, run_root, log_dir) for spec in CASES]

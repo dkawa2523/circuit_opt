@@ -96,10 +96,10 @@ def node_sort_key(node: str) -> tuple[int, str]:
     )
 
 
-def _read_netlist(path_or_text: str | Path) -> str:
+def _read_netlist(path_or_text: str | Path, mode: str) -> str:
     raw = str(path_or_text)
     if isinstance(path_or_text, Path) or ("\n" not in raw and Path(raw).is_file()):
-        return flatten_netlist_file(Path(path_or_text))[0]
+        return flatten_netlist_file(Path(path_or_text), mode="deck" if mode == "deck" else "fragment")[0]
     return raw
 
 
@@ -181,7 +181,7 @@ def split_netlist(text: str, mode: str = "auto") -> tuple[list[str], Subckts]:
 
 
 def parse_netlist(path_or_text: str | Path, *, netlist_mode: str = "auto") -> ParsedNetlist:
-    top, subckts = split_netlist(_read_netlist(path_or_text), netlist_mode)
+    top, subckts = split_netlist(_read_netlist(path_or_text, netlist_mode), netlist_mode)
     parsed = ParsedNetlist([], sorted(subckts))
     node_names: dict[str, str] = {}
     models = {line.split()[1].lower() for line in top if line.lower().startswith(".model ") and len(line.split()) >= 3}
@@ -260,7 +260,3 @@ def parse_netlist(path_or_text: str | Path, *, netlist_mode: str = "auto") -> Pa
     if len(set(refs)) != len(refs):
         parsed.issues.append("duplicate component names (possibly conditional alternatives)")
     return parsed
-
-
-def netlist_summary(path: str | Path, *, netlist_mode: str = "auto") -> dict[str, Any]:
-    return parse_netlist(path, netlist_mode=netlist_mode).summary()

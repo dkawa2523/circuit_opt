@@ -3,20 +3,20 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pandas as pd
 
-from pcd.analysis.ac import DEFAULT_Z0, at_frequency, frequency_sweep_metrics, input_impedance
-from pcd.analysis.traces import instantaneous_power, magnitude_phase
+from pcd.analysis.traces import magnitude_phase
 from pcd.probes import ComponentObservation
 from pcd.simulation import LOAD_VOLTAGE_COLUMN
 
 _R_CIRCLES = (0.2, 0.5, 1.0, 2.0, 5.0)
 _X_CIRCLES = (0.2, 0.5, 1.0, 2.0, 5.0)
+FigureOutput = str | Path | Sequence[Path]
 
 
 def _headless_pyplot() -> Any:
@@ -37,39 +37,39 @@ def _headless_pyplot() -> Any:
     return plt
 
 
-def _save(figure: Any, out: str | Path) -> Path:
-    destination = Path(out)
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    figure.tight_layout()
-    figure.savefig(destination, dpi=170)
-    _headless_pyplot().close(figure)
-    return destination
+def save_figure_files(figure: Any, destinations: Sequence[Path]) -> None:
+    try:
+        figure.tight_layout()
+        for destination in destinations:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            figure.savefig(destination, dpi=170)
+    finally:
+        _headless_pyplot().close(figure)
+
+
+def _save(figure: Any, out: FigureOutput) -> Path:
+    destinations = (Path(out),) if isinstance(out, (str, Path)) else out
+    save_figure_files(figure, destinations)
+    return destinations[0]
 
 
 def render_frequency_response(
-    ac: pd.DataFrame,
-    out: str | Path,
+    impedance: pd.DataFrame,
+    out: FigureOutput,
     *,
+    z0: float,
     title: str | None = None,
-    z0: float = DEFAULT_Z0,
     marker_hz: float | None = None,
     sweep_metrics: Mapping[str, Any] | None = None,
 ) -> Path:
-    """Render impedance, Smith, and return-loss views of one AC result."""
+    """Render impedance, Smith, and return-loss views of the measured sweep."""
 
-    if ac.empty:
-        raise ValueError("frequency response is empty")
     plt = _headless_pyplot()
-    sweep = sweep_metrics if sweep_metrics is not None else frequency_sweep_metrics(ac, z0)
-    if marker_hz is not None:
-        marker = pd.DataFrame([at_frequency(ac, marker_hz)])
-        ac = pd.concat([ac, marker], ignore_index=True).drop_duplicates("frequency_Hz").sort_values("frequency_Hz")
-    impedance = input_impedance(ac, z0)
     figure, axes = plt.subplots(2, 2, figsize=(10.4, 8.0))
     _draw_impedance_rectangular(axes[0, 0], impedance, marker_hz)
     _draw_smith(axes[0, 1], impedance, z0, marker_hz)
     _draw_impedance_polar(axes[1, 0], impedance, marker_hz)
-    _draw_return_loss(axes[1, 1], impedance, marker_hz, sweep)
+    _draw_return_loss(axes[1, 1], impedance, marker_hz, sweep_metrics)
     if title:
         figure.suptitle(title, fontsize=12)
     return _save(figure, out)
@@ -110,24 +110,31 @@ def _draw_impedance_polar(axis: Any, impedance: pd.DataFrame, marker_hz: float |
 
 def _draw_smith(axis: Any, impedance: pd.DataFrame, z0: float, marker_hz: float | None) -> None:
     _draw_smith_grid(axis)
+    magnitude = impedance["reflection_magnitude"].to_numpy(float)
+    inside = magnitude <= 1.0 + 1e-12
     axis.plot(
-        impedance["reflection_re"].to_numpy(float),
-        impedance["reflection_im"].to_numpy(float),
+        np.where(inside, impedance["reflection_re"], np.nan),
+        np.where(inside, impedance["reflection_im"], np.nan),
         lw=1.4,
         color="tab:blue",
     )
     if marker_hz is not None:
-        row = at_frequency(impedance, marker_hz)
-        axis.plot([row["reflection_re"]], [row["reflection_im"]], "o", color="tab:red", ms=7, zorder=5)
-        axis.annotate(
-            f"{row['frequency_Hz'] / 1e6:.3g} MHz\n"
-            f"{row['resistance_ohm']:.3g}{row['reactance_ohm']:+.3g}j ohm\n"
-            f"VSWR {row['vswr']:.3g}",
-            (row["reflection_re"], row["reflection_im"]),
-            textcoords="offset points",
-            xytext=(8, 8),
-            fontsize=8,
-        )
+        row = impedance.loc[impedance["frequency_Hz"] == marker_hz].iloc[0]
+        if row["reflection_magnitude"] <= 1.0 + 1e-12:
+            axis.plot([row["reflection_re"]], [row["reflection_im"]], "o", color="tab:red", ms=7, zorder=5)
+            axis.annotate(
+                f"{row['frequency_Hz'] / 1e6:.3g} MHz\n"
+                f"{row['resistance_ohm']:.3g}{row['reactance_ohm']:+.3g}j ohm\n"
+                f"VSWR {row['vswr']:.3g}",
+                (row["reflection_re"], row["reflection_im"]),
+                textcoords="offset points",
+                xytext=(8, 8),
+                fontsize=8,
+            )
+    if not np.any(np.isfinite(magnitude)):
+        axis.text(0.5, 0.05, "Reflection unavailable", ha="center", transform=axis.transAxes, fontsize=8)
+    elif outside := int(np.sum(np.isfinite(magnitude) & (magnitude > 1.0 + 1e-12))):
+        axis.text(0.5, 0.05, f"{outside} points outside |Γ| = 1", ha="center", transform=axis.transAxes, fontsize=8)
     axis.set_title(f"Smith chart (Z0 = {z0:g} ohm)")
 
 
@@ -204,20 +211,33 @@ def _plot_frequency(axis: Any, frequency_mhz: np.ndarray, values: Any, **style: 
 
 def render_transient_response(
     waveform: pd.DataFrame,
-    out: str | Path,
+    power_trace: pd.DataFrame,
+    out: FigureOutput,
     *,
     title: str | None = None,
     load_current_column: str | None = None,
 ) -> Path:
-    """Render voltage, current, and available instantaneous power traces."""
+    """Render voltage, current, and available signed power and energy traces."""
 
-    if waveform.empty:
-        raise ValueError("waveform is empty")
     panels = ["voltage"]
     if _finite_column(waveform, "current_A") or _finite_column(waveform, load_current_column):
         panels.append("current")
-    if _has_source_power(waveform) or _has_load_power(waveform, load_current_column):
-        panels.append("power")
+    flow_panels = {
+        "power": ("power_W", "instantaneous power [W]", "Transient electrical power", 1),
+        "energy": ("net_energy_J", "net energy [J]", "Net energy from the first saved sample", 2),
+    }
+    plotted_flow = {}
+    for panel, (suffix, _ylabel, _title, minimum) in flow_panels.items():
+        series = {}
+        for port, label in (("source", "source delivered"), ("load", "load accepted")):
+            column = f"{port}_{suffix}"
+            if column in power_trace:
+                values = power_trace[column].to_numpy(float)
+                if np.count_nonzero(np.isfinite(values)) >= minimum:
+                    series[label] = values
+        if series:
+            panels.append(panel)
+            plotted_flow[panel] = series
 
     plt = _headless_pyplot()
     figure, axes = plt.subplots(len(panels), 1, figsize=(8.4, 3.0 * len(panels)), squeeze=False)
@@ -228,7 +248,12 @@ def render_transient_response(
         elif panel == "current":
             _draw_transient_current(axis, waveform, time_us, load_current_column)
         else:
-            _draw_transient_power(axis, waveform, time_us, load_current_column)
+            _suffix, ylabel, panel_title, _minimum = flow_panels[panel]
+            for label, values in plotted_flow[panel].items():
+                axis.plot(time_us, values, lw=1.1, label=label)
+            axis.set_ylabel(ylabel)
+            axis.set_title(panel_title)
+            axis.legend()
         axis.set_xlabel("time [us]")
         axis.grid(alpha=0.3)
     if title:
@@ -238,15 +263,6 @@ def render_transient_response(
 
 def _finite_column(frame: pd.DataFrame, column: str | None) -> bool:
     return bool(column and column in frame and np.isfinite(frame[column].to_numpy(float)).any())
-
-
-def _has_source_power(waveform: pd.DataFrame) -> bool:
-    return _finite_column(waveform, "source_voltage_V") and _finite_column(waveform, "current_A")
-
-
-def _has_load_power(waveform: pd.DataFrame, load_current_column: str | None) -> bool:
-    column = LOAD_VOLTAGE_COLUMN if LOAD_VOLTAGE_COLUMN in waveform else "voltage_V"
-    return _finite_column(waveform, column) and _finite_column(waveform, load_current_column)
 
 
 def _draw_transient_voltage(axis: Any, waveform: pd.DataFrame, time_us: np.ndarray) -> None:
@@ -275,27 +291,10 @@ def _draw_transient_current(
     axis.legend()
 
 
-def _draw_transient_power(
-    axis: Any,
-    waveform: pd.DataFrame,
-    time_us: np.ndarray,
-    load_current_column: str | None,
-) -> None:
-    if _has_source_power(waveform):
-        source_power = instantaneous_power(waveform, load_current_column)["source_power_W"].to_numpy(float)
-        axis.plot(time_us, source_power, lw=1.1, label="source delivered")
-    if _has_load_power(waveform, load_current_column):
-        load_power = instantaneous_power(waveform, load_current_column)["load_power_W"].to_numpy(float)
-        axis.plot(time_us, load_power, lw=1.1, label="load accepted")
-    axis.set_ylabel("instantaneous power [W]")
-    axis.set_title("Transient electrical power")
-    axis.legend()
-
-
 def render_operating_point(
     metrics: dict[str, Any],
     components: tuple[ComponentObservation, ...],
-    out: str | Path,
+    out: FigureOutput,
     *,
     title: str | None = None,
 ) -> Path | None:

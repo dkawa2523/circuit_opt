@@ -12,16 +12,16 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from itertools import product
 from math import prod
-from numbers import Integral, Real
 from typing import Any
 
 import numpy as np
 
 from .case import Case
+from .core.models import CandidateResult
 from .inputs import integer, reject_unknown
-from .problem import candidate_role, project_candidate_case, resolve_parameter_set
+from .problem import candidate_role, project_candidate_case, resolve_parameter_set, validate_parameter_value
+from .search_registry import OptimizerFactory, load_plugins, register
 from .search_registry import get as get_optimizer
-from .search_registry import load_plugins, register
 
 
 def feedback_rank(feedback: dict[str, Any]) -> tuple[float, ...] | None:
@@ -43,7 +43,7 @@ def feedback_rank(feedback: dict[str, Any]) -> tuple[float, ...] | None:
 
 
 def sample_param(rng: np.random.Generator, spec: dict[str, Any]) -> Any:
-    """Draw one declared parameter value without changing its YAML type."""
+    """Draw from a resolved parameter domain without changing its YAML type."""
 
     if "choices" in spec or "values" in spec:
         choices = list(spec["choices"] if "choices" in spec else spec["values"])
@@ -57,13 +57,9 @@ def sample_param(rng: np.random.Generator, spec: dict[str, Any]) -> Any:
     lo, hi = spec["bounds"]
     if spec.get("type") == "int":
         low, high = math.ceil(float(lo)), math.floor(float(hi))
-        if low > high:
-            raise ValueError(f"integer bounds contain no integer: {spec}")
         return int(rng.integers(low, high + 1))
     if spec.get("scale", "linear") == "log":
         lo_f, hi_f = float(lo), float(hi)
-        if lo_f <= 0 or hi_f <= 0:
-            raise ValueError(f"log-scale bounds must be positive: {spec}")
         value = float(10 ** rng.uniform(math.log10(lo_f), math.log10(hi_f)))
         return min(max(value, lo_f), hi_f)
     return float(rng.uniform(float(lo), float(hi)))
@@ -73,10 +69,6 @@ def candidate_specs(case: Case) -> dict[str, dict[str, Any]]:
     """Return the only parameter space an optimizer is allowed to propose."""
 
     return resolve_parameter_set(case).specs(candidate_role(case))
-
-
-def candidate_defaults(case: Case) -> dict[str, Any]:
-    return {name: spec["default"] for name, spec in candidate_specs(case).items() if "default" in spec}
 
 
 def validate_proposal(case: Case, proposal: Any) -> dict[str, Any]:
@@ -93,54 +85,13 @@ def validate_proposal(case: Case, proposal: Any) -> dict[str, Any]:
     extras = sorted(str(name) for name in proposal if name not in specs)
     if extras:
         raise ValueError(f"optimizer proposed undeclared candidate variables: {extras}")
-    values = {**candidate_defaults(case), **dict(proposal)}
-    missing = sorted(name for name in specs if name not in values)
+    missing = sorted(name for name, spec in specs.items() if name not in proposal and "default" not in spec)
     if missing:
         raise ValueError(f"optimizer proposal is missing candidate variables without defaults: {missing}")
-    return {name: _validate_proposed_value(name, values[name], spec) for name, spec in specs.items()}
-
-
-def _validate_proposed_value(name: str, value: Any, spec: dict[str, Any]) -> Any:
-    if isinstance(value, np.generic):
-        value = value.item()
-    value = _normalize_proposed_type(name, value, str(spec.get("type", "")))
-    _validate_proposed_domain(name, value, spec)
-    return value
-
-
-def _normalize_proposed_type(name: str, value: Any, kind: str) -> Any:
-    if kind == "bool":
-        if not isinstance(value, bool):
-            raise ValueError(f"optimizer variable {name!r} must be bool")
-    elif kind == "int":
-        if isinstance(value, bool) or not isinstance(value, Integral):
-            raise ValueError(f"optimizer variable {name!r} must be int")
-        value = int(value)
-    elif kind in {"float", "number"}:
-        if isinstance(value, bool) or not isinstance(value, Real):
-            raise ValueError(f"optimizer variable {name!r} must be numeric")
-        value = float(value)
-    elif kind in {"str", "string"} and not isinstance(value, str):
-        raise ValueError(f"optimizer variable {name!r} must be a string")
-    return value
-
-
-def _validate_proposed_domain(name: str, value: Any, spec: dict[str, Any]) -> None:
-    if isinstance(value, Real) and not isinstance(value, bool) and not math.isfinite(float(value)):
-        raise ValueError(f"optimizer variable {name!r} must be finite")
-    choices = spec.get("choices", spec.get("values"))
-    if choices is not None and value not in choices:
-        raise ValueError(f"optimizer variable {name!r} must be one of {list(choices)!r}; got {value!r}")
-    if "bounds" in spec:
-        try:
-            number = float(value)
-            lo, hi = (float(item) for item in spec["bounds"])
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"optimizer variable {name!r} must be numeric within its bounds") from exc
-        if not math.isfinite(number) or number < lo or number > hi:
-            raise ValueError(f"optimizer variable {name!r}={value!r} is outside [{lo:g}, {hi:g}]")
-    if spec.get("scale") == "log" and isinstance(value, Real) and float(value) <= 0:
-        raise ValueError(f"optimizer variable {name!r} must be positive on a log scale")
+    return {
+        name: validate_parameter_value(name, proposal.get(name, spec.get("default")), spec)
+        for name, spec in specs.items()
+    }
 
 
 @dataclass
@@ -155,15 +106,18 @@ class BaseOptimizer:
 
         for _ in range(budget):
             evaluate(self.ask())
-        self.outcome = {
-            "termination": "declared_grid_completed" if hasattr(self, "n_points") else "candidate_budget_exhausted"
-        }
+        self.outcome = {"termination": "candidate_budget_exhausted"}
 
     def ask(self) -> dict[str, Any]:
         raise NotImplementedError
 
     def tell(self, params: dict[str, Any], feedback: dict[str, Any]) -> None:
         self.history.append({"params": dict(params), "feedback": dict(feedback)})
+
+    def feedback_details(self, result: CandidateResult) -> dict[str, Any]:
+        """Extract method-specific feedback from a completed evaluation."""
+
+        return {}
 
     def proposal_metadata(self) -> dict[str, Any]:
         """Describe the latest proposal for the persisted study trace."""
@@ -178,12 +132,25 @@ class BaseOptimizer:
 
 
 def create_optimizer(case: Case, optimizer_name: str | None = None, seed: int | None = None) -> BaseOptimizer:
+    factory = resolve_optimizer_factory(case, optimizer_name)
+    return factory(project_candidate_case(case), seed=seed)
+
+
+def resolve_optimizer_factory(case: Case, optimizer_name: str | None = None) -> OptimizerFactory:
+    """Validate the search settings and resolve the optimizer for this case."""
+
     validate_search_settings(case, optimizer_name)
-    load_plugins(case.data.get("plugins"), case.base_dir)
+    paths = load_plugins(case.data.get("plugins"), case.base_dir)
     config = case.data.get("optimizer", {}) or {}
     name = str(config.get("name", "random")) if optimizer_name is None else optimizer_name
-    factory = get_optimizer(name)
-    return factory(project_candidate_case(case), seed=seed)
+    return get_optimizer(name, plugins=paths)
+
+
+def validate_optimizer_plan(case: Case) -> None:
+    """Resolve the method and check the exact size of a built-in grid."""
+    if resolve_optimizer_factory(case) is grid_optimizer:
+        budget = int((case.data.get("run") or {}).get("trials", 1))
+        GridOptimizer(case).validate_budget(budget)
 
 
 def validate_search_settings(case: Case, optimizer_name: str | None = None) -> None:
@@ -206,10 +173,7 @@ class RandomOptimizer(BaseOptimizer):
         self.specs = candidate_specs(case)
 
     def ask(self) -> dict[str, Any]:
-        params = candidate_defaults(self.case)
-        for name, spec in self.specs.items():
-            params[name] = sample_param(self.rng, spec)
-        return params
+        return {name: sample_param(self.rng, spec) for name, spec in self.specs.items()}
 
 
 @register("random")
@@ -237,13 +201,20 @@ class GridOptimizer(BaseOptimizer):
                 raise ValueError(
                     f"grid optimizer requires finite choices for every design variable; {name!r} is continuous"
                 )
-            if not choices:
-                raise ValueError(f"grid optimizer variable {name!r} has no choices")
             axes.append((name, choices))
         self.axes = tuple(axes)
         self.n_points = prod(len(choices) for _name, choices in self.axes)
         self._points = iter(product(*(choices for _name, choices in self.axes)))
         self._asked = 0
+
+    def validate_budget(self, budget: int) -> None:
+        if budget != self.n_points:
+            raise ValueError(f"grid optimizer requires exactly {self.n_points} trials, got {budget}")
+
+    def optimize(self, evaluate: Callable[[dict[str, Any]], dict[str, Any]], budget: int) -> None:
+        super().optimize(evaluate, budget)
+        if self._asked == self.n_points:
+            self.outcome = {"termination": "declared_grid_completed"}
 
     def ask(self) -> dict[str, Any]:
         try:
@@ -251,10 +222,7 @@ class GridOptimizer(BaseOptimizer):
         except StopIteration as exc:
             raise RuntimeError(f"grid optimizer exhausted its {self.n_points} unique candidates") from exc
         self._asked += 1
-        return {
-            **candidate_defaults(self.case),
-            **dict(zip((name for name, _choices in self.axes), values, strict=True)),
-        }
+        return dict(zip((name for name, _choices in self.axes), values, strict=True))
 
     def state(self) -> dict[str, Any]:
         return {

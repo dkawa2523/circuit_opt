@@ -36,6 +36,12 @@ LOAD_CURRENT_COLUMN = "load_current_A"
 LOAD_VOLTAGE_COLUMN = "load_voltage_V"
 
 
+def same_frequency_hz(first: float, second: float) -> bool:
+    """Compare positive frequency coordinates up to numerical roundoff."""
+
+    return math.isclose(first, second, rel_tol=1e-12)
+
+
 def _resolve(value: Any, params: Mapping[str, Any] | None) -> Any:
     """Resolve a bare or ``$`` parameter reference in an analysis request."""
 
@@ -60,8 +66,6 @@ class TransientAnalysis:
             raise ValueError("transient step_s and stop_s must be positive and finite")
         if step > stop:
             raise ValueError("transient step_s must not exceed stop_s")
-        object.__setattr__(self, "step_s", step)
-        object.__setattr__(self, "stop_s", stop)
 
     @classmethod
     def from_config(
@@ -101,8 +105,14 @@ class AcSweep:
             )
         object.__setattr__(self, "sweep", sweep)
         object.__setattr__(self, "points", points)
-        object.__setattr__(self, "start_hz", start)
-        object.__setattr__(self, "stop_hz", stop)
+
+    def frequencies_hz(self) -> np.ndarray:
+        """Frequency grid expected from the requested ngspice sweep."""
+        if self.sweep == "lin":
+            return np.linspace(self.start_hz, self.stop_hz, self.points)
+        base = 10.0 if self.sweep == "dec" else 2.0
+        count = 1 + math.floor(math.log(self.stop_hz / self.start_hz, base) * self.points + 1e-9)
+        return self.start_hz * base ** (np.arange(count) / self.points)
 
     @classmethod
     def from_config(
@@ -119,7 +129,7 @@ class AcSweep:
             return cls(sweep="lin", points=1, start_hz=frequency, stop_hz=frequency, source=config.get("source"))
         return cls(
             sweep=str(config.get("sweep", "dec")),
-            points=integer(config.get("points", 20), "AC points", minimum=1),
+            points=config.get("points", 20),
             start_hz=float(_resolve(config.get("start_Hz", 1e6), params)),
             stop_hz=float(_resolve(config.get("stop_Hz", 1e8), params)),
             source=config.get("source"),
@@ -190,7 +200,10 @@ class SimulationResult:
             if len(time) < 2 or not np.all(np.isfinite(time)) or not np.all(np.isfinite(voltage)):
                 raise ValueError("successful transient requires finite aligned time/voltage observations")
             if np.any(np.diff(time) < 0) or abs(time[0]) > tolerance or abs(time[-1] - stop) > tolerance:
-                raise ValueError("transient result must cover [0, requested stop_s] in time order")
+                raise ValueError(
+                    f"transient result must cover [0, requested stop_s={stop:g} s] in time order "
+                    f"(first={time[0]:g} s, last={time[-1]:g} s)"
+                )
         if analysis.ac is not None:
             frame = self.frequency_response
             required = ["frequency_Hz", "voltage_re", "voltage_im", "current_re", "current_im"]
@@ -198,13 +211,7 @@ class SimulationResult:
                 raise ValueError("successful AC analysis requires frequency and complex port observations")
             if not np.all(np.isfinite(frame[required].to_numpy(float))):
                 raise ValueError("successful AC response must be finite")
-            sweep = analysis.ac
-            if sweep.sweep == "lin":
-                expected = np.linspace(sweep.start_hz, sweep.stop_hz, sweep.points)
-            else:
-                base = 10.0 if sweep.sweep == "dec" else 2.0
-                count = 1 + math.floor(math.log(sweep.stop_hz / sweep.start_hz, base) * sweep.points + 1e-9)
-                expected = sweep.start_hz * base ** (np.arange(count) / sweep.points)
+            expected = analysis.ac.frequencies_hz()
             actual = frame["frequency_Hz"].to_numpy(float)
             if len(actual) != len(expected) or not np.allclose(actual, expected, rtol=1e-8, atol=0):
                 raise ValueError("AC result frequencies differ from the requested sweep")
@@ -212,6 +219,8 @@ class SimulationResult:
     def as_frame(self) -> pd.DataFrame:
         """Return the canonical transient table, preserving missing current."""
 
+        if reserved := sorted({TIME_COLUMN, VOLTAGE_COLUMN, CURRENT_COLUMN} & self.probes.keys()):
+            raise ValueError(f"solver probes cannot replace canonical waveform columns: {reserved}")
         current = (
             self.current_A
             if self.current_A is not None

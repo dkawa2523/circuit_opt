@@ -1,9 +1,4 @@
-"""Characterization tests for the CLI surface.
-
-Written before ``pcd.cli.main`` was split into per-command handlers so the
-refactor is provably behaviour-preserving.  These pin the *contract*: which
-artifacts appear, what is printed, and which exit code is produced.
-"""
+"""Exercise the public CLI, its output and its exit codes."""
 
 from __future__ import annotations
 
@@ -12,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from pcd import netlist
 from pcd.cli import _print_sim_summary, main
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -61,11 +57,21 @@ def test_solver_diagnose_exits_nonzero_for_a_missing_executable():
 # --- validation ------------------------------------------------------------
 
 
-def test_validate_case_json_reports_ok(capsys):
-    main(["validate-case", RC_CASE, "--json"])
+def test_validate_case_plan_reports_the_validated_model(monkeypatch, capsys):
+    circuit_builder = netlist.build_circuit
+    build_count = 0
+
+    def count_builds(case, params):
+        nonlocal build_count
+        build_count += 1
+        return circuit_builder(case, params)
+
+    monkeypatch.setattr(netlist, "build_circuit", count_builds)
+    main(["validate-case", RC_CASE, "--plan", "--json"])
     payload = _stdout_json(capsys)
     assert payload["ok"] is True
-    assert isinstance(payload["issues"], list)
+    assert payload["plan"]["control_states_per_condition"] == {"nominal": 1}
+    assert build_count == 1
 
 
 def test_validate_case_strict_accepts_the_physical_example(capsys):
@@ -306,11 +312,11 @@ def test_open_circuit_analysis_is_successful_in_text_and_json(monkeypatch, capsy
 def test_run_is_the_simple_human_readable_study_entry_point(tmp_path, capsys):
     main(["run", RC_CASE, "--solver", "test_fake", "--output", str(tmp_path)])
     output = capsys.readouterr().out
-    assert "Electrical context: TRANSIENT, reference plane=load_ports, Z0=50 ohm" in output
+    assert "Electrical context: TRANSIENT, load plane=load_ports, source-port Z0=50 ohm" in output
     assert "Feasible across all conditions: yes" in output
     assert "Decision: meets_declared_acceptance" in output
     assert "Selected candidate:" in output
-    assert "Condition coverage: accepted 1/1, solved 1/1" in output
+    assert "Condition coverage: accepted 1/1, evaluated 1/1" in output
     assert "Objective: normalized_rmse=" in output
     assert "Objective: peak_abs_voltage_V=" in output
     assert "Pareto front (observed candidates):" in output
@@ -438,6 +444,43 @@ def test_run_uses_the_unified_pipeline_for_an_advanced_case(tmp_path, capsys):
     study_root = Path(payload["run_root"])
     assert (study_root / "study_result.json").exists()
     assert (study_root / payload["artifacts"]["history"]).exists()
+    generation = study_root / payload["artifacts"]["generation"]
+    main(["result-summary", str(generation / "generation_result.json")])
+    assert "trial_0000" in capsys.readouterr().out
+
+
+def test_raw_cache_prune_requires_a_budget_and_previews_by_default(tmp_path, capsys):
+    (tmp_path / ".study_id").write_text("example", encoding="utf-8")
+    index = tmp_path / "raw" / ("a" * 24) / "raw_result.json"
+    index.parent.mkdir(parents=True)
+    index.write_text("{}", encoding="utf-8")
+    command = ["result-prune", str(tmp_path), "--json"]
+    with pytest.raises(SystemExit) as missing_budget:
+        main([*command, "--raw-cache"])
+    assert missing_budget.value.code == 2
+    assert "retention requires" in _stdout_json(capsys)["error"]
+    with pytest.raises(SystemExit) as invalid_scope:
+        main([*command, "--max-bytes", "0"])
+    assert invalid_scope.value.code == 2
+    assert "requires --raw-cache" in _stdout_json(capsys)["error"]
+
+    command += ["--raw-cache", "--max-bytes", "0"]
+    main(command)
+    preview = _stdout_json(capsys)
+    assert preview["scope"] == "raw_cache_indices"
+    assert preview["removed"] == [index.relative_to(tmp_path).as_posix()]
+    assert preview["removed_bytes"] == 2
+    assert index.is_file()
+    main([*command, "--apply"])
+    assert _stdout_json(capsys)["applied"] is True
+    assert not index.exists()
+
+
+def test_result_summary_rejects_a_directory_without_candidate_history(tmp_path, capsys):
+    with pytest.raises(SystemExit) as excinfo:
+        main(["result-summary", str(tmp_path)])
+    assert excinfo.value.code == 2
+    assert "saved study has no candidate history" in capsys.readouterr().out
 
 
 def test_unknown_command_is_rejected():

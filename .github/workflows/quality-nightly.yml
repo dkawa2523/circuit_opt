@@ -1,7 +1,7 @@
 name: quality-nightly
 
-# Checks that are too slow for every PR: end-to-end journeys against the real
-# ngspice binary and the supported Python range.
+# Electrical benchmarks against real ngspice and tests across supported Python.
+# The PR gate already runs the end-to-end journey suite.
 
 on:
   schedule:
@@ -13,30 +13,57 @@ permissions:
 
 jobs:
   nightly:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
-      - run: uv sync --group dev --frozen
+      - run: uv sync --group dev --frozen --python 3.12
 
-      # The e2e suite skips the real-solver tests when ngspice is absent;
-      # installing it here is what makes those tests actually run.
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ngspice
-      - run: uv run --frozen python -m nox -s quality-nightly
-      - run: uv run --frozen python -m nox -s benchmark-design
+      - run: uv run --frozen --no-sync python -m pcd solver-diagnose --json
+      - run: uv run --frozen --no-sync python bench/run_suite.py --run-root runs/benchmark_suite
+      - run: uv run --frozen --no-sync python bench/release/run_suite.py --run-root runs/release
+      - name: Reproduce published circuit equations and fixture comparisons
+        run: uv run --frozen --no-sync python bench/literature/run_suite.py --run-root runs/literature
+      - name: Reproduce the measured-data benchmarks
+        run: |
+          status=0
+          for runner in bench/literature/p2_*/run.py; do
+            name=$(basename "$(dirname "$runner")")
+            uv run --frozen --no-sync python "$runner" --run-root "runs/measured/$name" || status=1
+          done
+          exit "$status"
+      - name: Retain benchmark verdicts and release command logs
+        if: success() || failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: electrical-benchmark-evidence
+          retention-days: 14
+          path: |
+            runs/benchmark_suite/benchmark_result.json
+            runs/release/release_result.json
+            runs/release/logs/
+            runs/literature/evaluation.json
+            runs/literature/logs/
+            runs/measured/*/benchmark_result.json
 
   python-matrix:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        # Python 3.12 is covered by quality-pr.
+        python-version: ["3.10", "3.11", "3.13"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v7
       - run: uv sync --frozen --group dev --python ${{ matrix.python-version }}
-      - run: uv run --frozen --python ${{ matrix.python-version }} python -m pytest -q -m "not e2e"
+      - run: uv run --frozen --no-sync --python ${{ matrix.python-version }} python -m pytest -q -m "not e2e"

@@ -7,10 +7,9 @@ from pathlib import Path
 from typing import Any
 
 from pcd.analysis import at_frequency, input_impedance
+from pcd.api import execute_case, load_case
 from pcd.artifacts import write_json
-from pcd.case import load_case
-from pcd.ngspice_io import read_frequency_response
-from pcd.sim_core import simulate_case
+from pcd.records import load_frequency_response
 
 HERE = Path(__file__).resolve().parent
 L1_H = 8.5e-6
@@ -80,17 +79,15 @@ def _complex_at_frequency(response: Any, frequency_hz: float) -> complex:
 
 def run(run_root: Path) -> dict[str, Any]:
     run_root.mkdir(parents=True, exist_ok=True)
-    resonance_record = simulate_case(
+    resonance_record = execute_case(
         load_case(HERE / "dummy_resonance.yaml"),
         run_root=run_root,
         run_id="dummy_resonance",
-    )
+    ).record
     if resonance_record.status != "ok" or resonance_record.frequency_response_file is None:
         raise RuntimeError(f"dummy resonance simulation failed: {resonance_record.warnings}")
 
-    response = input_impedance(
-        read_frequency_response(resonance_record.run_dir / resonance_record.frequency_response_file)
-    )
+    response = input_impedance(load_frequency_response(resonance_record.run_dir))
     frequency = response["frequency_Hz"].astype(float).tolist()
     reactance = response["reactance_ohm"].astype(float).tolist()
     analytic = analytic_resonances()
@@ -117,16 +114,14 @@ def run(run_root: Path) -> dict[str, Any]:
             }
         )
 
-    graphite_record = simulate_case(
+    graphite_record = execute_case(
         load_case(HERE / "graphite_dummy.yaml"),
         run_root=run_root,
         run_id="graphite_dummy",
-    )
+    ).record
     if graphite_record.status != "ok" or graphite_record.frequency_response_file is None:
         raise RuntimeError(f"graphite dummy simulation failed: {graphite_record.warnings}")
-    graphite_response = input_impedance(
-        read_frequency_response(graphite_record.run_dir / graphite_record.frequency_response_file)
-    )
+    graphite_response = input_impedance(load_frequency_response(graphite_record.run_dir))
     graphite_row = at_frequency(graphite_response, 13.56e6)
     graphite_actual = complex(float(graphite_row["resistance_ohm"]), float(graphite_row["reactance_ohm"]))
     graphite_expected = complex(1.26, 57.0)

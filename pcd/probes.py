@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from .inputs import load_plane_label
 from .simulation import (
     CURRENT_COLUMN,
     LOAD_CURRENT_COLUMN,
@@ -17,6 +18,7 @@ from .simulation import (
 )
 
 LOAD_AMMETER = "Vload_meter"
+REPORT_ENERGY_COLUMNS = frozenset({"source_net_energy_J", "load_net_energy_J"})
 
 RESERVED_PROBE_COLUMNS = frozenset(
     {
@@ -33,6 +35,7 @@ RESERVED_PROBE_COLUMNS = frozenset(
         "source_delivered_current_A",
         "source_power_W",
         "load_power_W",
+        *REPORT_ENERGY_COLUMNS,
     }
 )
 
@@ -60,6 +63,14 @@ def core_node(reference: str) -> str:
 
 def loss_reference(reference: str) -> str:
     return f"Rloss_{component_id(reference)}"
+
+
+def source_meter_node(reference: str) -> str:
+    return f"source_meter_{reference}"
+
+
+def source_meter_reference(reference: str) -> str:
+    return f"Vmeasure_{reference}"
 
 
 @dataclass(frozen=True)
@@ -118,12 +129,18 @@ class NamedProbe:
 class ProbePlan:
     """Case observations shared by netlist rendering and result parsing."""
 
-    source_name: str
-    source_voltage_vector: str
+    source_name: str | None
+    source_voltage_vector: str | None
     load_current_column: str | None
     transient: tuple[NamedProbe, ...]
     ac: tuple[NamedProbe, ...]
-    source_current_vector: str = ""
+    source_current_vector: str | None = None
+
+    @property
+    def source_current(self) -> str | None:
+        if self.source_current_vector:
+            return self.source_current_vector
+        return f"i({self.source_name})" if self.source_name else None
 
     @property
     def transient_vectors(self) -> tuple[str, ...]:
@@ -162,20 +179,30 @@ def signal_catalog(
             VOLTAGE_COLUMN,
             "as_declared",
         ),
-        (NamedProbe(plan.source_voltage_vector, SOURCE_VOLTAGE_COLUMN, "V", "source port"), "voltage", "as_declared"),
-        (
-            NamedProbe(
-                plan.source_current_vector or f"i({plan.source_name})", CURRENT_COLUMN, "A", "current into source"
-            ),
-            "current",
-            "into_source_positive_terminal",
-        ),
-        (NamedProbe(load_vector, LOAD_VOLTAGE_COLUMN, "V", "load port"), LOAD_VOLTAGE_COLUMN, "as_declared"),
-        *(
-            (probe, probe.column, "into_load" if probe.column == plan.load_current_column else "as_declared")
-            for probe in plan.ac
-        ),
     ]
+    if plan.source_voltage_vector is not None:
+        declarations.append(
+            (
+                NamedProbe(plan.source_voltage_vector, SOURCE_VOLTAGE_COLUMN, "V", "source port"),
+                "voltage",
+                "as_declared",
+            )
+        )
+    if (source_current := plan.source_current) is not None:
+        declarations.append(
+            (
+                NamedProbe(source_current, CURRENT_COLUMN, "A", "current into source"),
+                "current",
+                "into_source_positive_terminal",
+            )
+        )
+    declarations.append(
+        (NamedProbe(load_vector, LOAD_VOLTAGE_COLUMN, "V", "load port"), LOAD_VOLTAGE_COLUMN, "as_declared")
+    )
+    declarations.extend(
+        (probe, probe.column, "into_load" if probe.column == plan.load_current_column else "as_declared")
+        for probe in plan.ac
+    )
     channels: dict[str, dict[str, Any]] = {}
     for probe, ac_name, direction in declarations:
         columns: dict[str, list[str]] = {}
@@ -207,6 +234,6 @@ def signal_catalog(
         "signals": channels,
         "drive_basis": measurement.get("drive_basis", "declared_or_imported"),
         "load_ports": dict(ports),
-        "load_reference_plane": measurement.get("load_reference_plane", "load_ports"),
-        "impedance_reference_plane": "source_port",
+        "load_reference_plane": load_plane_label(measurement.get("load_reference_plane")),
+        "impedance_reference_plane": "source_port" if plan.source_name is not None else None,
     }

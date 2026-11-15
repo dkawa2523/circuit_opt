@@ -1,8 +1,7 @@
 """Pure circuit measurements and explicit case constraints.
 
-Simulation owns waveforms and AC sweeps.  This module reads those immutable
-artifacts and returns numbers; it never writes a second metrics file and never
-adds constraint penalties to an objective.
+Simulation supplies canonical waveforms and AC sweeps. Measurements and
+engineering constraints consume those observations as separate operations.
 """
 
 from __future__ import annotations
@@ -10,39 +9,42 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping
 from copy import deepcopy
-from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pandas as pd
 
-from .analysis.ac import DEFAULT_Z0
+from .analysis.ac import reference_impedance_ohm
 from .analysis.measurements import ac_operating_metrics, periodic_operating_metrics
 from .analysis.transient import rf_measurement_options
 from .case import Case, resolve_path
 from .component_models import observed_components
 from .core.models import ConstraintResult, EvaluationRequest, MeasurementUnavailableError, MetricSet, RawResult
 from .inputs import reject_unknown
+from .metric_registry import MetricFunction, load_plugins, register
 from .metric_registry import get as get_metric
-from .metric_registry import load_plugins, register
-from .records import load_simulation_result, read_sim_record
+from .signals.series import clean_series, interpolate_sides, interval_observed, ordered_samples
 from .simulation import SimulationResult
 from .simulation_input import build_probe_plan
+from .sources import ac_port_issue, ac_power_balance_issue, transient_power_balance_issue
 from .spice import ac_operating_frequency_hz, fundamental_hz
 from .tables import read_csv_rows
 
 
-def validate_metric_settings(case: Case) -> None:
+def resolve_objective_metric(case: Case) -> tuple[str, MetricFunction]:
+    """Resolve the same case-scoped objective for planning and measurement."""
     target = case.data.get("target") or {}
     name = str(target.get("objective", "waveform_l2"))
     fields = {
         "waveform_l2": {"waveform_file"},
         "impedance_match": set(),
-        "terminal_vi_fit": {"impedance_scale_ohm"},
+        "terminal_vi_fit": {"impedance_scale_ohm", "observation_frequency_parameter"},
         "rf_load": set(),
     }
     if name in fields:
         reject_unknown(target, {"objective", "constraints", "fundamental_Hz"} | fields[name], f"target {name}")
+    paths = load_plugins(case.data.get("plugins"), case.base_dir)
+    return name, get_metric(name, plugins=paths)
 
 
 def load_target_waveform(case: Case) -> pd.DataFrame:
@@ -67,40 +69,30 @@ def interpolate_to_target(target: pd.DataFrame, waveform: pd.DataFrame) -> tuple
         return target_time, target_voltage, np.asarray([], dtype=float)
     if waveform.empty or "time_s" not in waveform or "voltage_V" not in waveform:
         return target_time, target_voltage, np.full_like(target_time, np.nan, dtype=float)
-    time_s, voltage = _clean_time_value(waveform, "time_s", "voltage_V")
+    time_s = pd.to_numeric(waveform["time_s"], errors="coerce").to_numpy(float)
+    voltage = pd.to_numeric(waveform["voltage_V"], errors="coerce").to_numpy(float)
+    finite = np.isfinite(time_s) & np.isfinite(voltage)
+    time_s, voltage = ordered_samples(time_s[finite], voltage[finite])
     if len(time_s) == 0:
         return target_time, target_voltage, np.full_like(target_time, np.nan, dtype=float)
     aligned = np.full_like(target_time, np.nan, dtype=float)
     scale = max(abs(float(time_s[0])), abs(float(time_s[-1])), np.finfo(float).tiny)
     tolerance = 64.0 * np.finfo(float).eps * scale
     covered = (target_time >= time_s[0] - tolerance) & (target_time <= time_s[-1] + tolerance)
-    aligned[covered] = np.interp(np.clip(target_time[covered], time_s[0], time_s[-1]), time_s, voltage)
+    left, right = interpolate_sides(time_s, voltage, target_time[covered])
+    # A point target has no event-side annotation. Preserve the midpoint only
+    # at exact ties; the adjoining intervals retain their own observed limits.
+    aligned[covered] = 0.5 * left + 0.5 * right
     return target_time, target_voltage, np.asarray(aligned, dtype=float)
 
 
 def _clean_time_value(frame: pd.DataFrame, time_col: str, value_col: str) -> tuple[np.ndarray, np.ndarray]:
     if time_col not in frame.columns or value_col not in frame.columns:
         return np.asarray([], dtype=float), np.asarray([], dtype=float)
-    clean = pd.DataFrame(
-        {
-            "time": pd.to_numeric(frame[time_col], errors="coerce"),
-            "value": pd.to_numeric(frame[value_col], errors="coerce"),
-        }
-    )
-    finite = np.isfinite(clean["time"].to_numpy(float)) & np.isfinite(clean["value"].to_numpy(float))
-    clean = clean.loc[finite]
-    if clean.empty:
-        return np.asarray([], dtype=float), np.asarray([], dtype=float)
-    clean = clean.groupby("time", as_index=False, sort=True)["value"].mean()
-    return clean["time"].to_numpy(float), clean["value"].to_numpy(float)
-
-
-def _peak_voltage(waveform: pd.DataFrame) -> float | None:
-    if waveform.empty or "voltage_V" not in waveform:
-        return None
-    voltage = np.asarray(pd.to_numeric(waveform["voltage_V"], errors="coerce"), dtype=float)
-    finite = voltage[np.isfinite(voltage)]
-    return float(np.max(np.abs(finite))) if len(finite) else None
+    time = pd.to_numeric(frame[time_col], errors="coerce").to_numpy(float)
+    values = pd.to_numeric(frame[value_col], errors="coerce").to_numpy(float)
+    clean_time, clean_values = clean_series(time, values)
+    return clean_time, clean_values
 
 
 @register("waveform_l2")
@@ -108,11 +100,13 @@ def waveform_l2(case: Case, params: dict[str, Any], response: SimulationResult) 
     del params
     waveform = response.as_frame()
     target = load_target_waveform(case)
-    _time, target_voltage, voltage = interpolate_to_target(target, waveform)
-    if len(voltage) == 0 or np.isnan(voltage).all():
-        raise ValueError("waveform is empty or has no finite voltage samples")
-    if np.isnan(voltage).any():
-        raise ValueError("waveform time range does not cover the target waveform")
+    time, target_voltage, voltage = interpolate_to_target(target, waveform)
+    if waveform.empty or "voltage_V" not in waveform or np.isnan(voltage).all():
+        raise MeasurementUnavailableError("waveform is empty or has no finite voltage samples")
+    if np.isnan(voltage).any() or not interval_observed(
+        waveform["time_s"].to_numpy(float), waveform["voltage_V"].to_numpy(float), time[0], time[-1]
+    ):
+        raise MeasurementUnavailableError("observed waveform does not cover the target interval without gaps")
     reference = float(np.sqrt(np.mean(target_voltage**2)) + 1e-12)
     rmse = float(np.sqrt(np.mean((voltage - target_voltage) ** 2)))
     normalized = rmse / reference
@@ -127,26 +121,43 @@ def waveform_l2(case: Case, params: dict[str, Any], response: SimulationResult) 
 @register("impedance_match")
 def impedance_match(case: Case, params: dict[str, Any], response: SimulationResult) -> dict[str, Any]:
     metrics = _terminal_impedance_metrics(case, params, response)
-    reflection = float(metrics["reflection_magnitude"])
-    return {"loss": reflection, "objective": "impedance_match", **metrics}
+    if reason := metrics.get("reflection_magnitude_unavailable_reason"):
+        metrics["loss_unavailable_reason"] = reason
+    return {"loss": metrics["reflection_magnitude"], "objective": "impedance_match", **metrics}
 
 
 def _terminal_impedance_metrics(
     case: Case,
     params: dict[str, Any],
     response: SimulationResult,
+    *,
+    frequency_hz: float | None = None,
 ) -> dict[str, Any]:
     """Measure the complex impedance seen at the calibrated source plane."""
 
     frequency_response = response.frequency_response
     if frequency_response is None:
         raise ValueError("no frequency response; set solver.ac in the case")
-    reference = float((case.data.get("measurement", {}) or {}).get("reference_impedance_ohm", DEFAULT_Z0))
-    target_frequency = ac_operating_frequency_hz(case, params)
+    reference = reference_impedance_ohm(case.data.get("measurement"))
+    target_frequency = ac_operating_frequency_hz(case, params) if frequency_hz is None else frequency_hz
     probes = build_probe_plan(case)
+    ac = (case.data.get("solver") or {}).get("ac") or {}
+    source_scope = response.diagnostics.get("source_scope")
+    reason = ac_port_issue(case, probes.source_name, ac.get("source"), source_scope=source_scope)
+    if reason:
+        raise MeasurementUnavailableError(reason)
     metrics = ac_operating_metrics(
-        frequency_response, target_frequency, reference, probes.load_current_column, observed_components(case, params)
+        frequency_response,
+        target_frequency,
+        reference,
+        response.diagnostics.get("load_current_column", probes.load_current_column),
+        observed_components(case, params),
+        require_simulated=True,
+        power_balance_unavailable_reason=ac_power_balance_issue(source_scope),
     )
+    if load_issue := response.diagnostics.get("load_power_unavailable_reason"):
+        metrics["load_real_power_W"] = None
+        metrics["load_real_power_W_unavailable_reason"] = load_issue
     metrics["match_frequency_Hz"] = metrics.pop("frequency_Hz")
     return metrics
 
@@ -155,9 +166,13 @@ def _terminal_impedance_metrics(
 def terminal_vi_fit(case: Case, params: dict[str, Any], response: SimulationResult) -> dict[str, Any]:
     """Fit source-plane impedance derived from a measured complex V/I pair."""
 
-    target_impedance = _target_impedance(params)
+    target_impedance = terminal_observation_impedance(params)
     scale = _target_impedance_scale(case)
-    metrics = _terminal_impedance_metrics(case, params, response)
+    frequency_parameter = terminal_observation_frequency_parameter(case)
+    observed_frequency = (
+        terminal_observation_frequency_hz(frequency_parameter, params) if frequency_parameter is not None else None
+    )
+    metrics = _terminal_impedance_metrics(case, params, response, frequency_hz=observed_frequency)
     if metrics.get("resistance_ohm") is None or metrics.get("reactance_ohm") is None:
         raise MeasurementUnavailableError(
             "terminal_vi_fit requires finite predicted impedance; the solved port is open or undefined"
@@ -175,6 +190,7 @@ def terminal_vi_fit(case: Case, params: dict[str, Any], response: SimulationResu
         "residual_reactance_ohm": reactance_error,
         "normalized_residual_resistance": resistance_error / scale,
         "normalized_residual_reactance": reactance_error / scale,
+        **({"observed_frequency_Hz": observed_frequency} if observed_frequency is not None else {}),
         **metrics,
     }
 
@@ -187,7 +203,41 @@ TERMINAL_VI_PARAMETERS = (
 )
 
 
-def _target_impedance(params: Mapping[str, Any]) -> complex:
+def terminal_observation_frequency_parameter(case: Case) -> str | None:
+    """Resolve the explicit binding or the conventional frequency of old observation rows."""
+
+    name = (case.data.get("target") or {}).get("observation_frequency_parameter")
+    if name is not None:
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("target.observation_frequency_parameter must name an operating parameter")
+        return name
+    study = case.data.get("study") or {}
+    column_map = (study.get("scenario_table") or {}).get("values") or {}
+    if "frequency_Hz" in column_map or any(
+        "frequency_Hz" in (row.get("values") or {}) for row in study.get("scenarios") or ()
+    ):
+        return "frequency_Hz"
+    return None
+
+
+def terminal_observation_frequency_hz(name: str, params: Mapping[str, Any]) -> float:
+    """Read a finite observation frequency from the supplied row values."""
+
+    if name not in params:
+        raise ValueError(f"terminal_vi_fit requires explicit observation frequency {name!r}")
+    raw = params[name]
+    try:
+        value = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"observation frequency {name!r} must be numeric") from exc
+    if isinstance(raw, bool) or not math.isfinite(value) or value <= 0:
+        raise ValueError(f"observation frequency {name!r} must be positive and finite")
+    return value
+
+
+def terminal_observation_impedance(params: Mapping[str, Any]) -> complex:
+    """Validate an observed peak-phasor pair and return its impedance."""
+
     try:
         values = {name: float(params[name]) for name in TERMINAL_VI_PARAMETERS}
     except KeyError as exc:
@@ -201,7 +251,10 @@ def _target_impedance(params: Mapping[str, Any]) -> complex:
     target_current = complex(values["target_current_re_A"], values["target_current_im_A"])
     if abs(target_current) <= 1e-30:
         raise ValueError("terminal_vi_fit target delivered current must be nonzero")
-    return target_voltage / target_current
+    impedance = target_voltage / target_current
+    if not math.isfinite(impedance.real) or not math.isfinite(impedance.imag):
+        raise ValueError("terminal_vi_fit target impedance must be finite")
+    return impedance
 
 
 def _target_impedance_scale(case: Case) -> float:
@@ -225,12 +278,23 @@ def rf_load(case: Case, params: dict[str, Any], response: SimulationResult) -> d
     frequency = fundamental_hz(case, params)
     options = rf_measurement_options(case.data.get("measurement"))
     probes = build_probe_plan(case)
-    if not probes.load_current_column:
+    load_current = response.diagnostics.get("load_current_column", probes.load_current_column)
+    if not load_current:
+        if reason := response.diagnostics.get("load_power_unavailable_reason"):
+            raise MeasurementUnavailableError(reason)
         raise ValueError("RF-port metrics require measurement.load_current")
+    source_scope = response.diagnostics.get("source_scope")
+    balance_issue = transient_power_balance_issue(case, probes.source_name, source_scope=source_scope)
     values = periodic_operating_metrics(
-        waveform, frequency, probes.load_current_column, observed_components(case, params), options
+        waveform,
+        frequency,
+        load_current,
+        observed_components(case, params),
+        options,
+        power_balance_unavailable_reason=balance_issue,
+        source_port_unavailable_reason=source_scope.get("transient_port_unavailable_reason") if source_scope else None,
     )
-    return {"objective": "rf_load", **values}
+    return {"objective": "rf_load", "observed_source": probes.source_name, **values}
 
 
 def _detached_response(response: SimulationResult) -> SimulationResult:
@@ -255,16 +319,17 @@ def measure_response(
 ) -> dict[str, Any]:
     """Measure one canonical solver response without reading or writing artifacts."""
 
-    validate_metric_settings(case)
-    load_plugins(case.data.get("plugins"), case.base_dir)
     if response.status != "ok":
         raise ValueError(f"cannot measure simulation response with status {response.status!r}")
-    metric_name = str((case.data.get("target", {}) or {}).get("objective", "waveform_l2"))
+    time, voltage = np.asarray(response.time_s, dtype=float), np.asarray(response.voltage_V, dtype=float)
+    if time.ndim != 1 or time.shape != voltage.shape:
+        raise ValueError("canonical waveform time and voltage must be aligned one-dimensional arrays")
+    metric_name, metric = resolve_objective_metric(case)
     detached = _detached_response(response)
-    values = dict(get_metric(metric_name)(case.detached(), deepcopy(params or {}), detached))
+    values = dict(metric(case.detached(), deepcopy(params or {}), detached))
     if not values:
         raise ValueError(f"metric '{metric_name}' returned no values")
-    if "loss" in values:
+    if values.get("loss") is not None:
         try:
             loss = float(values["loss"])
         except (TypeError, ValueError) as exc:
@@ -272,19 +337,14 @@ def measure_response(
         if not math.isfinite(loss):
             raise ValueError(f"metric '{metric_name}' returned a non-finite loss")
         values["loss"] = loss
-    peak = _peak_voltage(detached.as_frame())
-    if peak is not None:
-        values.setdefault("peak_abs_voltage_V", peak)
+    if time.size:
+        observed = np.isfinite(time).all() and np.isfinite(voltage).all()
+        values["peak_abs_voltage_V"] = float(np.max(np.abs(voltage))) if observed else None
+        if not observed:
+            values["peak_abs_voltage_V_unavailable_reason"] = (
+                "finite time and voltage are required for the full waveform"
+            )
     return values
-
-
-def measure_record(case: Case, record_or_path: dict[str, Any] | str | Path) -> dict[str, Any]:
-    """Restore and measure one successful saved simulation response."""
-
-    record = read_sim_record(record_or_path)
-    if record.get("status") != "ok":
-        raise ValueError(f"cannot measure simulation record with status {record.get('status')!r}")
-    return measure_response(case, load_simulation_result(record), dict(record.get("params") or {}))
 
 
 class MetricLimitConstraint:
@@ -315,6 +375,7 @@ class MetricLimitConstraint:
                 violation=1.0,
                 limit=self.limit,
                 detail=f"metric {self.metric!r} is unavailable or non-finite" + (f": {reason}" if reason else ""),
+                evidence_available=False,
             )
 
         distance = max(0.0, value - self.limit) if self.bound == "max" else max(0.0, self.limit - value)

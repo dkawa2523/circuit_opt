@@ -9,6 +9,7 @@ from typing import Any
 import numpy as np
 
 from .case import Case
+from .simulation import AcSweep
 
 _PLAIN_NAME = re.compile(r"^[A-Za-z_]\w*$")
 _SPICE_NUMBER = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?[A-Za-z]*$")
@@ -93,19 +94,25 @@ def fundamental_hz(case: Case, params: dict[str, Any] | None = None) -> float:
 
 
 def ac_operating_frequency_hz(case: Case, params: dict[str, Any]) -> float:
-    """The declared target point, or the explicit single-point AC request."""
+    """Resolve the operating point required by a pointwise AC objective."""
 
-    if "fundamental_Hz" in (case.data.get("target") or {}):
-        return fundamental_hz(case, params)
-    ac = (case.data.get("solver") or {}).get("ac") or {}
-    if "frequency_Hz" in ac:
-        value = float(resolve_value(ac["frequency_Hz"], params))
-        if not math.isfinite(value) or value <= 0:
-            raise ValueError("solver.ac.frequency_Hz must be positive and finite")
-        return value
-    if ac.get("start_Hz") == ac.get("stop_Hz") and "start_Hz" in ac:
-        return float(resolve_value(ac["start_Hz"], params))
-    return fundamental_hz(case, params)
+    frequency = ac_reference_frequency_hz(case, params)
+    if frequency is None:
+        raise ValueError(
+            "an AC operating frequency is required; use a single-point AC request or declare a fundamental"
+        )
+    return frequency
+
+
+def ac_reference_frequency_hz(case: Case, params: dict[str, Any]) -> float | None:
+    """Use the explicit AC point, or a declared fundamental as a sweep marker."""
+
+    config = (case.data.get("solver") or {}).get("ac")
+    if config is not None:
+        ac = AcSweep.from_config(config, params)
+        if ac.start_hz == ac.stop_hz:
+            return ac.start_hz
+    return periodic_frequency_hz(case, params)
 
 
 def pick_value(cfg: dict[str, Any], key: str, params: dict[str, Any], default: Any) -> Any:

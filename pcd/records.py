@@ -6,6 +6,9 @@ small, stable read boundary used by metrics and downstream analysis.
 
 from __future__ import annotations
 
+import hashlib
+import json
+import re
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -13,9 +16,9 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from .artifacts import read_json
+from .artifacts import evidence_digest, resolve_artifact_path
 from .ngspice_io import read_frequency_response
-from .simulation import CURRENT_COLUMN, TIME_COLUMN, VOLTAGE_COLUMN, SimulationResult
+from .simulation import CURRENT_COLUMN, LOAD_CURRENT_COLUMN, TIME_COLUMN, VOLTAGE_COLUMN, SimulationResult
 
 _DEBUG_MANIFEST = Path("debug/manifest.json")
 
@@ -25,36 +28,71 @@ def read_sim_record(record_or_path: dict[str, Any] | str | Path) -> dict[str, An
         rec = dict(record_or_path)
         if rec.get("schema") == "simulation_summary.v1":
             run_dir = Path(str(rec.get("run_dir", ".")))
-            declared = (rec.get("artifacts") or {}).get("debug_manifest", _DEBUG_MANIFEST.as_posix())
-            rec = _read_manifest(run_dir / str(declared))
+            rec = _summary_manifest(rec, run_dir)
     else:
         path = Path(record_or_path)
         if path.is_dir():
-            path = path / _DEBUG_MANIFEST
-        path = path.resolve()
-        rec = _read_record_file(path)
+            manifest, summary = path / _DEBUG_MANIFEST, path / "summary.json"
+            path = summary if not manifest.is_file() and summary.is_file() else manifest
+        rec = _read_record_file(path.resolve())
     if "run_dir" not in rec and (manifest := rec.get("manifest_path")):
         rec["run_dir"] = str(Path(manifest).parent.parent)
     return rec
 
 
 def _read_record_file(path: Path) -> dict[str, Any]:
-    payload = read_json(path)
+    data = path.read_bytes()
+    payload = _read_record_object(path, data)
     if payload.get("schema") == "simulation_summary.v1":
-        declared = (payload.get("artifacts") or {}).get("debug_manifest", _DEBUG_MANIFEST.as_posix())
-        manifest = Path(str(declared))
-        path = manifest if manifest.is_absolute() else path.parent / manifest
-    return _read_manifest(path)
+        return _summary_manifest(payload, path.parent)
+    run_dir = path.parent.parent
+    summary = run_dir / "summary.json"
+    verified = summary.is_file() and _verified_manifest(_read_record_object(summary), path, data)
+    return _located_manifest(payload, path, run_dir, verified)
 
 
-def _read_manifest(path: Path) -> dict[str, Any]:
-    path = path.resolve()
-    rec = read_json(path)
+def _summary_manifest(summary: dict[str, Any], run_dir: Path) -> dict[str, Any]:
+    declared = _artifact_links(summary).get("debug_manifest", _DEBUG_MANIFEST.as_posix())
+    if not isinstance(declared, str) or not declared.strip():
+        raise ValueError("simulation summary must declare a valid debug manifest path")
+    manifest = resolve_artifact_path(run_dir, declared).resolve()
+    data = manifest.read_bytes()
+    payload = _read_record_object(manifest, data)
+    return _located_manifest(payload, manifest, run_dir.resolve(), _verified_manifest(summary, manifest, data))
+
+
+def _verified_manifest(summary: dict[str, Any], manifest: Path, data: bytes) -> bool:
+    if "debug_manifest_sha256" not in summary:
+        return False
+    if hashlib.sha256(data).hexdigest() != summary["debug_manifest_sha256"]:
+        raise ValueError(f"saved simulation manifest differs from its public summary: {manifest}")
+    return True
+
+
+def _read_record_object(path: Path, data: bytes | None = None) -> dict[str, Any]:
+    payload = json.loads(path.read_bytes() if data is None else data)
+    if not isinstance(payload, dict):
+        raise ValueError(f"simulation record must be a JSON object: {path}")
+    return payload
+
+
+def _located_manifest(rec: dict[str, Any], path: Path, run_dir: Path, verified: bool) -> dict[str, Any]:
     rec["manifest_path"] = str(path)
-    # The manifest location is authoritative after a run is copied or moved;
-    # an embedded original absolute run_dir is only provenance.
-    rec["run_dir"] = str(path.parent.parent)
+    rec.pop("manifest_sha256_verified", None)
+    if verified:
+        rec["manifest_sha256_verified"] = True
+    # Use the record location when a run was copied or moved.
+    rec["run_dir"] = str(run_dir)
     return rec
+
+
+def _artifact_links(record: dict[str, Any]) -> dict[str, Any]:
+    links = record.get("artifacts")
+    if links is None:
+        return {}
+    if not isinstance(links, dict):
+        raise ValueError("simulation record artifacts must be a JSON object")
+    return links
 
 
 def artifact_path(
@@ -64,11 +102,10 @@ def artifact_path(
     """Resolve one artifact declared by a simulation-record manifest."""
 
     rec = read_sim_record(record_or_path)
-    declared = (rec.get("artifacts") or {}).get(name)
+    declared = _artifact_links(rec).get(name)
     if not isinstance(declared, str) or not declared.strip():
         return None
-    path = Path(declared)
-    return path if path.is_absolute() else Path(rec["run_dir"]) / path
+    return resolve_artifact_path(Path(rec["run_dir"]), declared)
 
 
 def waveform_path(record: dict[str, Any] | str | Path) -> Path:
@@ -111,26 +148,55 @@ def load_frequency_response(
     return read_frequency_response(path, extra_columns)
 
 
-def load_simulation_result(record_or_path: dict[str, Any] | str | Path) -> SimulationResult:
+def load_simulation_result(
+    record_or_path: dict[str, Any] | str | Path, *, ac_columns: Sequence[str] | None = None
+) -> SimulationResult:
     """Restore the canonical in-memory solver response from saved artifacts."""
 
     record = read_sim_record(record_or_path)
     numeric = _numeric_waveform(load_waveform(record))
-    frequency = load_frequency_response(record) if frequency_response_path(record) is not None else None
+    ac_path = frequency_response_path(record)
     return SimulationResult(
         time_s=numeric[TIME_COLUMN],
         voltage_V=numeric[VOLTAGE_COLUMN],
         current_A=_available_current(numeric.get(CURRENT_COLUMN)),
         status=str(record.get("status", "failed")),
         log=_solver_log(record),
-        diagnostics=dict(record.get("diagnostics") or {}),
-        frequency_response=frequency,
+        diagnostics=_observation_diagnostics(record),
+        frequency_response=read_frequency_response(ac_path, ac_columns) if ac_path is not None else None,
         probes={
             name: values
             for name, values in numeric.items()
             if name not in {TIME_COLUMN, VOLTAGE_COLUMN, CURRENT_COLUMN}
         },
     )
+
+
+def _observation_diagnostics(record: dict[str, Any]) -> dict[str, Any]:
+    diagnostics = dict(record.get("diagnostics") or {})
+    if "load_current_column" in diagnostics:
+        return diagnostics
+    column = (record.get("measurement") or {}).get("load_current")
+    if not column:
+        return diagnostics
+    if column != LOAD_CURRENT_COLUMN and record.get("load") not in {None, "none"}:
+        path = artifact_path(record, "netlist")
+        if path is not None and path.is_file():
+            evidence_digest(record, "netlist", path)
+            # The compiler emits this top-level instance only for an attached load.
+            attached = (
+                re.search(r"(?im)^Xload[ \t]+\S+[ \t]+\S+[ \t]+load_model[ \t]*$", path.read_text(encoding="utf-8"))
+                is not None
+            )
+        else:
+            attached = True
+        if attached:
+            diagnostics["load_power_unavailable_reason"] = (
+                "the saved run did not observe the attached load's own current; rerun to measure it"
+            )
+            column = None
+    diagnostics["load_current_column"] = column
+    return diagnostics
 
 
 def _numeric_waveform(waveform: pd.DataFrame) -> dict[str, np.ndarray]:

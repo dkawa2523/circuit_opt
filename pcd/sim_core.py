@@ -13,7 +13,11 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
+import tempfile
 import time
+from collections.abc import Callable
+from contextlib import ExitStack
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -23,6 +27,7 @@ from . import __version__
 from .artifacts import (
     archive_data_files,
     atomic_write_text,
+    capture_evidence,
     create_run_directory,
     file_sha256,
     package_source_sha256,
@@ -32,10 +37,11 @@ from .artifacts import (
     write_json,
     yaml_dump,
 )
-from .case import Case, case_warnings, fill_default_params, resolve_path
-from .netlist import Circuit, NetlistInputs, build_netlist_inputs, render_ngspice_netlist
+from .case import Case, fill_default_params, resolve_path
+from .netlist import NetlistInputs, compile_netlist
 from .netlist_import import flatten_netlist_file
 from .probes import signal_catalog
+from .registry import declared_plugin_paths, loaded_plugin_digest
 from .sim_registry import invoke_solver
 from .simulation import AC_ARTIFACT, AC_FILE, TRANSIENT_ARTIFACT, WAVEFORM_FILE, SimulationResult
 from .simulation_input import (
@@ -44,20 +50,8 @@ from .simulation_input import (
     SolverSettings,
     resolve_simulation_case,
 )
-from .solver import solver_identity
-
-# Re-exported so plugins and callers have one import for the simulation layer.
-__all__ = [
-    "Circuit",
-    "SimRecord",
-    "SimulationResult",
-    "SimulationRun",
-    "archive_case_bundle",
-    "archive_case_definition",
-    "execute_case",
-    "prepare_case",
-    "simulate_case",
-]
+from .solver import bind_solver_settings, solver_identity
+from .sources import rendered_source_scope
 
 SUMMARY_FILE = "summary.json"
 DEBUG_MANIFEST_FILE = "debug/manifest.json"
@@ -91,6 +85,7 @@ class SimRecord:
     case_files: dict[str, str] = field(default_factory=dict)
     signals_file: str = "data/signals.json"
     output_result: dict[str, Any] | None = None
+    artifact_sha256: dict[str, str] | None = None
 
     def summary(self) -> dict[str, Any]:
         """Return the small result a simulation user should read first."""
@@ -143,6 +138,7 @@ class SimRecord:
             "error": self.error,
             "diagnostics": self.diagnostics,
             "provenance": self.provenance,
+            **({"artifact_sha256": self.artifact_sha256} if self.artifact_sha256 is not None else {}),
             **({"output": self.output_result} if self.output_result is not None else {}),
         }
 
@@ -167,19 +163,21 @@ def _digest(obj: Any) -> str:
 
 def _plugin_provenance(case: Case) -> list[dict[str, Any]]:
     out = []
-    for raw in case.data.get("plugins") or []:
-        path = Path(raw)
-        path = (path if path.is_absolute() else case.base_dir / path).resolve()
-        out.append({"path": str(path), "sha256": file_sha256(path), "exists": path.exists()})
+    for path in declared_plugin_paths(case.data.get("plugins"), case.base_dir):
+        out.append(
+            {"path": str(path), "sha256": loaded_plugin_digest(path) or file_sha256(path), "exists": path.exists()}
+        )
     return out
 
 
-def _build_provenance(case: Case, params: dict[str, Any], settings: SolverSettings) -> dict[str, Any]:
+def _build_provenance(
+    case: Case, params: dict[str, Any], settings: SolverSettings, source_path: Path | None = None
+) -> dict[str, Any]:
     provenance = {
         "platform_version": __version__,
         "implementation_sha256": package_source_sha256(),
         "environment": runtime_environment(),
-        "case_path": str(case.path),
+        "case_path": str(source_path or case.path),
         "case_data_sha256": _digest(case.data),
         "params_sha256": _digest(params),
         "plugins": _plugin_provenance(case),
@@ -221,11 +219,14 @@ def archive_case_bundle(case: Case, directory: str | Path) -> tuple[Case, dict[s
     root.mkdir(parents=True, exist_ok=True)
     flattened_netlist: str | None = None
     netlist_dependencies: tuple[Path, ...] = ()
+    captured: dict[Path, bytes] = {}
     circuit_cfg = case.data.get("circuit")
     if isinstance(circuit_cfg, dict) and isinstance(circuit_cfg.get("netlist_file"), str):
         source_netlist = resolve_path(case, circuit_cfg["netlist_file"]).resolve()
         if source_netlist.is_file():
-            flattened_netlist, netlist_dependencies = flatten_netlist_file(source_netlist)
+            flattened_netlist, netlist_dependencies = flatten_netlist_file(
+                source_netlist, mode=circuit_cfg.get("netlist_mode", "fragment"), captured=captured
+            )
     dependency_references = [
         (f"$.circuit.netlist_file.dependencies[{index}]", path) for index, path in enumerate(netlist_dependencies)
     ]
@@ -234,8 +235,10 @@ def archive_case_bundle(case: Case, directory: str | Path) -> tuple[Case, dict[s
         case.base_dir,
         root,
         extra_references=dependency_references,
+        captured=captured,
     )
     archived_data = rewrite_data_file_paths(case.data, case.base_dir, replacements)
+    archived_data.setdefault("case_id", case.case_id)
     if flattened_netlist is not None:
         bundled_name = "imported_netlist.cir"
         atomic_write_text(root / bundled_name, flattened_netlist)
@@ -262,6 +265,7 @@ def archive_case_bundle(case: Case, directory: str | Path) -> tuple[Case, dict[s
         # resolved plan point to the immutable bundled data.
         (root / "input_case.yaml").write_text(yaml_dump(case.authored_data), encoding="utf-8")
         archived_plan = rewrite_data_file_paths(case.resolved_plan or {}, case.base_dir, replacements)
+        archived_plan["case"] = deepcopy(archived_data)
         (root / "resolved_plan.yaml").write_text(yaml_dump(archived_plan), encoding="utf-8")
         files.update({"input_case": "input_case.yaml", "resolved_plan": "resolved_plan.yaml"})
     snapshot = Case(
@@ -271,13 +275,6 @@ def archive_case_bundle(case: Case, directory: str | Path) -> tuple[Case, dict[s
         resolved_plan=archived_plan,
     )
     return snapshot, files
-
-
-def archive_case_definition(case: Case, directory: str | Path) -> dict[str, str]:
-    """Persist the executable case, authored input, and referenced data."""
-
-    _snapshot, files = archive_case_bundle(case, directory)
-    return files
 
 
 def _shared_case_files(run_dir: Path, bundle_root: str | Path) -> dict[str, str]:
@@ -306,11 +303,44 @@ def prepare_case(
 ) -> SimRecord:
     """Write every artifact for a run without executing a solver."""
 
-    full_params = fill_default_params(case, params)
-    simulation = resolve_simulation_case(case, full_params, solver_name)
-    netlist_inputs = build_netlist_inputs(case, full_params)
-    run_dir = _make_run_dir(_run_root(case, run_root), run_id, full_params)
-    return _prepare_case_in_dir(case, full_params, run_dir, simulation, netlist_inputs, case_archive_root)
+    record, _simulation = _prepare_run(case, params, run_root, run_id, solver_name, case_archive_root)
+    return record
+
+
+def _prepare_run(
+    case: Case,
+    params: dict[str, Any] | None,
+    run_root: str | Path | None,
+    run_id: str | None,
+    solver_name: str | None,
+    case_archive_root: str | Path | None,
+    solver_settings: SolverSettings | None = None,
+    select_inputs: Callable[[Case], dict[str, Any]] | None = None,
+) -> tuple[SimRecord, ResolvedSimulationCase]:
+    root = _run_root(case, run_root)
+    with ExitStack() as stack:
+        snapshot, files = case, {}
+        staging = None
+        if case_archive_root is None:
+            # Stage replay bytes before reading source ports, models or profiles.
+            # Invalid input leaves the requested run root untouched.
+            staging = stack.enter_context(tempfile.TemporaryDirectory(prefix="pcd-case-"))
+            snapshot, files = archive_case_bundle(case, staging)
+        full_params = select_inputs(snapshot) if select_inputs is not None else fill_default_params(snapshot, params)
+        simulation = resolve_simulation_case(snapshot, full_params, solver_name)
+        netlist_inputs, simulation, netlist = compile_netlist(snapshot, full_params, simulation)
+        simulation = replace(simulation, solver=solver_settings or bind_solver_settings(simulation.solver))
+        run_dir = _make_run_dir(root, run_id, full_params)
+        if staging is not None:
+            shutil.copytree(staging, run_dir / "debug")
+            snapshot = replace(snapshot, path=run_dir / "debug" / files["case"])
+            files = _debug_case_files(files)
+        elif case_archive_root is not None:
+            files = _shared_case_files(run_dir, case_archive_root)
+    record = _prepare_case_in_dir(
+        snapshot, full_params, run_dir, simulation, netlist_inputs, netlist, files, source_path=case.path
+    )
+    return record, simulation
 
 
 def _prepare_case_in_dir(
@@ -319,7 +349,10 @@ def _prepare_case_in_dir(
     run_dir: Path,
     simulation: ResolvedSimulationCase,
     netlist_inputs: NetlistInputs,
-    case_archive_root: str | Path | None,
+    netlist: str,
+    case_files: dict[str, str],
+    *,
+    source_path: Path | None = None,
 ) -> SimRecord:
     """Prepare one already allocated run directory."""
 
@@ -328,19 +361,23 @@ def _prepare_case_in_dir(
     (run_dir / "debug").mkdir(exist_ok=True)
 
     circuit = netlist_inputs.circuit
-    netlist = render_ngspice_netlist(case, circuit, netlist_inputs.load_subckt, full_params, simulation)
 
-    case_files = (
-        _debug_case_files(archive_case_definition(case, run_dir / "debug"))
-        if case_archive_root is None
-        else _shared_case_files(run_dir, case_archive_root)
-    )
     (run_dir / NETLIST_ARTIFACT).write_text(netlist, encoding="utf-8")
     (run_dir / SOLVER_LOG_ARTIFACT).write_text("prepared only; solver was not executed\n", encoding="utf-8")
 
     probes = simulation.probes
     measurement = simulation.measurement
     solver = simulation.solver.name
+    diagnostics: dict[str, Any] = {}
+    if probes.load_current_column is not None:
+        diagnostics["load_current_column"] = probes.load_current_column
+    if solver == "ngspice_cli":
+        diagnostics["source_scope"] = rendered_source_scope(
+            netlist,
+            probes.source_name,
+            observed_voltage=probes.source_voltage_vector,
+            observed_current=probes.source_current,
+        )
     record = SimRecord(
         run_dir=run_dir,
         case_id=case.case_id,
@@ -354,7 +391,7 @@ def _prepare_case_in_dir(
             "voltage_node": measurement.voltage_node or circuit.output_node,
             "current_source": probes.source_name,
             "source_voltage_vector": probes.source_voltage_vector,
-            "source_current_vector": probes.source_current_vector or f"i({probes.source_name})",
+            "source_current_vector": probes.source_current,
             "load_voltage_column": "load_voltage_V",
             "load_ports": {
                 "p": measurement.load_positive or circuit.output_node,
@@ -369,19 +406,20 @@ def _prepare_case_in_dir(
             if probes.load_current_column == "load_current_A"
             else ("user_declared_current_probe" if probes.load_current_column else None),
             "load_reference_plane": measurement.reference_plane,
-            "impedance_reference_plane": "source_port",
+            "impedance_reference_plane": "source_port" if probes.source_name is not None else None,
             "output_voltage_vector": (
                 f"v({measurement.voltage_node})"
                 if measurement.voltage_node is not None
                 else f"v({measurement.load_positive or circuit.output_node},{measurement.load_negative})"
             ),
         },
-        warnings=case_warnings(case) + circuit.warnings(),
-        provenance=_build_provenance(case, full_params, simulation.solver),
+        warnings=circuit.warnings(),
+        diagnostics=diagnostics,
+        provenance=_build_provenance(case, full_params, simulation.solver, source_path),
         case_files=case_files,
     )
     write_json(record.run_dir / record.signals_file, signal_catalog(simulation.probes, record.measurement))
-    _write_record(case, record)
+    write_sim_record(record)
     return record
 
 
@@ -392,6 +430,9 @@ def execute_case(
     solver_override: str | None = None,
     run_id: str | None = None,
     case_archive_root: str | Path | None = None,
+    *,
+    solver_settings: SolverSettings | None = None,
+    select_inputs: Callable[[Case], dict[str, Any]] | None = None,
 ) -> SimulationRun:
     """Resolve, solve, and persist one case through the canonical path.
 
@@ -401,20 +442,14 @@ def execute_case(
     """
 
     start = time.perf_counter()
-    full_params = fill_default_params(case, params)
-    simulation = resolve_simulation_case(case, full_params, solver_override)
-    netlist_inputs = build_netlist_inputs(case, full_params)
-    run_dir = _make_run_dir(_run_root(case, run_root), run_id, full_params)
-    prepared = _prepare_case_in_dir(case, full_params, run_dir, simulation, netlist_inputs, case_archive_root)
+    prepared, simulation = _prepare_run(
+        case, params, run_root, run_id, solver_override, case_archive_root, solver_settings, select_inputs
+    )
     result = _run_solver(prepared, simulation)
-    warnings = list(prepared.warnings)
-    if result.status != "ok":
-        warnings.append(f"solver status: {result.status}")
     final = replace(
         prepared,
         status=result.status,
         solver=simulation.solver.name,
-        warnings=warnings,
         run_seconds=time.perf_counter() - start,
         diagnostics=result.diagnostics,
         error=str(result.diagnostics.get("error") or "solver reported a failure; see debug/solver.log")
@@ -422,33 +457,8 @@ def execute_case(
         else None,
         frequency_response_file=AC_ARTIFACT if result.frequency_response is not None else None,
     )
-    _write_record(case, final)
+    write_sim_record(final)
     return SimulationRun(final, result)
-
-
-def simulate_case(
-    case: Case,
-    params: dict[str, Any] | None = None,
-    run_root: str | Path | None = None,
-    solver_override: str | None = None,
-    run_id: str | None = None,
-    case_archive_root: str | Path | None = None,
-) -> SimRecord:
-    """Run one case and return its persisted record.
-
-    ``execute_case`` is the shared in-memory boundary used by studies and
-    future identification.  This wrapper preserves the small public API used
-    by direct simulation callers.
-    """
-
-    return execute_case(
-        case,
-        params=params,
-        run_root=run_root,
-        solver_override=solver_override,
-        run_id=run_id,
-        case_archive_root=case_archive_root,
-    ).record
 
 
 def _run_solver(record: SimRecord, simulation: ResolvedSimulationCase) -> SimulationResult:
@@ -456,12 +466,13 @@ def _run_solver(record: SimRecord, simulation: ResolvedSimulationCase) -> Simula
         netlist_path=record.run_dir / record.netlist_file,
         run_dir=record.run_dir,
         simulation=simulation,
+        plugin_paths=tuple(Path(item["path"]) for item in record.provenance["plugins"]),
     )
     result = invoke_solver(simulation.solver.name, request)
-    if not isinstance(result, SimulationResult):
-        raise TypeError(f"solver '{simulation.solver.name}' must return SimulationResult")
-    result.validate_for(simulation.analysis)
-    result.as_frame().to_csv(record.run_dir / record.waveform_file, index=False)
+    if record.diagnostics:
+        result = replace(result, diagnostics={**result.diagnostics, **record.diagnostics})
+    waveform = result.as_frame()
+    waveform.to_csv(record.run_dir / record.waveform_file, index=False)
     if result.frequency_response is not None:
         result.frequency_response.to_csv(record.run_dir / AC_ARTIFACT, index=False)
     write_json(
@@ -469,7 +480,7 @@ def _run_solver(record: SimRecord, simulation: ResolvedSimulationCase) -> Simula
         signal_catalog(
             simulation.probes,
             record.measurement,
-            transient_columns=tuple(result.as_frame().columns)
+            transient_columns=tuple(waveform.columns)
             if result.status == "ok" and simulation.analysis.transient is not None
             else (),
             ac_columns=tuple(result.frequency_response.columns)
@@ -482,10 +493,18 @@ def _run_solver(record: SimRecord, simulation: ResolvedSimulationCase) -> Simula
     return result
 
 
-def _write_record(case: Case, record: SimRecord) -> None:
-    del case
-    write_json(record.run_dir / DEBUG_MANIFEST_FILE, record.manifest())
-    write_json(record.run_dir / SUMMARY_FILE, record.summary())
+def write_sim_record(record: SimRecord) -> None:
+    """Persist the manifest and its public summary without replacing prior evidence digests."""
+    if record.status == "ok" and record.artifact_sha256 is None:
+        artifacts = record.manifest()["artifacts"]
+        names = ("case", "waveform", "frequency_response", "netlist", "signals", "input_manifest", "imported_netlist")
+        record.artifact_sha256 = capture_evidence(
+            record.run_dir, {name: artifacts[name] for name in names if name in artifacts}
+        )
+    manifest_path = record.run_dir / DEBUG_MANIFEST_FILE
+    write_json(manifest_path, record.manifest())
+    summary = {**record.summary(), "debug_manifest_sha256": file_sha256(manifest_path)}
+    write_json(record.run_dir / SUMMARY_FILE, summary)
 
 
 def _debug_case_files(files: dict[str, str]) -> dict[str, str]:

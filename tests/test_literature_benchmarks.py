@@ -1,19 +1,42 @@
 from pathlib import Path
 
+import pytest
 import yaml
 
-from bench.literature.p0_lee2021_bias.run import _table_spice_netlist
+from bench.literature.p0_lee2021_bias.run import _table_case
 from bench.literature.p1_colpo1999_icp.digitized.run_uncertainty_challenge import _decision_stability
-from bench.literature.p1_gec_ccp.run_all32_benchmark import run as run_hargis_source
+from bench.literature.p1_gec_ccp import run_all32_benchmark as hargis_source
 from bench.literature.p1_gec_ccp.run_hardware_family_comparison import (
     _candidate_summary,
     _materialize_family_case,
 )
+from bench.literature.p1_lee2020_icp import run_benchmark as lee_equations
+from bench.literature.run_suite import _payload_passed
+from pcd.api import prepare_case
 from pcd.case import load_case
 
 ROOT = Path(__file__).resolve().parents[1]
 GEC = ROOT / "bench" / "literature" / "p1_gec_ccp"
 LEE = ROOT / "bench" / "literature" / "p0_lee2021_bias"
+
+
+def test_literature_suite_requires_boolean_result_fields() -> None:
+    assert _payload_passed({"passed": True})
+    assert not _payload_passed({"passed": "false"})
+    assert not _payload_passed({"benchmark_integrity_passed": False, "passed": True})
+
+
+@pytest.mark.parametrize("benchmark", [hargis_source, lee_equations], ids=["hargis", "lee"])
+def test_literature_cli_requires_ngspice_by_default(benchmark, monkeypatch, capsys, tmp_path):
+    output = tmp_path / "result.json"
+    monkeypatch.setattr(benchmark.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(benchmark.sys, "argv", ["benchmark", "--output", str(output)])
+
+    assert benchmark.main() == 2
+    captured = capsys.readouterr()
+    assert "ngspice" in captured.err
+    assert "PASS" not in captured.out
+    assert not output.exists()
 
 
 def test_hargis_source_runner_checks_committed_views_without_rewriting_them() -> None:
@@ -25,9 +48,11 @@ def test_hargis_source_runner_checks_committed_views_without_rewriting_them() ->
     ]
     before = {path: path.read_bytes() for path in paths}
 
-    result = run_hargis_source(run_ngspice=False, require_ngspice=False)
+    result = hargis_source.run(run_ngspice=False)
 
     assert result["status"] == "PASS"
+    assert not result["ngspice"]["executed"]
+    assert "ngspice_replay" not in result["checks"]
     assert result["checks"]["committed_views"]
     assert {path: path.read_bytes() for path in paths} == before
 
@@ -121,14 +146,15 @@ def test_lee_metadata_and_plane_substitutions_are_explicit() -> None:
     }
 
 
-def test_lee_table_i_netlist_writes_the_complete_ac_port_contract() -> None:
+def test_lee_table_i_prepares_the_standard_ac_port(tmp_path: Path) -> None:
     source = yaml.safe_load((LEE / "source.yaml").read_text(encoding="utf-8"))
-    values = source["table_i"]["equivalent_circuit"]
-    frequency = float(source["operating_condition"]["frequency_Hz"])
+    case = _table_case(source, tmp_path)
 
-    netlist = _table_spice_netlist(values, frequency)
+    record = prepare_case(case, run_root=tmp_path / "prepared")
 
-    assert "wrdata ac.csv v(src) i(Vsrc) v(src)" in netlist
+    assert record.measurement["source_voltage_vector"] == "v(src)"
+    assert record.measurement["source_current_vector"] == "i(Vsrc)"
+    assert record.diagnostics["source_scope"]["ac_excitations"] == ["Vsrc"]
 
 
 def test_colpo_corner_results_are_grouped_by_parent_condition() -> None:

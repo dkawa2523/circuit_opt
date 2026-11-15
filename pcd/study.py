@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import sys
+import tempfile
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -12,23 +14,34 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__
-from .artifacts import data_file_references, file_sha256, package_source_sha256, runtime_environment, write_json
+from .artifacts import (
+    data_file_references,
+    file_sha256,
+    package_source_sha256,
+    read_json,
+    runtime_environment,
+    write_json,
+)
 from .case import Case, default_params
 from .core.aggregation import candidate_is_pareto_eligible, candidate_rank_key, pareto_front
 from .core.models import Candidate, CandidateResult, StudySpec
 from .core.pipeline import StudyRunner
 from .evaluation import CaseEvaluationBackend
-from .inputs import integer, reject_unknown
+from .inputs import integer, read_input_mapping, reject_unknown
 from .metrics import constraints_from_case
-from .netlist_import import flatten_netlist_file
+from .netlist_import import flatten_netlist_file, stochastic_netlist_function
 from .problem import ParameterRole, ParameterSet, candidate_role, resolve_parameter_set
+from .registry import declared_plugin_paths, load_plugin_files, loaded_plugin_digest
 from .results import FileResultStore, best_decision_summary, pareto_front_table, quasi_static_snapshot_table
+from .results.journal import TrialJournal, select_checkpoint
 from .results.table import evaluation_table
-from .search import BaseOptimizer, create_optimizer, validate_proposal
+from .search import BaseOptimizer, GridOptimizer, create_optimizer, validate_proposal
 from .sim_core import archive_case_bundle
-from .simulation_input import resolve_solver_settings
-from .solver import solver_identity
+from .simulation_input import SolverSettings, resolve_solver_settings
+from .solver import bind_solver_settings, solver_identity
 from .study_config import CaseControlPolicy, mapping, study_spec_from_case
+
+_TRIAL_REPLAY_OPTIMIZERS = {"grid", "random", "differential_evolution"}
 
 
 def _sha256_json(value: Any) -> str:
@@ -38,52 +51,27 @@ def _sha256_json(value: Any) -> str:
 
 def _plugin_fingerprints(case: Case) -> dict[str, str | None]:
     plugins: dict[str, str | None] = {}
-    for raw in case.data.get("plugins") or []:
-        path = Path(raw)
-        path = (path if path.is_absolute() else case.base_dir / path).resolve()
-        plugins[str(path)] = file_sha256(path)
+    for path in declared_plugin_paths(case.data.get("plugins"), case.base_dir):
+        plugins[str(path)] = loaded_plugin_digest(path) or file_sha256(path)
     return plugins
 
 
 def _referenced_file_fingerprints(case: Case, data: Mapping[str, Any]) -> dict[str, str | None]:
     """Hash declarative file inputs such as a netlist, table, or target trace."""
 
-    files = _built_in_file_fingerprints(case, data)
-
-    def visit(value: Any) -> None:
-        if isinstance(value, Mapping):
-            for raw_name, item in value.items():
-                name = str(raw_name)
-                if name.endswith("_file") and isinstance(item, str):
-                    path = Path(item)
-                    path = (path if path.is_absolute() else case.base_dir / path).resolve()
-                    files[str(path)] = file_sha256(path)
-                else:
-                    visit(item)
-        elif isinstance(value, list | tuple):
-            for item in value:
-                visit(item)
-
-    visit(data)
-    circuit = data.get("circuit")
-    if isinstance(circuit, Mapping) and isinstance(circuit.get("netlist_file"), str):
-        path = Path(circuit["netlist_file"])
-        path = (path if path.is_absolute() else case.base_dir / path).resolve()
-        if path.is_file():
-            _flattened, dependencies = flatten_netlist_file(path)
-            for dependency in dependencies:
-                files[str(dependency)] = file_sha256(dependency)
-    return files
-
-
-def _built_in_file_fingerprints(case: Case, data: Mapping[str, Any]) -> dict[str, str | None]:
-    """Hash the same built-in data dependencies that artifact archiving owns."""
-
     files: dict[str, str | None] = {}
     for _field, declared in data_file_references(data):
         path = Path(declared)
         path = (path if path.is_absolute() else case.base_dir / path).resolve()
         files[str(path)] = file_sha256(path)
+    circuit = data.get("circuit")
+    if isinstance(circuit, Mapping) and isinstance(circuit.get("netlist_file"), str):
+        path = Path(circuit["netlist_file"])
+        path = (path if path.is_absolute() else case.base_dir / path).resolve()
+        if path.is_file():
+            _flattened, dependencies = flatten_netlist_file(path, mode=circuit.get("netlist_mode", "fragment"))
+            for dependency in dependencies:
+                files[str(dependency)] = file_sha256(dependency)
     return files
 
 
@@ -118,28 +106,78 @@ def _simulation_case_data(case: Case) -> dict[str, Any]:
     return data
 
 
-def _runtime_fingerprint(case: Case, solver_override: str | None) -> dict[str, Any]:
+def _captured_file_fingerprints(data: Mapping[str, Any], manifest: Mapping[str, Any]) -> dict[str, str | None]:
+    fields = {field for field, _declared in data_file_references(data)}
+    return {
+        entry["source_path"]: entry["sha256"]
+        for entry in manifest["inputs"]
+        if entry["field"] in fields
+        or ("$.circuit.netlist_file" in fields and entry["field"].startswith("$.circuit.netlist_file.dependencies["))
+    }
+
+
+def _runtime_fingerprint(
+    case: Case,
+    solver_override: str | None,
+    manifest: Mapping[str, Any] | None = None,
+    solver_facts: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     return {
         "pcd_version": __version__,
         "implementation_sha256": package_source_sha256(),
         "environment": runtime_environment(),
         "case_sha256": _sha256_json(case.data),
         "plugins": _plugin_fingerprints(case),
-        "referenced_files": _referenced_file_fingerprints(case, case.data),
-        "solver": solver_identity(resolve_solver_settings(case, solver_override)),
+        "referenced_files": _referenced_file_fingerprints(case, case.data)
+        if manifest is None
+        else _captured_file_fingerprints(case.data, manifest),
+        "solver": dict(solver_facts)
+        if solver_facts is not None
+        else solver_identity(resolve_solver_settings(case, solver_override)),
     }
 
 
-def _simulation_fingerprint(case: Case, solver_override: str | None) -> dict[str, Any]:
+def _simulation_fingerprint(
+    case: Case,
+    solver_override: str | None,
+    manifest: Mapping[str, Any] | None = None,
+    solver_facts: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     data = _simulation_case_data(case)
     return {
         "pcd_version": __version__,
         "implementation_sha256": package_source_sha256(),
         "simulation_case_sha256": _sha256_json(data),
         "plugins": _plugin_fingerprints(case),
-        "referenced_files": _referenced_file_fingerprints(case, data),
-        "solver": solver_identity(resolve_solver_settings(case, solver_override)),
+        "referenced_files": _referenced_file_fingerprints(case, data)
+        if manifest is None
+        else _captured_file_fingerprints(data, manifest),
+        "solver": dict(solver_facts)
+        if solver_facts is not None
+        else solver_identity(resolve_solver_settings(case, solver_override)),
     }
+
+
+def _identify_store_inputs(
+    case: Case, store: FileResultStore, archive: Path, files: Mapping[str, str], solver_override: str | None
+) -> SolverSettings:
+    manifest = read_json(archive / files["input_manifest"])
+    load_plugin_files(case.data.get("plugins"), case.base_dir)
+    solver = resolve_solver_settings(case, solver_override)
+    if solver.name == "ngspice_cli" and (imported := files.get("imported_netlist")):
+        mode = (case.data.get("circuit") or {}).get("netlist_mode", "fragment")
+        if function := stochastic_netlist_function((archive / imported).read_text(encoding="utf-8"), mode=mode):
+            raise ValueError(
+                f"deterministic studies do not support ngspice random function {function!r} in imported SPICE; "
+                "use explicit operating scenarios or a forward simulation (sim-run)"
+            )
+    solver = bind_solver_settings(solver)
+    solver_facts = solver_identity(solver)
+    store.runtime_fingerprint = _runtime_fingerprint(case, solver_override, manifest, solver_facts)
+    store.raw_runtime_fingerprint = _simulation_fingerprint(case, solver_override, manifest, solver_facts)
+    if (solver.startup_fingerprint or {}).get("unresolved_sources"):
+        store.raw_cache_unavailable_reason = "ngspice startup uses a dependency path that could not be resolved"
+    return solver
 
 
 def build_case_runner(
@@ -149,30 +187,32 @@ def build_case_runner(
     *,
     transactional: bool = False,
 ) -> tuple[StudySpec, StudyRunner, FileResultStore]:
-    runtime_fingerprint = _runtime_fingerprint(case, solver_override)
-    simulation_fingerprint = _simulation_fingerprint(case, solver_override)
-    store = FileResultStore(
-        run_root,
-        case.case_id,
-        runtime_fingerprint,
-        raw_runtime_fingerprint=simulation_fingerprint,
-    )
+    store = FileResultStore(run_root, case.case_id)
     archive_root = store.begin_generation() if transactional else store.root
-    snapshot, _case_files = archive_case_bundle(case, archive_root)
+    snapshot, case_files = archive_case_bundle(case, archive_root)
+    solver = _identify_store_inputs(case, store, archive_root, case_files, solver_override)
+    replay_archive = store.retain_case_archive(case_files) if transactional else archive_root
+    return _case_runner_from_archive(snapshot, store, solver_override, replay_archive, solver)
+
+
+def _case_runner_from_archive(
+    snapshot: Case, store: FileResultStore, solver_override: str | None, replay_archive: Path, solver: SolverSettings
+) -> tuple[StudySpec, StudyRunner, FileResultStore]:
     spec = study_spec_from_case(snapshot)
     evaluation = CaseEvaluationBackend(
         snapshot,
         store.root,
         solver_override,
-        case_archive_root=archive_root,
-        artifact_namespace=_sha256_json(simulation_fingerprint)[:16],
+        case_archive_root=replay_archive,
+        artifact_namespace=_sha256_json(store.raw_runtime_fingerprint)[:16],
+        solver_settings=solver,
     )
     runner = StudyRunner(
         study=spec,
         evaluator=evaluation,
         metrics=(evaluation,),
         constraints=constraints_from_case(snapshot),
-        control_policy=CaseControlPolicy(snapshot),
+        control_policy=CaseControlPolicy(snapshot, spec.scenarios),
         store=store,
     )
     return spec, runner, store
@@ -181,33 +221,30 @@ def build_case_runner(
 def _feasibility_first_loss(rank: tuple[float, ...]) -> float:
     """Map the lexicographic design rank to one bounded optimizer signal.
 
-    Complete feasible candidates always occupy ``[0, 1)``.  All other
-    candidates occupy ``[1, 2)``.  Within the latter band, missing solver
-    evidence, feasibility coverage, and normalized constraint violation all
-    provide progress signals.  Final design selection still uses the complete
-    lexicographic rank because no scalar can preserve that order exactly.
+    Accepted, measured rejected, and incomplete candidates occupy ``[0, 1)``,
+    ``[1, 1.5)``, and ``[1.5, 2)`` respectively. Within a band the scalar is a
+    search heuristic. Final design selection uses the full lexicographic rank.
     """
 
-    feasible = bool(rank) and rank[0] == 0.0
-    if not feasible:
-        success_shortfall = min(max(0.0, rank[1] if len(rank) > 1 else 1.0), 1.0)
-        feasible_shortfall = min(max(0.0, rank[2] if len(rank) > 2 else 1.0), 1.0)
-        violation = max(0.0, rank[3] if len(rank) > 3 else 0.0)
+    tier, evidence_shortfall, feasible_shortfall, violation, primary, *_ = rank
+    if tier:
         normalized_violation = 2.0 * math.atan(violation) / math.pi
-        progress = 0.5 * success_shortfall + 0.4 * feasible_shortfall + 0.1 * normalized_violation
-        return 1.0 + min(progress, 1.0 - 1e-12)
-    primary = rank[4] if len(rank) > 4 else 0.0
+        progress = 0.5 * evidence_shortfall + 0.4 * feasible_shortfall + 0.1 * normalized_violation
+        if tier == 1.0:
+            return 1.0 + min(progress, 0.5 - 1e-12)
+        return 1.5 + 0.5 * min(progress, 1.0 - 1e-12)
     bounded = 0.5 + math.atan(primary) / math.pi
     return min(max(bounded, 0.0), 1.0 - 1e-12)
 
 
 def _optimizer_feedback(spec: StudySpec, result: CandidateResult) -> tuple[tuple[float, ...], dict[str, Any]]:
-    rank = tuple(value if math.isfinite(value) else 1e30 for value in candidate_rank_key(spec, result))
-    loss = _feasibility_first_loss(rank)
+    rank = candidate_rank_key(spec, result)
+    plugin_rank = tuple(value if math.isfinite(value) else sys.float_info.max for value in rank)
+    loss = _feasibility_first_loss(plugin_rank)
     return rank, {
-        "rank": rank,
+        "rank": plugin_rank,
         "loss": loss,
-        "objective_rank": rank[4 : 4 + len(spec.objectives)],
+        "objective_rank": plugin_rank[4 : 4 + len(spec.objectives)],
         "aggregates": dict(result.aggregates),
         "feasible_fraction": result.feasible_fraction,
         "success_fraction": result.success_fraction,
@@ -254,7 +291,7 @@ def _study_history_entry(
         "constraint_margins": result.constraint_margins,
         "control_margin": result.control_margin,
         "edge_limited": result.edge_limited,
-        "rank": rank,
+        "rank": [value if math.isfinite(value) else None for value in rank],
     }
 
 
@@ -301,6 +338,7 @@ def _evaluation_table_rows(
                 "scenario_id": scenario.scenario_id,
                 "scenario_weight": scenario.weight,
                 "selected_control": evaluation is scenario_result.selected,
+                "control": json.dumps(evaluation.request.control.to_dict()["values"], sort_keys=True, allow_nan=False),
                 "status": evaluation.raw.status,
                 "feasible": evaluation.feasible,
                 "total_violation": evaluation.total_violation,
@@ -508,20 +546,27 @@ def _dataset_identity(case: Case, store: FileResultStore, generation_root: Path)
 @dataclass(slots=True)
 class _TrialBatch:
     best: CandidateResult | None = None
+    best_rank: tuple[float, ...] | None = None
     front: list[CandidateResult] = field(default_factory=list)
     history: list[dict[str, Any]] = field(default_factory=list)
     n_evaluations: int = 0
     n_failed: int = 0
+    missing_acceptance_evidence: bool = False
     eligible_candidates: int = 0
     optimizer_outcome: dict[str, Any] = field(default_factory=dict)
+    restart: dict[str, Any] = field(default_factory=dict)
 
-    def include(self, spec: StudySpec, result: CandidateResult) -> None:
+    def include(self, spec: StudySpec, result: CandidateResult, rank: tuple[float, ...]) -> None:
         """Keep detailed trials only for the best candidate and observed front."""
 
-        if self.best is None or candidate_rank_key(spec, result) < candidate_rank_key(spec, self.best):
+        if self.best_rank is None or rank < self.best_rank:
             self.best = result
+            self.best_rank = rank
         self.n_evaluations += len(result.control_evaluations)
         self.n_failed += sum(not evaluation.raw.ok for evaluation in result.control_evaluations)
+        self.missing_acceptance_evidence |= any(
+            evaluation.raw.ok and not evaluation.evidence_available for evaluation in result.control_evaluations
+        )
         if len(spec.objectives) > 1:
             self.eligible_candidates += candidate_is_pareto_eligible(spec, result)
             self.front = list(pareto_front(spec, (*self.front, result)))
@@ -536,22 +581,37 @@ def _run_trials(
     dataset_identity: Mapping[str, Any],
     constant_inputs: Mapping[str, Mapping[str, Any]],
     table_path: Path,
+    journal: TrialJournal | None = None,
 ) -> _TrialBatch:
     batch = _TrialBatch()
     optimizer_name = str((case.data.get("optimizer") or {}).get("name"))
     seed = int((case.data.get("optimizer") or {}).get("seed", 0))
     candidate_label = candidate_role(case).value
+    replayed_evaluations = 0
+    new_raw_cache_hits = 0
+    started_candidates = 0
     with evaluation_table(table_path) as append:
 
         def evaluate(proposal: dict[str, Any]) -> dict[str, Any]:
-            index = len(batch.history)
+            nonlocal replayed_evaluations, new_raw_cache_hits, started_candidates
+            if started_candidates >= n_trials:
+                raise ValueError(f"optimizer {optimizer_name!r} exceeded the candidate budget of {n_trials}")
             params = validate_proposal(optimizer.case, proposal)
-            result = runner.evaluate_candidate(Candidate(f"trial_{index:04d}", params))
-            batch.include(spec, result)
-            append(_evaluation_table_rows(index, result, dataset_identity, constant_inputs, candidate_label))
+            started_candidates += 1
+            index = len(batch.history)
+            candidate = Candidate(f"trial_{index:04d}", params)
+            if journal is not None and index < journal.completed_trials:
+                result = journal.replay(index, candidate)
+                replayed_evaluations += len(result.control_evaluations)
+            else:
+                result = runner.evaluate_candidate(candidate)
+                if journal is not None:
+                    journal.save(index, result)
+                    new_raw_cache_hits += sum(item.from_cache for item in result.control_evaluations)
             rank, feedback = _optimizer_feedback(spec, result)
-            if optimizer_name == "least_squares":
-                feedback["residuals"] = _terminal_residuals(result)
+            batch.include(spec, result, rank)
+            append(_evaluation_table_rows(index, result, dataset_identity, constant_inputs, candidate_label))
+            feedback.update(optimizer.feedback_details(result))
             optimizer.tell(params, feedback)
             batch.history.append(
                 _study_history_entry(index, result, rank, optimizer_name, seed, optimizer.proposal_metadata())
@@ -560,25 +620,17 @@ def _run_trials(
 
         optimizer.optimize(evaluate, n_trials)
         batch.optimizer_outcome = dict(optimizer.outcome)
-    return batch
-
-
-def _terminal_residuals(result: CandidateResult) -> list[float] | None:
-    import math
-
-    residuals: list[float] = []
-    weight_scale = max(item.scenario.weight for item in result.scenarios)
-    weights = [item.scenario.weight / weight_scale for item in result.scenarios]
-    weight_sum = math.fsum(weights)
-    for scenario, weight in zip(result.scenarios, weights, strict=True):
-        selected = scenario.selected
-        if not selected.raw.ok:
-            return None
-        residuals.extend(
-            float(selected.metrics.values[name]) * math.sqrt(weight / weight_sum)
-            for name in ("normalized_residual_resistance", "normalized_residual_reactance")
+    if journal is not None:
+        batch.restart = journal.summary(
+            replayed_candidates=journal.completed_trials,
+            replayed_evaluations=replayed_evaluations,
+            new_candidates=len(batch.history) - journal.completed_trials,
+            new_evaluations=batch.n_evaluations - replayed_evaluations,
+            new_evaluations_from_raw_cache=new_raw_cache_hits,
         )
-    return residuals
+    elif candidate_role(case) is ParameterRole.DESIGN:
+        batch.restart = {"scope": "raw_cache_only", "reason": f"optimizer {optimizer_name!r} does not support replay"}
+    return batch
 
 
 def _generated_path(generation: Path, name: str) -> str:
@@ -634,6 +686,10 @@ def _finalize_study(
     best = runner.verify_candidate(search_best)
     n_failed = trials.n_failed
     verification_failed = sum(not evaluation.raw.ok for evaluation in best.control_evaluations)
+    verification_complete = all(evaluation.evidence_available for evaluation in best.control_evaluations)
+    verification_status = (
+        "failed" if verification_failed else "verified" if verification_complete else "incomplete_evidence"
+    )
     selected_candidate_path = store.save_selected_candidate(best)
     selected_artifacts = _write_selected_projections(case, best, generation_root, generation, constant_inputs)
     pareto_artifacts, pareto_summary = _write_pareto_projection(
@@ -655,6 +711,7 @@ def _finalize_study(
             "trials": n_trials,
             "optimizer_outcome": trials.optimizer_outcome,
             "seed": int((case.data.get("optimizer") or {}).get("seed", 0)),
+            **({"restart": trials.restart} if trials.restart else {}),
         },
         "dataset": dict(dataset_identity),
         "parameters": {"roles": parameters.role_names(), "constant_values": dict(constant_inputs)},
@@ -675,19 +732,26 @@ def _finalize_study(
             "candidate_id": best.candidate.candidate_id,
             "n_evaluations": len(best.control_evaluations),
             "n_failed_evaluations": verification_failed,
-            "status": "verified" if verification_failed == 0 else "failed",
+            "status": verification_status,
         },
-        "best": best_decision_summary(spec, best, n_failed_evaluations=n_failed + verification_failed),
+        "best": best_decision_summary(
+            spec,
+            best,
+            n_failed_evaluations=n_failed + verification_failed,
+            missing_acceptance_evidence=trials.missing_acceptance_evidence,
+        ),
         **({"pareto": pareto_summary} if pareto_summary is not None else {}),
     }
     # Publish only after every referenced file has been committed.
     write_json(generation_root / "study_history.json", trials.history)
     if "output" in case.data and candidate_role(case) is ParameterRole.DESIGN:
+        from .reporting import render_requested_output
         from .reporting.study import render_study_outputs
 
-        payload["output"] = render_study_outputs(payload, case, generation_root)
-        payload["artifacts"]["output_summary"] = payload["output"]["summary"]
-    write_json(store.root / "study_result.json", payload)
+        payload["output"] = render_requested_output(lambda: render_study_outputs(payload, case, generation_root))
+        if summary := payload["output"]["summary"]:
+            payload["artifacts"]["output_summary"] = summary
+    store.publish_generation(payload)
     return payload
 
 
@@ -698,10 +762,16 @@ def run_case_study(
     optimizer_name: str | None = None,
     solver_override: str | None = None,
     seed: int | None = None,
+    *,
+    resume: str | None = None,
 ) -> dict[str, Any]:
-    """Optimize design candidates using feasibility-first scenario aggregation."""
+    """Optimize design candidates, or resume an exact built-in search checkpoint.
 
-    if (case.data.get("metadata") or {}).get("workflow") == "simulation":
+    Use ``resume="auto"`` to find a compatible attempt in the same study root,
+    or pass its generation ID to select it explicitly.
+    """
+
+    if case.is_forward_simulation:
         raise ValueError("this case describes a forward simulation; use sim-run, or declare an objective for a study")
     if candidate_role(case) is not ParameterRole.DESIGN:
         raise ValueError("run_case_study accepts design candidates; use run_identification for latent parameters")
@@ -713,6 +783,7 @@ def run_case_study(
         solver_override=solver_override,
         seed=seed,
         proposed_role=ParameterRole.DESIGN,
+        resume=resume,
     )
 
 
@@ -725,6 +796,7 @@ def _run_parameter_study(
     solver_override: str | None,
     seed: int | None,
     proposed_role: ParameterRole,
+    resume: str | None = None,
 ) -> dict[str, Any]:
     """Run the shared study path for one explicit candidate parameter role."""
 
@@ -733,9 +805,13 @@ def _run_parameter_study(
 
     configured_trials = integer((case.data.get("run", {}) or {}).get("trials", 1), "run.trials", minimum=1)
     effective_trials = configured_trials if n_trials is None else integer(n_trials, "n_trials", minimum=1)
-    if effective_trials < 1:
-        raise ValueError("n_trials must be positive")
     case = resolve_study_case(case, effective_trials, optimizer_name, solver_override, seed)
+    name = str(case.data["optimizer"]["name"])
+    # These registered built-ins use the deterministic sequential ask/tell loop.
+    # Plugin registration cannot replace their names.
+    restartable = proposed_role is ParameterRole.DESIGN and name in _TRIAL_REPLAY_OPTIMIZERS
+    if resume is not None and not restartable:
+        raise ValueError(f"optimizer {name!r} does not support study checkpoint replay")
 
     # Validation belongs to the executable study boundary so CLI and Python
     # callers cannot accidentally run different preparation paths.
@@ -746,16 +822,84 @@ def _run_parameter_study(
         raise ValueError(report.format_text())
 
     optimizer = create_optimizer(case)
-    grid_size = getattr(optimizer, "n_points", None)
-    if grid_size is not None and effective_trials != int(grid_size):
-        raise ValueError(f"grid optimizer requires exactly {grid_size} trials, got {effective_trials}")
-    spec, runner, store = build_case_runner(case, run_root, transactional=True)
+    if isinstance(optimizer, GridOptimizer):
+        optimizer.validate_budget(effective_trials)
+    if restartable:
+        return _run_checkpointed_study(case, run_root, optimizer, effective_trials, resume)
+    prepared = build_case_runner(case, run_root, transactional=True)
+    return _run_prepared_study(case, optimizer, effective_trials, prepared)
+
+
+def _run_checkpointed_study(
+    case: Case, run_root: str | Path, optimizer: BaseOptimizer, n_trials: int, resume: str | None
+) -> dict[str, Any]:
+    store = FileResultStore(run_root, case.case_id)
+    generation: Path | None = None
+    prepared_archive = None
+    if resume is None:
+        generation = store.begin_generation()
+        snapshot, files = archive_case_bundle(case, generation)
+        solver = _identify_store_inputs(case, store, generation, files, None)
+        prepared_archive = (snapshot, files, store.retain_case_archive(files))
+    else:
+        with tempfile.TemporaryDirectory(prefix="pcd-resume-") as staging:
+            _, files = archive_case_bundle(case, staging)
+            solver = _identify_store_inputs(case, store, Path(staging), files, None)
+    if reason := store.raw_cache_unavailable_reason:
+        if prepared_archive is None:
+            raise ValueError(f"checkpoint replay unavailable: {reason}")
+        snapshot, _files, archive = prepared_archive
+        prepared = _case_runner_from_archive(snapshot, store, None, archive, solver)
+        return _run_prepared_study(case, optimizer, n_trials, prepared)
+    # Variable order affects enumeration and assigns random draws to axes. The
+    # usual provenance digest is order-independent, so also pin declaration order.
+    ordered_case = json.dumps(case.data, ensure_ascii=False, default=str).encode("utf-8")
+    identity = {"runtime": store.runtime_fingerprint, "ordered_case_sha256": hashlib.sha256(ordered_case).hexdigest()}
+    if resume is not None:
+        generation = store.begin_generation(select_checkpoint(store, identity, resume))
+    if generation is None:
+        raise RuntimeError("study result generation was not initialized")
+    journal = TrialJournal(store, generation, identity)
+    if prepared_archive is None and not journal.header_path.is_file():
+        raise ValueError(f"study generation {generation.name} has no trial checkpoint")
+    with journal.locked():
+        if prepared_archive is not None:
+            snapshot, files, archive = prepared_archive
+            journal.start(files, archive)
+        else:
+            journal.load(n_trials)
+            if published := journal.published_result():
+                return published
+            files, archive = journal.resume_archive()
+            snapshot = _load_study_snapshot(archive, files)
+        prepared = _case_runner_from_archive(snapshot, store, None, archive, solver)
+        return _run_prepared_study(case, optimizer, n_trials, prepared, journal)
+
+
+def _load_study_snapshot(root: Path, files: Mapping[str, str]) -> Case:
+    path = root / files["case"]
+    return Case(
+        path=path,
+        data=read_input_mapping(path),
+        source_data=read_input_mapping(root / files["input_case"]) if "input_case" in files else None,
+        resolved_plan=read_input_mapping(root / files["resolved_plan"]) if "resolved_plan" in files else None,
+    )
+
+
+def _run_prepared_study(
+    case: Case,
+    optimizer: BaseOptimizer,
+    effective_trials: int,
+    prepared: tuple[StudySpec, StudyRunner, FileResultStore],
+    journal: TrialJournal | None = None,
+) -> dict[str, Any]:
+    spec, runner, store = prepared
     generation_root = store.generation_root
-    if generation_root is None:  # pragma: no cover - an internal construction invariant
+    if generation_root is None:
         raise RuntimeError("study result generation was not initialized")
     dataset_identity = _dataset_identity(case, store, generation_root)
     parameters = resolve_parameter_set(case)
-    constant_inputs = _constant_parameter_inputs(parameters, proposed_role)
+    constant_inputs = _constant_parameter_inputs(parameters, candidate_role(case))
     trials = _run_trials(
         case,
         spec,
@@ -765,7 +909,10 @@ def _run_parameter_study(
         dataset_identity,
         constant_inputs,
         generation_root / "evaluations.csv",
+        journal,
     )
+    if store.raw_cache_unavailable_reason:
+        trials.restart = {"scope": "unavailable", "reason": store.raw_cache_unavailable_reason}
     return _finalize_study(
         case,
         spec,

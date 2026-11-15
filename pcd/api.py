@@ -11,6 +11,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from .analysis.network import PortExcitation, PortReference, ScatteringResult, solve_scattering
 from .case import Case, load_case
 from .core import (
     Candidate,
@@ -30,11 +31,11 @@ from .identification import run_identification
 from .metric_registry import register as register_metric
 from .metrics import measure_response
 from .netlist import Circuit, Component
+from .network import run_network
 from .probes import NamedProbe, ProbePlan
 from .search import BaseOptimizer
 from .search_registry import register as register_optimizer
-from .sim_core import SimRecord, SimulationRun, execute_case, prepare_case
-from .sim_core import simulate_case as _simulate_case
+from .sim_core import SimRecord, SimulationRun, execute_case, prepare_case, write_sim_record
 from .sim_registry import register as register_simulation
 from .sim_registry import register_solver
 from .simulation import AnalysisRequest, SimulationResult
@@ -59,26 +60,26 @@ def simulate_case(
     from .output import output_settings
 
     output_settings(case.data.get("output"))
-    selected = select_simulation_inputs(case, params, scenario_id=scenario_id, controls=controls)
-    record = _simulate_case(
+    record = execute_case(
         case,
-        params=selected,
         run_root=run_root,
         solver_override=solver_override,
         run_id=run_id,
         case_archive_root=case_archive_root,
-    )
+        select_inputs=lambda snapshot: select_simulation_inputs(
+            snapshot, params, scenario_id=scenario_id, controls=controls
+        ),
+    ).record
     if record.status == "ok" and "output" in case.data:
-        from .artifacts import write_json
-        from .reporting import analyze_run
+        from .reporting import analyze_run, render_requested_output
 
-        analysis = analyze_run(record.run_dir)
-        record.output_result = {
-            "status": analysis["status"],
-            "summary": (Path(analysis["output_dir"]).relative_to(record.run_dir) / "summary.json").as_posix(),
-        }
-        write_json(record.run_dir / "summary.json", record.summary())
-        write_json(record.run_dir / "debug/manifest.json", record.manifest())
+        def render() -> dict[str, Any]:
+            analysis = analyze_run(record.run_dir)
+            summary = Path(analysis["output_dir"]).relative_to(record.run_dir) / "summary.json"
+            return {"status": analysis["status"], "summary": summary.as_posix()}
+
+        record.output_result = render_requested_output(render)
+        write_sim_record(record)
     return record
 
 
@@ -98,9 +99,12 @@ __all__ = [
     "MetricSet",
     "NamedProbe",
     "Objective",
+    "PortExcitation",
+    "PortReference",
     "ProbePlan",
     "RawResult",
     "ResolvedSimulationCase",
+    "ScatteringResult",
     "Scenario",
     "ScenarioResult",
     "SimRecord",
@@ -120,5 +124,7 @@ __all__ = [
     "register_solver",
     "run_case_study",
     "run_identification",
+    "run_network",
     "simulate_case",
+    "solve_scattering",
 ]

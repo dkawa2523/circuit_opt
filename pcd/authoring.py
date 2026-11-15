@@ -9,13 +9,12 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping
-from contextlib import suppress
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
 from .core.spaces import grid_values
-from .inputs import integer, parameter_spec, reject_unknown
+from .inputs import condition_value, integer, observation_metadata, parameter_spec, reject_unknown
 from .tables import read_csv_rows
 
 
@@ -78,16 +77,15 @@ def _circuit(raw: Any) -> dict[str, Any]:
 
 
 def _rows(
-    raw: Any, base: Path, *, observations: bool = False
+    raw: Any, base: Path, specs: Mapping[str, Mapping[str, Any]], *, observations: bool = False
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None, dict[str, Any]]:
     cfg: dict[str, Any] = (
         {"rows": raw} if isinstance(raw, list) else _mapping(raw, "observations" if observations else "conditions")
     )
-    reject_unknown(
-        cfg,
-        {"rows", "file", "columns", "id_column", "partition_column"},
-        "observations" if observations else "conditions",
-    )
+    fields = {"rows", "file", "columns", "id_column", "partition_column"}
+    if observations:
+        fields.add("acquisition_group_column")
+    reject_unknown(cfg, fields, "observations" if observations else "conditions")
     if ("rows" in cfg) == ("file" in cfg):
         raise ValueError("conditions/observations require exactly one of rows or file")
     if "file" in cfg:
@@ -101,34 +99,59 @@ def _rows(
     columns = _mapping(cfg.get("columns"), "columns")
     if observations:
         defaults = {f"target_{name}": name for name in ("voltage_re_V", "voltage_im_V", "current_re_A", "current_im_A")}
-        if "frequency_Hz" in rows[0]:
+        if any("frequency_Hz" in row for row in rows):
             defaults["frequency_Hz"] = "frequency_Hz"
         columns = {**defaults, **columns}
     elif not columns:
         columns = {name: name for name in rows[0] if name not in {"id", "scenario_id", "weight", "controls"}}
     id_column = str(cfg.get("id_column", "scenario_id" if "scenario_id" in rows[0] else "id"))
     partition_column = str(cfg.get("partition_column", "partition"))
-    scenarios = []
+    if "file" in cfg and "id_column" in cfg and id_column not in rows[0]:
+        raise ValueError(f"CSV is missing the declared ID column {id_column!r}")
+    group_column = None
+    if observations:
+        column = cfg.get("acquisition_group_column", "acquisition_group")
+        if not isinstance(column, str) or not column.strip():
+            raise ValueError("observations.acquisition_group_column must be a nonempty column name")
+        explicit_group_column = "acquisition_group_column" in cfg
+        if explicit_group_column and "file" not in cfg:
+            raise ValueError("use acquisition_group on inline observations; acquisition_group_column applies to CSV")
+        if explicit_group_column or any(column in row for row in rows):
+            if column in {id_column, partition_column, "weight"} or column in columns.values():
+                raise ValueError(
+                    "acquisition group column is provenance and cannot supply a parameter, ID, weight, or partition"
+                )
+            group_column = column
+    scenarios: list[dict[str, Any]] = []
     for index, row in enumerate(rows):
         values = {}
         for parameter, column in columns.items():
-            if column not in row or row[column] == "":
+            raw_value = row.get(column, "")
+            if "file" in cfg:
+                raw_value = raw_value.strip()
+            if raw_value == "":
                 raise ValueError(f"row {index + 1} is missing {column!r}")
-            value = row[column]
-            if isinstance(value, str):
-                with suppress(ValueError):
-                    value = float(value)
-            values[parameter] = value
+            values[parameter] = condition_value(
+                raw_value, parameter, specs.get(parameter, {}), f"row {index + 1}.{column}", allow_units="rows" in cfg
+            )
         if observations:
             for name in ("target_voltage_re_V", "target_voltage_im_V", "target_current_re_A", "target_current_im_A"):
                 if name not in values:
                     raise ValueError(f"observations require a column for {name}")
+        scenario_id = str(row.get(id_column, f"point_{index + 1}"))
+        row_controls = _mapping(row.get("controls"), f"row {index + 1}.controls") if "rows" in cfg else {}
+        observed_controls = {
+            name: condition_value(
+                value, name, specs.get(name, {}), f"row {index + 1}.controls.{name}", allow_units=True
+            )
+            for name, value in row_controls.items()
+        }
         scenarios.append(
             {
-                "id": str(row.get(id_column, f"point_{index + 1}")),
+                "id": scenario_id.strip() if observations or "file" in cfg else scenario_id,
                 "values": values,
                 "weight": float(row.get("weight", 1)),
-                **({"controls": row["controls"]} if "controls" in row else {}),
+                **({"controls": observed_controls} if observed_controls else {}),
             }
         )
     table = None
@@ -143,14 +166,20 @@ def _rows(
             **({"id_column": id_column} if id_column in rows[0] else {}),
             **({"weight_column": "weight"} if "weight" in rows[0] else {}),
         }
-    partitions = {"fit": [], "holdout": []}
+    observation_settings: dict[str, Any] = {}
     if observations:
-        for row, scenario in zip(rows, scenarios, strict=True):
-            partition = row.get(partition_column)
-            if partition not in partitions:
-                raise ValueError(f"each observation needs {partition_column}: fit or holdout")
-            partitions[partition].append(scenario["id"])
-    return scenarios, table, partitions
+        partitions, groups = observation_metadata(
+            rows, (scenario["id"] for scenario in scenarios), partition_column, group_column
+        )
+        observation_settings = {"fit_scenarios": partitions["fit"], "holdout_scenarios": partitions["holdout"]}
+        if groups:
+            observation_settings["acquisition_groups"] = groups
+        if "file" in cfg:
+            observation_settings["observation_table_columns"] = {
+                "partition": partition_column,
+                "acquisition_group": group_column or "acquisition_group",
+            }
+    return scenarios, table, observation_settings
 
 
 def _objective(raw: Any) -> tuple[dict[str, Any], list[dict[str, Any]]]:
@@ -244,8 +273,9 @@ def compile_circuit_case(authored: Mapping[str, Any], base: Path) -> tuple[dict[
             raise ValueError("declare reference_impedance_ohm once at the public case root")
         data["measurement"]["reference_impedance_ohm"] = authored["reference_impedance_ohm"]
     scenarios, table = [], None
+    row_specs = {**variables, **controls}
     if "conditions" in authored:
-        scenarios, table, _ = _rows(authored["conditions"], base)
+        scenarios, table, _ = _rows(authored["conditions"], base, row_specs)
     fitting = "identification" in authored
     fit_cfg = _mapping(authored.get("identification"), "identification")
     if fitting:
@@ -254,7 +284,7 @@ def compile_circuit_case(authored: Mapping[str, Any], base: Path) -> tuple[dict[
                 "identification owns observations and the fit objective; do not also declare conditions/objective"
             )
         observations = fit_cfg.pop("observations", None)
-        scenarios, table, partitions = _rows(observations, base, observations=True)
+        scenarios, table, observation_settings = _rows(observations, base, row_specs, observations=True)
         scale = float(fit_cfg.pop("error_scale_ohm", 100.0))
         if not math.isfinite(scale) or scale <= 0:
             raise ValueError("identification.error_scale_ohm must be positive and finite")
@@ -268,17 +298,19 @@ def compile_circuit_case(authored: Mapping[str, Any], base: Path) -> tuple[dict[
                 "sensitivity_step",
                 "condition_number_max",
                 "rank_tolerance",
+                "uncertainty",
             },
             "identification",
         )
         data["identification"] = {
             **fit_cfg,
-            "fit_scenarios": partitions["fit"],
-            "holdout_scenarios": partitions["holdout"],
+            **observation_settings,
             "observed_metrics": ["resistance_ohm", "reactance_ohm"],
             "metric_scales": {"resistance_ohm": scale, "reactance_ohm": scale},
         }
         data["target"] = {"objective": "terminal_vi_fit", "impedance_scale_ohm": scale}
+        if "frequency_Hz" in scenarios[0]["values"]:
+            data["target"]["observation_frequency_parameter"] = "frequency_Hz"
         data["study"].update(
             {
                 "candidate_role": "latent",

@@ -1,6 +1,6 @@
 """End-to-end journeys, exercised through the module CLI.
 
-Marked ``e2e`` for ``quality-pr`` and ``quality-nightly``; excluded by ``quality-fast``.
+Included in ``quality-pr`` and excluded by ``quality-fast``.
 They cover direct simulation, the unified scenario-aware study path, and the
 physical ngspice path.
 """
@@ -9,13 +9,13 @@ from __future__ import annotations
 
 import json
 import math
-import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 import pandas as pd
 import pytest
+import yaml
 
 from pcd.results import read_best_candidate, selected_evaluation
 
@@ -30,7 +30,6 @@ FREQUENCY_TABLE_CASE = EXAMPLES / "rf_impedance_frequency_table.yaml"
 COMPONENT_STRESS_CASE = EXAMPLES / "rf_component_stress.yaml"
 QUASI_STATIC_CASE = EXAMPLES / "rf_quasi_static_profile.yaml"
 PROFILED_RESISTOR_CASE = EXAMPLES / "advanced" / "time_varying_resistor.yaml"
-ngspice_available = shutil.which("ngspice_con.exe") or shutil.which("ngspice")
 
 
 def pcd(*args: str, expect_success: bool = True) -> subprocess.CompletedProcess[str]:
@@ -48,7 +47,7 @@ def pcd(*args: str, expect_success: bool = True) -> subprocess.CompletedProcess[
     return result
 
 
-@pytest.mark.skipif(not ngspice_available, reason="ngspice is not installed on this machine")
+@pytest.mark.usefixtures("ngspice")
 def test_narrow_solver_resolved_pulses_cannot_pass_a_component_stress_limit(tmp_path):
     result = pcd(
         "run",
@@ -68,7 +67,7 @@ def test_narrow_solver_resolved_pulses_cannot_pass_a_component_stress_limit(tmp_
     assert selected["metrics"]["load_real_power_W"] > 0
 
 
-@pytest.mark.skipif(not ngspice_available, reason="ngspice is not installed on this machine")
+@pytest.mark.usefixtures("ngspice")
 @pytest.mark.parametrize("budget", [1, 32])
 def test_terminal_least_squares_recovers_known_values_within_its_real_evaluation_budget(tmp_path, budget):
     result = pcd(
@@ -102,7 +101,64 @@ def test_terminal_least_squares_recovers_known_values_within_its_real_evaluation
     assert fit["n_evaluations"] == 3 * fit["n_candidates"]
 
 
-@pytest.mark.skipif(not ngspice_available, reason="ngspice is not installed on this machine")
+@pytest.mark.usefixtures("ngspice")
+def test_terminal_identification_refits_declared_uncertainty_without_holdout_leakage(tmp_path):
+    original = EXAMPLES / "terminal_identification.yaml"
+    data = yaml.safe_load(original.read_text(encoding="utf-8"))
+    data["case_id"] = "uncertainty"
+    data["identification"]["observations"]["file"] = str(EXAMPLES / "terminal_observations.csv")
+    data["identification"]["uncertainty"] = {
+        "fixture_resistance_high": {"calibration": {"fixture_R_ohm": "3 ohm"}},
+        "holdout_receiver_shift": {"observations": {"holdout_40_68MHz": {"target_current_re_A": "20 mA"}}},
+    }
+    case = tmp_path / "case.yaml"
+    case.write_text(yaml.safe_dump(data), encoding="utf-8")
+    pcd("validate-case", str(case), "--strict")
+    invocation = pcd(
+        "identify", str(case), "--output", str(tmp_path / "r"), "--trials", "32", "--json", expect_success=False
+    )
+    result = json.loads(invocation.stdout)
+    assert invocation.returncode == 1
+    assert result["status"] == "not_identified"
+    assert result["reason"] == "uncertainty_acceptance_not_met"
+    uncertainty = result["uncertainty"]
+    assert uncertainty["nominal_status"] == "identified"
+    assert uncertainty["n_realizations"] == 3
+    assert uncertainty["n_identified"] == 2
+    assert uncertainty["n_unavailable"] == 0
+    nominal, calibration, changed_holdout = uncertainty["realizations"]
+    assert nominal["local_rank"] == calibration["local_rank"] == changed_holdout["local_rank"] == 2
+    assert changed_holdout["fit_value"] == nominal["fit_value"]
+    assert changed_holdout["estimated_latent"] == nominal["estimated_latent"]
+    assert changed_holdout["holdout_value"] > result["holdout"]["limit"]
+    assert uncertainty["parameter_ranges"]["plasma_R_eff_ohm"] == pytest.approx(
+        {"min": 17.0, "max": 18.0, "n_realizations": 3}, rel=1e-5
+    )
+    assert uncertainty["holdout_prediction_ranges"]["holdout_40_68MHz"]["resistance_ohm"] == pytest.approx(
+        {"min": 20.0, "max": 20.0, "n_realizations": 3}, rel=1e-5
+    )
+    output = json.loads(pcd("analyze", result["run_root"], "--out", str(tmp_path / "a"), "--json").stdout)
+    report = json.loads((Path(output["output_dir"]) / "summary.json").read_text(encoding="utf-8"))
+    assert report["uncertainty"] == uncertainty
+    assert report["source"]["aggregate_integrity"] == "verified"
+
+    variant = Path(result["run_root"]) / result["artifacts"][calibration["artifact"]]
+    saved = json.loads(variant.read_text(encoding="utf-8"))
+    observations = variant.parent / saved["artifacts"]["holdout_observations"]
+    observations.write_bytes(observations.read_bytes() + b"\n")
+    corrupted = pcd("analyze", result["run_root"], "--out", str(tmp_path / "c"), "--json", expect_success=False)
+    assert corrupted.returncode == 2
+    assert "differs from its recorded holdout_observations" in json.loads(corrupted.stdout)["error"]
+
+    observations.unlink()
+    incomplete = pcd("analyze", result["run_root"], "--out", str(tmp_path / "m"), "--json", expect_success=False)
+    assert incomplete.returncode == 1
+    report = json.loads((tmp_path / "m" / "summary.json").read_text(encoding="utf-8"))
+    assert report["status"] == "partial"
+    assert report["source"]["aggregate_integrity"] == "incomplete"
+
+
+@pytest.mark.usefixtures("ngspice")
 def test_source_observation_does_not_replace_the_actual_ac_load_voltage(tmp_path, make_case):
     from pcd.case import load_case
 
@@ -121,7 +177,7 @@ def test_source_observation_does_not_replace_the_actual_ac_load_voltage(tmp_path
     assert metrics["network_loss_W"] == pytest.approx(0.0025)
 
 
-@pytest.mark.skipif(not ngspice_available, reason="ngspice is not installed on this machine")
+@pytest.mark.usefixtures("ngspice")
 def test_simulation_only_journey_produces_the_boundary_artifacts(tmp_path):
     """RF/circuit engineer path: case -> netlist -> waveform, never metrics."""
 
@@ -138,7 +194,7 @@ def test_simulation_only_journey_produces_the_boundary_artifacts(tmp_path):
     assert not (run_dir / "metrics.json").exists(), "simulation must never score"
 
 
-@pytest.mark.skipif(not ngspice_available, reason="ngspice is not installed on this machine")
+@pytest.mark.usefixtures("ngspice")
 def test_scenario_aware_study_journey(tmp_path):
     run_root = tmp_path / "study"
     result = pcd(
@@ -166,7 +222,7 @@ def test_scenario_aware_study_journey(tmp_path):
     assert len(pd.read_csv(summary)) == 5
 
 
-@pytest.mark.skipif(not ngspice_available, reason="ngspice is not installed on this machine")
+@pytest.mark.usefixtures("ngspice")
 def test_production_safe_journey_uses_strict_validation_and_default_failure_exit(tmp_path):
     """Strict validation gates input; simulation failures are nonzero by default."""
 
@@ -190,7 +246,7 @@ def test_netlist_visualization_journey(tmp_path):
 # --- real solver -----------------------------------------------------------
 
 
-@pytest.mark.skipif(not ngspice_available, reason="ngspice is not installed on this machine")
+@pytest.mark.usefixtures("ngspice")
 def test_real_ngspice_transient_produces_a_physical_waveform(tmp_path):
     """The installed solver produces the physical transient artifact."""
 
@@ -228,7 +284,7 @@ def test_real_ngspice_transient_produces_a_physical_waveform(tmp_path):
     assert frame["voltage_V"].abs().max() <= 5.0 + 1e-6
 
 
-@pytest.mark.skipif(not ngspice_available, reason="ngspice is not installed on this machine")
+@pytest.mark.usefixtures("ngspice")
 def test_prescribed_resistance_profile_matches_the_analytic_divider(tmp_path):
     result = pcd(
         "sim-run",
@@ -259,7 +315,7 @@ def test_prescribed_resistance_profile_matches_the_analytic_divider(tmp_path):
     assert (frame["component_Rchamber_current_A"] - expected_current).abs().max() < 1e-10
 
 
-@pytest.mark.skipif(not ngspice_available, reason="ngspice is not installed on this machine")
+@pytest.mark.usefixtures("ngspice")
 def test_real_ngspice_closed_loop_completes(tmp_path):
     run_root = tmp_path / "ngspice_loop"
     result = pcd(
@@ -287,7 +343,40 @@ def test_real_ngspice_closed_loop_completes(tmp_path):
     assert payload["pareto"]["front_candidates"] >= 1
 
 
-@pytest.mark.skipif(not ngspice_available, reason="ngspice is not installed on this machine")
+@pytest.mark.usefixtures("ngspice")
+def test_short_condition_preserves_other_study_evidence(tmp_path, make_case):
+    case = make_case(
+        {
+            "case_id": "duration",
+            "source": {"type": "dc_voltage", "voltage_V": 1},
+            "variables": {"end_s": {"role": "operating", "default": 2e-6}},
+            "circuit": {
+                "components": [
+                    {"ref": "R1", "n1": "src", "n2": "out", "value": 1000},
+                    {"ref": "R2", "n1": "out", "n2": "0", "value": 1000},
+                ]
+            },
+            "solver": {"tran": {"step_s": 1e-8, "stop_s": "$end_s"}},
+            "target": {"objective": "waveform_l2", "waveform_file": "target.csv"},
+            "study": {
+                "scenarios": [{"id": "short", "values": {"end_s": 1e-6}}, {"id": "full", "values": {"end_s": 2e-6}}]
+            },
+        }
+    )
+    (case.base_dir / "target.csv").write_text("time_s,voltage_V\n1e-7,0.5\n2e-6,0.5\n", encoding="utf-8")
+    result = pcd(
+        "run", str(case.path), "--output", str(tmp_path / "runs"), "--trials", "1", "--json", expect_success=False
+    )
+    payload = json.loads(result.stdout)
+    assert result.returncode == 1
+    assert (Path(payload["run_root"]) / "study_result.json").is_file()
+    assert payload["best"]["status"] == "incomplete_evidence"
+    conditions = {row["scenario_id"]: row for row in payload["best"]["conditions"]}
+    assert conditions["short"]["status"] == "failed"
+    assert conditions["full"]["status"] == "accepted"
+
+
+@pytest.mark.usefixtures("ngspice")
 def test_measured_frequency_points_are_solved_only_at_their_own_frequency(tmp_path):
     result = pcd(
         "run",
@@ -314,7 +403,7 @@ def test_measured_frequency_points_are_solved_only_at_their_own_frequency(tmp_pa
         assert "reflection_magnitude" in metrics
 
 
-@pytest.mark.skipif(not ngspice_available, reason="ngspice is not installed on this machine")
+@pytest.mark.usefixtures("ngspice")
 def test_quasi_static_profile_matches_the_pi_network_closed_form(tmp_path):
     result = pcd(
         "run",
@@ -351,7 +440,7 @@ def test_quasi_static_profile_matches_the_pi_network_closed_form(tmp_path):
         assert row["load_real_power_W"] + row["network_loss_W"] == pytest.approx(row["source_real_power_W"], rel=2e-6)
 
 
-@pytest.mark.skipif(not ngspice_available, reason="ngspice is not installed on this machine")
+@pytest.mark.usefixtures("ngspice")
 def test_public_component_stress_and_loss_are_internally_consistent(tmp_path):
     result = pcd(
         "run",
@@ -380,7 +469,7 @@ def test_public_component_stress_and_loss_are_internally_consistent(tmp_path):
     assert metrics["component_loss_balance_residual_W"] == pytest.approx(0.0, abs=2e-5)
 
 
-@pytest.mark.skipif(not ngspice_available, reason="ngspice is not installed on this machine")
+@pytest.mark.usefixtures("ngspice")
 def test_power_accounting_closes_against_a_known_divider(tmp_path):
     """The probe -> generic RF-port metric chain, checked against algebra.
 
@@ -431,7 +520,50 @@ solver: {name: ngspice_cli, tran: {step_s: 1.0e-10, stop_s: 2.0e-5}}
     assert metrics["transfer_efficiency"] == pytest.approx(0.5, rel=1e-3)
 
 
-@pytest.mark.skipif(not ngspice_available, reason="ngspice is not installed on this machine")
+@pytest.mark.usefixtures("ngspice")
+def test_selected_source_power_is_not_the_network_balance_for_two_drives(tmp_path):
+    case = tmp_path / "two_sources.yaml"
+    case.write_text(
+        """
+schema: case_yaml.v1
+case_id: two_sources
+sources:
+  - {type: sine_voltage, name: Vone, p: src1, amplitude_V: 10, frequency_Hz: 1000000}
+  - {type: sine_voltage, name: Vtwo, p: src2, amplitude_V: 10, frequency_Hz: 1000000}
+circuit:
+  output_node: electrode
+  components:
+    - {ref: Rone, n1: src1, n2: electrode, value: 50}
+    - {ref: Rtwo, n1: src2, n2: electrode, value: 50}
+load: {name: resistor, ports: {p: electrode, n: 0}, reference_plane: electrode, R_ohm: 100}
+measurement: {current_source: Vone, load_current: auto}
+solver: {tran: {step_s: 1.0e-9, stop_s: 8.0e-6}}
+target: {objective: rf_load, constraints: {metric_bounds: {network_loss_W: {max: 0.05}}}}
+study: {objectives: [{metric: load_real_power_W, direction: maximize}]}
+""".lstrip(),
+        encoding="utf-8",
+    )
+    result = pcd("run", str(case), "--output", str(tmp_path), "--require-acceptance", "--json", expect_success=False)
+    assert result.returncode == 1
+    study = json.loads(result.stdout)
+    assert study["best"]["status"] == "incomplete_evidence"
+    assert "Vtwo" in study["best"]["conditions"][0]["failed_constraints"][0]["detail"]
+
+    root = Path(study["run_root"])
+    evaluation = selected_evaluation(read_best_candidate(root)["scenarios"][0])
+    manifest = root / evaluation["raw"]["artifacts"]["manifest"]
+    report = json.loads(pcd("analyze", str(manifest), "--out", str(tmp_path / "report"), "--json").stdout)
+    assert report["measurement"]["observed_source"] == "Vone"
+    assert report["measurement"]["load_reference_plane"] == "electrode"
+    periodic = report["analyses"]["transient"]["periodic"]
+    # Equivalent 25 Ω source resistance and 100 Ω load give 8 V peak at the load.
+    assert periodic["load_real_power_W"] == pytest.approx(0.32, rel=1e-3)
+    assert periodic["source_real_power_W"] == pytest.approx(0.2, rel=1e-3)
+    assert periodic["network_loss_W"] is None
+    assert periodic["transfer_efficiency"] is None
+
+
+@pytest.mark.usefixtures("ngspice")
 @pytest.mark.parametrize(
     "case_name",
     ["impedance_point", "ccp_lumped", "icp_transformer", "icp_transformer_high_q"],
@@ -475,6 +607,11 @@ def test_each_rf_load_matches_its_analytic_impedance_in_ngspice(tmp_path, case_n
     }
     load, expected = configurations[case_name]
     model = case_name.removesuffix("_high_q")
+    ac = (
+        {"frequency_Hz": f0}
+        if model == "impedance_point"
+        else {"sweep": "lin", "points": 3, "start_Hz": f0 / 2, "stop_Hz": 1.5 * f0}
+    )
     case = tmp_path / f"{case_name}.yaml"
     case.write_text(
         yaml_dump(
@@ -482,12 +619,12 @@ def test_each_rf_load_matches_its_analytic_impedance_in_ngspice(tmp_path, case_n
                 "schema": "case_yaml.v1",
                 "case_id": f"e2e_{case_name}",
                 "source": {
-                    "type": "sine_voltage",
+                    "type": "dc_voltage",
                     "name": "Vsrc",
                     "p": "src",
                     "n": 0,
-                    "amplitude_V": 1,
-                    "frequency_Hz": f0,
+                    "voltage_V": 0,
+                    "ac_magnitude_V": 1,
                 },
                 "circuit": {
                     "builder": "from_yaml",
@@ -501,10 +638,7 @@ def test_each_rf_load_matches_its_analytic_impedance_in_ngspice(tmp_path, case_n
                     "characterization": {"origin": "analytic_e2e"},
                     **load,
                 },
-                "solver": {
-                    "name": "ngspice_cli",
-                    "ac": {"sweep": "lin", "points": 3, "start_Hz": f0 / 2, "stop_Hz": 1.5 * f0},
-                },
+                "solver": {"name": "ngspice_cli", "ac": ac},
                 "target": {"objective": "impedance_match"},
             }
         ),
@@ -520,7 +654,7 @@ def test_each_rf_load_matches_its_analytic_impedance_in_ngspice(tmp_path, case_n
     assert pd.read_csv(run_dir / summary["artifacts"]["waveform"]).empty
 
 
-@pytest.mark.skipif(not ngspice_available, reason="ngspice is not installed on this machine")
+@pytest.mark.usefixtures("ngspice")
 def test_a_nearly_reactive_load_is_measured_correctly_end_to_end(tmp_path):
     """The integration guard for the whole measurement chain.
 

@@ -1,8 +1,5 @@
 name: quality
 
-# The gate of record: re-runs `quality-pr` from a clean checkout and judges on
-# the exit code, never on a summary written by whoever made the change.
-
 on:
   pull_request:
   push:
@@ -18,46 +15,68 @@ permissions:
 
 jobs:
   quality-pr:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025]
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
-      - name: Install the real circuit solver
+      - name: Install ngspice on Linux
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ngspice
+      - name: Install ngspice on Windows
+        id: msys2
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: mingw-w64-ucrt-x86_64-ngspice
+      - name: Expose the Windows solver to native Python
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          MSYS2_LOCATION: ${{ steps.msys2.outputs.msys2-location }}
+        run: Join-Path $env:MSYS2_LOCATION 'ucrt64/bin' >> $env:GITHUB_PATH
+      - run: uv sync --group dev --frozen --python 3.12
+      - run: uv run --frozen --no-sync python -m nox -s quality-pr
+      - name: Build and install the wheel
+        shell: pwsh
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ngspice
-      - run: uv sync --group dev --frozen
-      - run: uv run --frozen python -m nox -s quality-pr
+          $PSNativeCommandUseErrorActionPreference = $true
+          uv build --wheel --out-dir "$env:RUNNER_TEMP/dist"
+          uv venv --python 3.12 "$env:RUNNER_TEMP/pcd-wheel"
+          $wheel = (Get-ChildItem "$env:RUNNER_TEMP/dist" -Filter *.whl).FullName
+          uv pip install --python "$env:RUNNER_TEMP/pcd-wheel" $wheel
+      - name: Exercise the installed wheel outside the checkout
+        shell: pwsh
+        working-directory: ${{ runner.temp }}
+        run: |
+          $python = if ($IsWindows) { 'Scripts/python.exe' } else { 'bin/python' }
+          & "$env:RUNNER_TEMP/pcd-wheel/$python" -I "$env:GITHUB_WORKSPACE/tests/wheel_smoke.py"
 
-  # Exercise the wheel outside the checkout, including supported minimum minors.
-  packaging:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    strategy:
-      matrix:
-        dependencies: [current, minimum]
+  packaging-minimum:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
-      - name: Install the real circuit solver
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v7
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ngspice
+      - name: Build and install against the minimum dependency set
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ngspice
-      - run: uv build --wheel
-      - run: uv venv --python 3.10 /tmp/pcd-wheel
-      - if: matrix.dependencies == 'current'
-        run: uv pip install --python /tmp/pcd-wheel/bin/python dist/*.whl
-      - if: matrix.dependencies == 'minimum'
-        run: >-
-          uv pip install --python /tmp/pcd-wheel/bin/python dist/*.whl
-          'numpy==1.23.5' 'pandas==1.5.3' 'scipy==1.10.1'
-          'matplotlib==3.6.3' 'PyYAML==6.0' 'schemdraw==0.23'
-      - working-directory: /tmp
-        run: |
-          /tmp/pcd-wheel/bin/python -I -m pcd list
-          /tmp/pcd-wheel/bin/python -I -c "import numpy as np; from pcd.signals import time_average; from scipy.optimize import least_squares; assert time_average(np.array([0., 2.]), np.array([0., 1.])) == 1.; assert abs(least_squares(lambda x: x - 2, [1.], bounds=(0, 3)).x[0] - 2) < 1e-5"
-          /tmp/pcd-wheel/bin/python -I -m pcd sim-netlist "$GITHUB_WORKSPACE/examples/rf_ccp_lumped.yaml" --out /tmp/package-smoke.cir
-          /tmp/pcd-wheel/bin/python -I -m pcd run "$GITHUB_WORKSPACE/bench/cases/role_factorial_search.yaml" --output /tmp/package-study --require-acceptance --json
+          uv build --wheel --out-dir "$RUNNER_TEMP/dist"
+          uv venv --python 3.10 "$RUNNER_TEMP/pcd-wheel"
+          uv pip install --python "$RUNNER_TEMP/pcd-wheel" "$RUNNER_TEMP"/dist/*.whl \
+            numpy==1.23.5 pandas==1.5.3 scipy==1.10.1 matplotlib==3.6.3 PyYAML==6.0 schemdraw==0.23
+      - name: Exercise the installed wheel outside the checkout
+        working-directory: ${{ runner.temp }}
+        run: '"$RUNNER_TEMP/pcd-wheel/bin/python" -I "$GITHUB_WORKSPACE/tests/wheel_smoke.py"'

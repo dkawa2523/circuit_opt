@@ -1,17 +1,34 @@
 # Changelog
 
+For setup, input options and results, start with the [current user guide](docs/manual-ja.md).
+
+## Unreleased
+
+- Add `network-run` for complex S-parameters at declared electrical reference
+  planes and support resuming compatible checkpoints for built-in design search.
+- Refresh the getting-started guide, runnable examples and result-reading
+  instructions. Remove superseded roadmaps, study write-ups and generated reports.
+- Resolve solver, metric and optimizer names in case preflight using the
+  same case-scoped registrations as execution. Keep parameter-domain checks
+  shared by point selection and search, and exact enumeration specific to grid search.
+- Share CCP and ICP load parameter checks between input and rendering. Allow
+  AC sweeps of these models without a transient fundamental. Keep load evidence
+  as provenance and report short periodic windows for settled RF scoring.
+- Keep core, literature, measured-data and release acceptance suites separate.
+  The literature suite runs directly with `--run-root` and reports one aggregate
+  `passed` verdict.
+- Remove retired publication generators, synthetic optimizer comparisons and
+  their optional dependencies. The integrated manual, runnable examples and
+  benchmark source data describe the maintained workflows.
+
 ## 0.22.1 — 2026-10-26
 
 - Consolidate the input, output, load-model, component-stress, architecture,
   and figure specifications into one Japanese engineering manual. Include
   complete YAML examples, measurement conventions, result interpretation,
   and reproducible numerical demonstrations.
-- Replace the long implementation plan with a current roadmap; organize
-  individual studies and research notes separately, and repair their links.
 - Ship the same manual, generated SVG figures and runnable examples in the
   wheel under `share/pcd`, preserving their relative paths without a second copy.
-- Keep numerical behavior unchanged. Retain frozen benchmark data and their
-  unique provenance documents separately from the current specification.
 
 ## 0.22.0 — 2026-10-26
 
@@ -151,9 +168,6 @@
 - Reduce quality checks to Ruff, Pyrefly, import boundaries, and meaningful
   behavior tests; remove redundant diagnostic dependencies and percentage gates.
 - Check built wheels outside the checkout, including minimum dependency minors.
-- Replace stale workflow/planning text and remove obsolete build/cache files
-  and retired documentation. Historical publication evidence remains explicitly
-  labeled as such; pending local export cleanup is recorded separately.
 
 ## 0.16.0
 
@@ -166,6 +180,3 @@
 - Resolve saved-run artifacts centrally and provide preview-first generation
   retention without deleting reusable raw solves.
 - Add the repository-local `pcd-runner` skill.
-
-Intermediate development experiments and retired interfaces are available in
-Git history. Current behavior is described by README and the input reference.

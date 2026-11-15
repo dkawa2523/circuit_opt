@@ -350,6 +350,25 @@ def test_ccp_and_icp_are_explicit_load_choices_not_plasma_state_solvers():
 
 
 @pytest.mark.parametrize(
+    ("label_input", "expected"),
+    [
+        ({}, "load_ports"),
+        ({"reference_plane": None}, "load_ports"),
+        ({"reference_plane": "  "}, "load_ports"),
+        ({"reference_plane": "Fixture plane A"}, "Fixture plane A"),
+        ({"reference_plane": 2}, "2"),
+    ],
+)
+def test_public_load_plane_label_is_optional_and_keeps_the_same_terminals(label_input, expected):
+    data = _base()
+    data["load"].pop("reference_plane")
+    data["load"].update(label_input)
+    load = compile_rf_case(data, Path.cwd()).case["load"]
+    assert load["reference_plane"] == expected
+    assert load["ports"] == {"p": "electrode", "n": "0"}
+
+
+@pytest.mark.parametrize(
     ("load", "message"),
     [
         (
@@ -392,15 +411,17 @@ def test_public_load_parameters_obey_the_renderer_domain(load, message):
         compile_rf_case(data, Path.cwd())
 
 
-def test_characterization_is_optional_but_visible_as_a_strict_warning(tmp_path):
+def test_characterization_is_optional_provenance(tmp_path):
     data = _base()
+    evidence = data["load"]["evidence"]
+    assert compile_rf_case(data, tmp_path).case["load"]["characterization"] == evidence
     data["load"].pop("evidence")
     path = tmp_path / "case.yaml"
     path.write_text(yaml.safe_dump(data), encoding="utf-8")
     case = load_case(path)
 
-    assert validate_case(case).ok
-    assert any(issue.code == "load.missing_characterization" for issue in validate_case(case, strict=True).issues)
+    assert "characterization" not in case.data["load"]
+    assert validate_case(case, strict=True).ok
 
 
 def _bad_topology(data):
@@ -435,10 +456,6 @@ def _two_reflection_limits(data):
 
 def _bad_reflection_limit(data):
     data["acceptance"]["reflected_power_fraction_max"] = 2
-
-
-def _missing_reference_plane(data):
-    data["load"].pop("reference_plane")
 
 
 def _missing_drive(data):
@@ -533,7 +550,6 @@ def _invalid_margin(data):
         (_control_limit, "exceeding the safety limit"),
         (_two_reflection_limits, "exactly one"),
         (_bad_reflection_limit, "between 0 and 1"),
-        (_missing_reference_plane, "reference_plane"),
         (_missing_drive, "drive_peak_V"),
         (_loss_limit_without_loss, "loss_ohm"),
         (_unknown_loss_component, "not used"),

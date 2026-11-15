@@ -21,7 +21,7 @@ These bounds do not include RFZ60 measurement uncertainty.
 Run the source-fidelity and one-port replay checks from the repository root:
 
 ```powershell
-uv run python bench/literature/p1_colpo1999_icp/digitized/run.py
+uv run --frozen python bench/literature/p1_colpo1999_icp/digitized/run.py --run-root runs/literature/colpo_centers --output runs/literature/colpo_centers/evaluation.json
 ```
 
 The runner reverses every pixel transform, checks pairing, exclusions,
@@ -51,11 +51,11 @@ Run the central replay plus the fixed-network and 16-state bounded-tuner
 challenge from the repository root:
 
 ```powershell
-uv run python bench/literature/p1_colpo1999_icp/digitized/run_uncertainty_challenge.py
+uv run --frozen python bench/literature/p1_colpo1999_icp/digitized/run_uncertainty_challenge.py --run-root runs/literature/colpo_corners
 ```
 
-The report emphasizes robust, mixed, and failed parent conditions; it does not
-treat the 60 corners as independent operating observations. The two matching
+Read `REPORT.md` and `evaluation.json` under `runs/literature/colpo_corners`
+for the classification of each parent condition. The two matching
 networks and the 10% reflected-power criterion are platform
 engineering fixtures.  They are deliberately not identified as the unpublished
 Colpo matcher, and they establish neither RFZ60 measurement uncertainty nor

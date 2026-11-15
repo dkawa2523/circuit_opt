@@ -1,6 +1,6 @@
 """Persistent, replayable design-study results."""
 
-from .maintenance import prune_generations
+from .maintenance import prune_generations, prune_raw_cache
 from .report import (
     best_decision_summary,
     candidate_summary,
@@ -19,6 +19,7 @@ __all__ = [
     "candidate_summary",
     "pareto_front_table",
     "prune_generations",
+    "prune_raw_cache",
     "quasi_static_snapshot_table",
     "raw_evaluation_identity",
     "raw_evaluation_key",

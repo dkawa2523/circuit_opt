@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import shutil
 import subprocess
 import sys
 from copy import deepcopy
@@ -227,11 +226,8 @@ def test_missing_solver_is_a_saved_unavailable_fit_without_fabricated_estimates(
     assert fit["n_candidates"] == 1
 
 
-NGSPICE = shutil.which("ngspice_con.exe") or shutil.which("ngspice")
-
-
 @pytest.mark.e2e
-@pytest.mark.skipif(not NGSPICE, reason="ngspice is not installed")
+@pytest.mark.usefixtures("ngspice")
 def test_display_node_and_ac_marker_do_not_change_transient_load_measurements(make_case, tmp_path):
     case = make_case(
         {
@@ -246,8 +242,8 @@ def test_display_node_and_ac_marker_do_not_change_transient_load_measurements(ma
             },
         }
     )
+    from pcd.api import simulate_case
     from pcd.reporting.run import analyze_run
-    from pcd.sim_core import simulate_case
 
     record = simulate_case(case, run_root=tmp_path / "runs")
     assert record.status == "ok"
@@ -263,7 +259,7 @@ def test_display_node_and_ac_marker_do_not_change_transient_load_measurements(ma
 
 
 @pytest.mark.e2e
-@pytest.mark.skipif(not NGSPICE, reason="ngspice is not installed")
+@pytest.mark.usefixtures("ngspice")
 def test_least_squares_minimizes_the_declared_weighted_rms_error(make_case, tmp_path):
     observations = []
     for name, resistance, weight in [("a", 10, 1), ("b", 30, 3), ("holdout", 25, 1)]:
@@ -313,7 +309,7 @@ def test_least_squares_minimizes_the_declared_weighted_rms_error(make_case, tmp_
 
 
 @pytest.mark.e2e
-@pytest.mark.skipif(not NGSPICE, reason="ngspice is not installed")
+@pytest.mark.usefixtures("ngspice")
 def test_current_source_keeps_its_units_and_uses_ac_current_in_ac_measurements(make_case, tmp_path):
     from pcd.analysis.measurements import ac_operating_metrics
     from pcd.sim_core import execute_case
@@ -335,3 +331,19 @@ def test_current_source_keeps_its_units_and_uses_ac_current_in_ac_measurements(m
     assert metrics["resistance_ohm"] == pytest.approx(100)
     assert metrics["source_real_power_W"] == pytest.approx(50)
     assert metrics["load_real_power_W"] == pytest.approx(50)
+
+
+@pytest.mark.parametrize("vector", ["v(out)", "v(0,src)"])
+def test_known_imported_source_rejects_another_voltage_plane(make_case, tmp_path, vector):
+    from pcd.simulation_input import resolve_simulation_case
+
+    (tmp_path / "circuit.cir").write_text("title\nV1 src 0 AC 1\nR1 src out 50\nR2 out 0 50\n.end\n")
+    case = make_case(
+        {
+            "circuit": {"builder": "from_netlist", "netlist_file": "circuit.cir", "netlist_mode": "deck"},
+            "measurement": {"current_source": "v1", "source_voltage": vector},
+        }
+    )
+
+    with pytest.raises(ValueError, match="selected source's p,n port with the same polarity"):
+        resolve_simulation_case(case)

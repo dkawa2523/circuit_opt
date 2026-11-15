@@ -30,6 +30,8 @@ load:
   resistance_ohm: Rload
   reactance_ohm: Xload
   model_frequency_Hz: 1000000
+  reference_plane: electrode
+  characterization: {origin: synthetic_test}
 measurement:
   voltage_node: electrode
   current_source: Vsrc

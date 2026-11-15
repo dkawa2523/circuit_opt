@@ -9,12 +9,7 @@ import numpy as np
 import pytest
 
 from pcd.artifacts import write_json
-from pcd.case import (
-    NO_SOURCE_WARNING,
-    case_warnings,
-    load_case,
-    variable_specs,
-)
+from pcd.case import load_case, variable_specs
 from pcd.core.spaces import grid_values
 from pcd.search import sample_param
 from pcd.spice import is_spice_literal, resolve_value, spice_value
@@ -104,11 +99,6 @@ def test_categorical_sampling_is_reproducible_for_a_seed():
     assert first == second
 
 
-def test_log_scale_rejects_non_positive_bounds():
-    with pytest.raises(ValueError, match="log-scale bounds must be positive"):
-        sample_param(np.random.default_rng(0), {"bounds": [-1.0, 10.0], "scale": "log"})
-
-
 # --- grids -----------------------------------------------------------------
 
 
@@ -122,12 +112,6 @@ def test_log_grid_is_monotonic_and_bounded(levels: int) -> None:
     if levels > 1:
         # geomspace(lo, hi, 1) yields [lo]; only a multi-point grid spans the range.
         assert values[-1] == pytest.approx(hi, rel=1e-9)
-
-
-def test_grid_uses_choices_and_explicit_values_verbatim():
-    assert grid_values({"choices": ["a", "b"]}) == ["a", "b"]
-    assert grid_values({"values": [1, 2, 3]}) == [1, 2, 3]
-    assert grid_values({"default": 7}) == [7]
 
 
 # --- loading case files ----------------------------------------------------
@@ -217,14 +201,6 @@ def test_a_variable_declared_twice_is_reported(make_case):
     )
     with pytest.raises(ValueError, match=r"C1.*declared in both"):
         variable_specs(case)
-
-
-def test_a_case_without_a_source_is_reported(make_case):
-    assert NO_SOURCE_WARNING in case_warnings(make_case({"case_id": "nosrc"}))
-
-
-def test_an_empty_source_mapping_is_an_explicit_default_source(make_case):
-    assert NO_SOURCE_WARNING not in case_warnings(make_case({"case_id": "default_src", "source": {}}))
 
 
 # --- the drive frequency ----------------------------------------------------

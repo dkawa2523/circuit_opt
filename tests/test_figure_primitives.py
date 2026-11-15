@@ -1,17 +1,15 @@
-"""Geometry contracts for the small publication-figure layer."""
+"""Geometry contracts for circuit diagrams."""
 
 from __future__ import annotations
 
-import struct
+import math
 
 import pytest
 import schemdraw.elements as elm
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
 
-from bench.figures.generate import ROOT as FIGURE_ROOT
-from bench.figures.generate import _repository_path
-from pcd.figures import PAGE_SIZE, CircuitDiagram, CircuitViewport, assert_text_inside_canvas
+from pcd.figures.circuit import CircuitDiagram, CircuitViewport
 
 
 def _figure_with_axis(figsize: tuple[float, float] = (6.4, 4.8)):
@@ -23,10 +21,10 @@ def _figure_with_axis(figsize: tuple[float, float] = (6.4, 4.8)):
 def test_component_symbol_length_does_not_follow_layout_span():
     _figure, axis = _figure_with_axis()
     circuit = CircuitDiagram(axis)
-    circuit.component(elm.Resistor, (0.0, 0.0), (2.0, 0.0), name="short-span")
-    circuit.component(elm.Inductor, (0.0, -1.0), (3.5, -1.0), name="long-span")
+    resistor = circuit.component(elm.Resistor, (0.0, 0.0), (2.0, 0.0))
+    inductor = circuit.component(elm.Inductor, (0.0, -1.0), (3.5, -1.0))
 
-    lengths = [placement.symbol_length for placement in circuit.placements]
+    lengths = [math.dist(element.absanchors["start"], element.absanchors["end"]) for element in (resistor, inductor)]
     assert lengths == pytest.approx([circuit.style.component_length] * 2)
 
 
@@ -51,32 +49,3 @@ def test_component_rejects_diagonal_or_too_short_spans():
         circuit.component(elm.Resistor, (0.0, 0.0), (2.0, 1.0))
     with pytest.raises(ValueError, match="shorter"):
         circuit.component(elm.Resistor, (0.0, 0.0), (0.5, 0.0))
-
-
-def test_named_anchor_cannot_silently_move():
-    _figure, axis = _figure_with_axis()
-    circuit = CircuitDiagram(axis)
-    assert circuit.anchor("load", (2.0, 0.0)) == (2.0, 0.0)
-    assert circuit.anchor("load") == (2.0, 0.0)
-    with pytest.raises(ValueError, match="already declared"):
-        circuit.anchor("load", (2.1, 0.0))
-
-
-def test_fixed_page_exports_exact_pixel_dimensions(tmp_path):
-    figure = Figure(figsize=PAGE_SIZE)
-    FigureCanvasAgg(figure)
-    figure.text(0.5, 0.5, "inside", ha="center", va="center")
-    assert_text_inside_canvas(figure)
-    path = tmp_path / "page.png"
-    figure.savefig(path, dpi=100)
-    with path.open("rb") as handle:
-        handle.seek(16)
-        width, height = struct.unpack(">II", handle.read(8))
-    assert (height, width) == (480, 725)
-
-
-def test_committed_figure_provenance_uses_repository_relative_paths():
-    assert _repository_path(FIGURE_ROOT / "runs" / "benchmark_suite") == "runs/benchmark_suite"
-
-    with pytest.raises(ValueError, match="inside the repository"):
-        _repository_path(FIGURE_ROOT.parent / "external-run")

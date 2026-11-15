@@ -28,14 +28,14 @@ running a command. Select one mode from the user's requested outcome:
 
 - validation or netlist inspection without solver execution;
 - one simulation without objective scoring;
+- small-signal scattering at declared DUT ports;
 - a complete scenario-aware design study;
 - bounded effective-terminal identification with fit/holdout evidence;
 - inspection, visualization, or export of an existing result;
-- explicit full benchmark/report reproduction.
+- explicit benchmark reproduction.
 
-For PCD v1 release closure, use the dedicated `bench/release/run_suite.py`
-workflow documented in the execution modes. Report its circuit decision and
-physical scope boundary; machine learning is not part of that gate.
+For workflow acceptance, use `bench/release/run_suite.py`. Report its circuit
+decision and physical scope.
 
 If the user asks only to smoke-test the platform and provides no case, use
 `bench/cases/topology_l_match_golden.yaml`. It is a one-evaluation engine
@@ -56,8 +56,7 @@ conformance case, not a qualified chamber design.
   requested by the user. Do not turn a public exhaustive RF grid into an
   exploratory sampled search.
 - Put reproducible runtime data under `runs/` unless the user supplies another
-  path. Do not overwrite committed report or figure artifacts unless the user
-  asks to reproduce them.
+  path.
 - Treat a nonzero exit as meaningful. Inspect the saved failure record when
   available. Use `--allow-failure` only for an explicitly requested
   data-collection workflow.
@@ -72,13 +71,10 @@ conflicts from shared nodes.
 
 ## Read and report results
 
-Use paths recorded in `study_result.json`, `identification_result.json`, a
-simulation `summary.json`, or its `debug/manifest.json`; do not assume that
-active files live directly under a study root. In a study, follow
+Use paths recorded in `study_result.json`, `identification_result.json`,
+`network_result.json`, or a simulation `summary.json`. In a study, follow
 `artifacts.generation` to the immutable generation and use its
-`evaluations.csv` as the complete audit/source table. There is currently no
-public ML export, training, or candidate-proposal command. Do not infer such a
-contract from saved result columns.
+`evaluations.csv` as the complete audit table.
 
 Report only the evidence produced by the selected mode. Include:
 
@@ -101,5 +97,4 @@ Keep these meanings distinct:
 
 For model interpretation, input fields, external netlists, output and extension
 boundaries, read [the integrated manual](../../../docs/manual-ja.md), sections
-4–10 and 14–15. The manual is the current specification; research notes and
-publication snapshots describe their own stated scope.
+4–10 and 14–15.

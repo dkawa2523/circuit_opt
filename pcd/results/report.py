@@ -11,21 +11,15 @@ import pandas as pd
 
 from pcd.core.models import CandidateResult, StudySpec
 
-
-def _study_result(root: Path) -> dict[str, Any]:
-    path = root / "study_result.json"
-    return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+from .record import read_saved_result
+from .table import read_evaluation_csv
 
 
 def study_artifact_path(study_root: str | Path, name: str) -> Path | None:
     """Resolve one artifact from the committed study generation."""
 
-    root = Path(study_root)
-    declared = (_study_result(root).get("artifacts") or {}).get(name)
-    if isinstance(declared, str) and declared:
-        path = Path(declared)
-        return path if path.is_absolute() else root / path
-    return None
+    record = read_saved_result(study_root, study_only=True)
+    return record.artifact_path(name) if record is not None else None
 
 
 def read_best_candidate(study_root: str | Path) -> dict[str, Any]:
@@ -46,7 +40,7 @@ def read_evaluation_table(study_root: str | Path) -> pd.DataFrame:
     path = study_artifact_path(study_root, "evaluation_table")
     if path is None or not path.is_file():
         raise FileNotFoundError(f"study does not declare an evaluation table: {study_root}")
-    return pd.read_csv(path)
+    return read_evaluation_csv(path)
 
 
 def selected_evaluation(scenario: Mapping[str, Any]) -> dict[str, Any]:
@@ -67,13 +61,18 @@ def best_decision_summary(
     best: CandidateResult,
     *,
     n_failed_evaluations: int = 0,
+    missing_acceptance_evidence: bool = False,
 ) -> dict[str, Any]:
     """Project the selected candidate into a compact engineering decision summary."""
 
-    if not best.successful or best.success_fraction < 1.0:
+    successful = best.successful
+    if not successful:
         status = "incomplete_evidence"
         limitation = "selected_candidate_failed_conditions"
-    elif best.feasible and best.feasible_fraction == 1.0:
+    elif any(not evaluation.evidence_available for evaluation in best.evaluations):
+        status = "incomplete_evidence"
+        limitation = "selected_candidate_missing_acceptance_evidence"
+    elif best.feasible:
         status = "meets_declared_acceptance"
         limitation = "none"
     else:
@@ -86,6 +85,8 @@ def best_decision_summary(
         selected = scenario_result.selected
         if not selected.raw.ok:
             condition_status = "failed"
+        elif not selected.evidence_available:
+            condition_status = "incomplete_evidence"
         elif selected.feasible:
             condition_status = "accepted"
         elif scenario_result.edge_limited:
@@ -108,6 +109,12 @@ def best_decision_summary(
             }
         )
 
+    evidence_limitation = "none"
+    if n_failed_evaluations or not successful:
+        evidence_limitation = "failed_evaluations"
+    elif missing_acceptance_evidence or limitation == "selected_candidate_missing_acceptance_evidence":
+        evidence_limitation = "missing_acceptance_evidence"
+
     return {
         "candidate": best.candidate.to_dict(),
         "aggregates": dict(best.aggregates),
@@ -119,8 +126,8 @@ def best_decision_summary(
         "edge_limited": best.edge_limited,
         "status": status,
         "limitation": limitation,
-        "evaluation_evidence": "complete" if n_failed_evaluations == 0 else "incomplete_evidence",
-        "evidence_limitation": "none" if n_failed_evaluations == 0 else "failed_evaluations",
+        "evaluation_evidence": "complete" if evidence_limitation == "none" else "incomplete_evidence",
+        "evidence_limitation": evidence_limitation,
         "coverage": {
             "conditions": len(conditions),
             "solved": sum(item["status"] != "failed" for item in conditions),
@@ -130,8 +137,7 @@ def best_decision_summary(
     }
 
 
-def _candidate_history(root: Path) -> list[dict[str, Any]]:
-    history_path = study_artifact_path(root, "history")
+def _candidate_history(history_path: Path | None) -> list[dict[str, Any]]:
     if history_path is None or not history_path.is_file():
         return []
     history = json.loads(history_path.read_text(encoding="utf-8"))
@@ -157,15 +163,23 @@ def _candidate_frame(history: list[dict[str, Any]]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _sorted_candidate_frame(frame: pd.DataFrame, payload: Mapping[str, Any]) -> pd.DataFrame:
+def _sorted_candidate_frame(
+    frame: pd.DataFrame, payload: Mapping[str, Any], history: list[dict[str, Any]]
+) -> pd.DataFrame:
+    selected_id = ((payload.get("best") or {}).get("candidate") or {}).get("candidate_id")
+    if selected_id is not None:
+        frame.insert(1, "selected", frame["candidate_id"].eq(selected_id))
+    if all("rank" in row for row in history):
+        ranks = [tuple(float("inf") if value is None else float(value) for value in row["rank"]) for row in history]
+        positions = sorted(range(len(ranks)), key=ranks.__getitem__)
+        return frame.iloc[positions].reset_index(drop=True)
+
+    # Older result files may not record the engine's rank.
     objectives = [name for name in frame.columns if name.startswith("objective.")]
     directions = {
         f"objective.{objective.get('metric', '')}": str(objective.get("direction", "minimize"))
         for objective in (payload.get("study") or {}).get("objectives") or []
     }
-    selected_id = ((payload.get("best") or {}).get("candidate") or {}).get("candidate_id")
-    if selected_id is not None:
-        frame.insert(1, "selected", frame["candidate_id"].eq(selected_id))
     order = ["success_fraction", "feasible_fraction", "total_violation", *objectives, "control_margin"]
     ascending = [False, False, True]
     ascending.extend(directions.get(name, "minimize") != "maximize" for name in objectives)
@@ -176,9 +190,12 @@ def _sorted_candidate_frame(frame: pd.DataFrame, payload: Mapping[str, Any]) -> 
 def candidate_summary(study_root: str | Path) -> pd.DataFrame:
     """Read the compact all-candidate comparison from study history."""
 
-    root = Path(study_root)
-    frame = _candidate_frame(_candidate_history(root))
-    return frame if frame.empty else _sorted_candidate_frame(frame, _study_result(root))
+    record = read_saved_result(study_root, study_only=True)
+    if record is None:
+        return pd.DataFrame()
+    history = _candidate_history(record.artifact_path("history"))
+    frame = _candidate_frame(history)
+    return frame if frame.empty else _sorted_candidate_frame(frame, record.payload, history)
 
 
 def pareto_front_table(

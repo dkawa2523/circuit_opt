@@ -52,7 +52,7 @@ def output_settings(raw: Any = None) -> dict[str, Any]:
     if plots != "auto" and not isinstance(plots, list):
         raise ValueError("output.plots must be auto or a list")
     resolved = []
-    names: set[str] = set()
+    names = {"circuit"}
     if isinstance(plots, list):
         for index, item in enumerate(plots):
             if not isinstance(item, Mapping):
@@ -72,9 +72,11 @@ def output_settings(raw: Any = None) -> dict[str, Any]:
             if "title" in item and (not isinstance(item["title"], str) or not item["title"].strip()):
                 raise ValueError("output plot title must be a nonempty string")
             name = str(item.get("name", f"{kind}_{index + 1}"))
-            if name != artifact_path_segment(name, 64) or name in names or name == "circuit":
-                raise ValueError("output plot names must be unique safe filename segments (up to 64 characters)")
-            names.add(name)
+            if name != artifact_path_segment(name, 64) or name.casefold() in names:
+                raise ValueError(
+                    "output plot names must be unique case-insensitive safe filename segments (up to 64 characters)"
+                )
+            names.add(name.casefold())
             recipe["name"] = name
             if kind == "bode":
                 if not all(

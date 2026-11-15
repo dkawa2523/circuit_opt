@@ -1,7 +1,7 @@
 """Translate ngspice output files into canonical simulation data.
 
-This module knows historical ``wrdata`` layouts and canonical CSV columns. It
-does not compute impedance, power, objectives, or engineering acceptance.
+This module decodes the generated ``wrdata`` layout and reads saved AC CSV
+observations. Measurements consume the resulting canonical data.
 """
 
 from __future__ import annotations
@@ -27,11 +27,12 @@ def read_frequency_response(
     if first_line.split(",", 1)[0].strip() == "frequency_Hz":
         return _read_canonical_frequency_response(path, extra_columns)
 
-    values = np.loadtxt(path)
-    if values.ndim == 1:
-        values = values.reshape(1, -1)
+    values = np.loadtxt(path, ndmin=2)
     if values.shape[1] < 6:
         raise ValueError(f"AC output needs 6 columns (scale, re, im per vector): {path}")
+    expected = 3 * (2 + len(extra_columns or ()))
+    if extra_columns is not None and values.shape[1] != expected:
+        raise ValueError(f"AC output expected {expected} columns for its probes, found {values.shape[1]}: {path}")
     data = {
         "frequency_Hz": values[:, 0],
         "voltage_re": values[:, 1],
@@ -41,8 +42,6 @@ def read_frequency_response(
     }
     for index, name in enumerate(extra_columns or (), start=2):
         base = 3 * index
-        if base + 2 >= values.shape[1]:
-            raise ValueError(f"AC output is missing vector {name!r}: {path}")
         data[f"{name}_re"] = values[:, base + 1]
         data[f"{name}_im"] = values[:, base + 2]
     return pd.DataFrame(data)
@@ -60,40 +59,21 @@ def _read_canonical_frequency_response(path: Path, extra_columns: Sequence[str] 
     return frame
 
 
-# Older ngspice releases wrote a different number of columns for the same
-# three vectors, so the standard layouts remain pinned by column count.
-_TRANSIENT_COLUMNS = {6: (0, 3, 5), 5: (0, 2, 4), 4: (0, 1, 3), 3: (0, 1, 2)}
+def read_transient_output(
+    path: str | Path, probe_columns: Sequence[str], *, has_source_current: bool = True
+) -> SimulationResult:
+    """Read scale/value pairs for time, voltage, optional source current and each probe."""
 
-
-def read_transient_output(path: str | Path, probe_columns: Sequence[str] | None = None) -> SimulationResult:
-    """Read one ngspice transient ``wrdata`` file."""
-
-    values = np.loadtxt(path)
-    if values.ndim == 1:
-        values = values.reshape(1, -1)
+    values = np.loadtxt(path, ndmin=2)
     width = values.shape[1]
-    if width == 2:
-        return SimulationResult(time_s=values[:, 0], voltage_V=values[:, 1], current_A=None)
-
-    names = tuple(probe_columns or ())
-    if names:
-        vectors = values[:, 1::2]
-        expected = 3 + len(names)
-        if vectors.shape[1] < expected:
-            raise ValueError(f"expected {expected} vectors for probes {list(names)}, found {vectors.shape[1]}: {path}")
-        return SimulationResult(
-            time_s=vectors[:, 0],
-            voltage_V=vectors[:, 1],
-            current_A=vectors[:, 2],
-            probes={name: vectors[:, 3 + index] for index, name in enumerate(names)},
-        )
-
-    layout = _TRANSIENT_COLUMNS.get(min(width, 6))
-    if layout is None:
-        raise ValueError(f"cannot parse wrdata output: {path}")
-    time_index, voltage_index, current_index = layout
+    first_probe = 3 if has_source_current else 2
+    expected = 2 * (first_probe + len(probe_columns))
+    if width != expected:
+        raise ValueError(f"transient output expected {expected} columns for its probes, found {width}: {path}")
+    vectors = values[:, 1::2]
     return SimulationResult(
-        time_s=values[:, time_index],
-        voltage_V=values[:, voltage_index],
-        current_A=values[:, current_index],
+        time_s=vectors[:, 0],
+        voltage_V=vectors[:, 1],
+        current_A=vectors[:, 2] if has_source_current else None,
+        probes={name: vectors[:, first_probe + index] for index, name in enumerate(probe_columns)},
     )

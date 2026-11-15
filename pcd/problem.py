@@ -9,11 +9,15 @@ of reinterpreting YAML dictionaries independently.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
 from enum import Enum
+from numbers import Integral, Real
 from typing import TYPE_CHECKING, Any
+
+import numpy as np
 
 from .inputs import parameter_spec
 
@@ -70,6 +74,47 @@ class ParameterSet:
         """Return a small result-ready summary in stable role order."""
 
         return {role.value: list(self.names(role)) for role in ParameterRole}
+
+
+def validate_parameter_value(name: str, value: Any, spec: Mapping[str, Any]) -> Any:
+    """Normalize a selected value and enforce its declared type and domain."""
+
+    if isinstance(value, np.generic):
+        value = value.item()
+    value = _normalize_parameter_type(name, value, str(spec.get("type", "")))
+    if isinstance(value, Real) and not isinstance(value, bool) and not math.isfinite(float(value)):
+        raise ValueError(f"parameter {name!r} must be finite")
+    choices = spec.get("choices", spec.get("values"))
+    if choices is not None and value not in choices:
+        raise ValueError(f"parameter {name!r} must be one of {list(choices)!r}; got {value!r}")
+    if "bounds" in spec:
+        try:
+            number = float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"parameter {name!r} must be numeric within its bounds") from exc
+        lo, hi = map(float, spec["bounds"])
+        if not lo <= number <= hi:
+            raise ValueError(f"parameter {name!r}={value!r} is outside [{lo:g}, {hi:g}]")
+    if spec.get("scale") == "log" and isinstance(value, Real) and float(value) <= 0:
+        raise ValueError(f"parameter {name!r} must be positive on a log scale")
+    return value
+
+
+def _normalize_parameter_type(name: str, value: Any, kind: str) -> Any:
+    if kind == "bool":
+        if not isinstance(value, bool):
+            raise ValueError(f"parameter {name!r} must be bool")
+    elif kind == "int":
+        if isinstance(value, bool) or not isinstance(value, Integral):
+            raise ValueError(f"parameter {name!r} must be int")
+        value = int(value)
+    elif kind in {"float", "number"}:
+        if isinstance(value, bool) or not isinstance(value, Real):
+            raise ValueError(f"parameter {name!r} must be numeric")
+        value = float(value)
+    elif kind in {"str", "string"} and not isinstance(value, str):
+        raise ValueError(f"parameter {name!r} must be a string")
+    return value
 
 
 def candidate_role(case: Case) -> ParameterRole:

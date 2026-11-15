@@ -82,6 +82,22 @@ class Case:
         return self.resolved_plan is not None
 
     @property
+    def is_forward_simulation(self) -> bool:
+        """Identify cases that only request physical observations."""
+        metadata = self.data.get("metadata")
+        if isinstance(metadata, dict) and metadata.get("workflow") == "simulation":
+            return True
+        study = self.data.get("study")
+        target = self.data.get("target")
+        # A declared fundamental can also be used to analyze a forward waveform.
+        return not (
+            "optimizer" in self.data
+            or self.data.get("identification") is not None
+            or (isinstance(study, dict) and "objectives" in study)
+            or (isinstance(target, dict) and bool(target.keys() - {"fundamental_Hz"}))
+        )
+
+    @property
     def has_exact_candidate_enumeration(self) -> bool:
         """Whether candidate values form a complete, non-truncatable set."""
 
@@ -131,18 +147,3 @@ def default_params(case: Case) -> dict[str, Any]:
 
 def fill_default_params(case: Case, params: dict[str, Any] | None = None) -> dict[str, Any]:
     return {**default_params(case), **(params or {})}
-
-
-NO_SOURCE_WARNING = "no source/source list found; netlist may have no independent source"
-
-
-def case_warnings(case: Case) -> list[str]:
-    """Return only concise warnings worth retaining with run artifacts."""
-
-    warnings: list[str] = []
-    from .sources import imported_sources
-
-    if case.data.get("source") is None and not case.data.get("sources") and not imported_sources(case):
-        warnings.append(NO_SOURCE_WARNING)
-
-    return warnings

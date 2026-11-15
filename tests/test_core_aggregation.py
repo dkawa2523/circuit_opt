@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from pcd.core import (
@@ -35,7 +37,7 @@ def _evaluation(
     violation: float = 0.0,
 ) -> EvaluationResult:
     request = EvaluationRequest(Candidate("design"), scenario, ControlState())
-    constraints = (ConstraintResult("limit", violation == 0, violation),)
+    constraints = (ConstraintResult("limit", violation == 0, violation),) if status == "ok" else ()
     return EvaluationResult(request, RawResult(status), MetricSet({"score": value}), constraints)
 
 
@@ -61,7 +63,7 @@ def test_weighted_decisions_are_invariant_to_a_common_weight_scale(scale):
     assert aggregate_objective(values, Objective("score", aggregation="mean")) == pytest.approx(4.5)
     assert aggregate_objective(values, Objective("score", aggregation="cvar", cvar_alpha=0.5)) == pytest.approx(8.0)
     scenarios = (Scenario("accepted", weight=scale), Scenario("failed", weight=scale))
-    trials = (_evaluation(scenarios[0], 1.0), _evaluation(scenarios[1], 2.0, status="failed", violation=1.0))
+    trials = (_evaluation(scenarios[0], 1.0), _evaluation(scenarios[1], 2.0, status="failed"))
     result = aggregate_candidate(
         StudySpec("weights", scenarios=scenarios, objectives=(Objective("score"),)),
         Candidate("design"),
@@ -79,7 +81,7 @@ def test_candidate_aggregation_ignores_failed_missing_and_invalid_metrics():
     )
     evaluations = (
         _evaluation(scenarios[0], "3.5"),
-        _evaluation(scenarios[1], 1.0, status="failed", violation=1.0),
+        _evaluation(scenarios[1], 1.0, status="failed"),
         _evaluation(scenarios[2], None),
         _evaluation(scenarios[3], "not-a-number"),
     )
@@ -98,6 +100,19 @@ def test_candidate_aggregation_ignores_failed_missing_and_invalid_metrics():
     assert result.success_fraction == pytest.approx(0.8)
     assert result.feasible_fraction == pytest.approx(0.8)
     assert result.total_violation == pytest.approx(0.2)
+
+
+def test_partial_objective_uses_original_weight_of_surviving_conditions():
+    scenarios = (Scenario("valid", weight=1e-300), Scenario("failed", weight=1e300))
+    trials = (_evaluation(scenarios[0], 2.0), _evaluation(scenarios[1], 3.0, status="failed"))
+    result = aggregate_candidate(
+        StudySpec("weights", scenarios=scenarios, objectives=(Objective("score", aggregation="mean"),)),
+        Candidate("design"),
+        tuple(ScenarioResult(scenario, trial, (trial,)) for scenario, trial in zip(scenarios, trials, strict=True)),
+    )
+
+    assert result.aggregates["score"] == 2.0
+    assert not result.successful
 
 
 def test_evaluation_order_is_feasibility_first_then_direction_aware():
@@ -119,82 +134,57 @@ def test_control_margin_uses_numeric_grid_edges_and_ignores_categories():
         ControlState({"tune": 10.0, "fixed": 3.0, "mode": "high", "enabled": False}),
     )
 
-    # Physical distance is normalized against the declared numeric range. A
-    # single numeric point is neutral, and categorical/bool axes do not enter.
+    # Fixed, categorical, and bool axes contribute no headroom.
     assert control_margin(controls[0], controls) == 0.0
     assert control_margin(controls[1], controls) == pytest.approx(0.4)
-    assert control_margin(ControlState({"fixed": 3.0, "mode": "auto"}), controls) == 1.0
+    assert control_margin(ControlState({"fixed": 3.0, "mode": "auto"}), controls) is None
     assert control_margin(ControlState({"mode": "auto"}), controls) is None
+    recipe_codes = tuple(ControlState({"recipe": code}) for code in ("001", "002", "003"))
+    assert control_margin(recipe_codes[1], recipe_codes) is None
+    assert control_margin(ControlState({"tune": 1.0}, {"tune": (0.0, 4.0)}), ()) == 0.5
+    assert control_margin(ControlState({"tune": 0.0}, {"tune": (-1e308, 1e308)}), ()) == 1.0
 
 
 def test_candidate_order_requires_complete_feasibility_before_objectives():
-    scenario = Scenario("nominal")
-    study = StudySpec("rank", scenarios=(scenario,), objectives=(Objective("score"),))
-    evaluation = _evaluation(scenario, 2.0)
-    scenario_result = ScenarioResult(scenario, evaluation, (evaluation,))
-    complete = aggregate_candidate(study, Candidate("complete"), (scenario_result,))
-    incomplete = type(complete)(
-        candidate=Candidate("incomplete"),
-        scenarios=(scenario_result,),
-        aggregates={"score": 0.0},
-        feasible_fraction=0.5,
-        success_fraction=1.0,
-        total_violation=0.0,
-    )
-    missing_metric = type(complete)(
-        candidate=Candidate("missing"),
-        scenarios=(scenario_result,),
-        aggregates={"score": None},
-        feasible_fraction=1.0,
-        success_fraction=1.0,
-        total_violation=0.0,
-    )
+    nominal, light = Scenario("nominal"), Scenario("light", weight=1e-30)
+    study = StudySpec("rank", scenarios=(nominal, light), objectives=(Objective("score"),))
 
-    assert candidate_rank_key(study, complete) < candidate_rank_key(study, incomplete)
-    assert candidate_rank_key(study, missing_metric)[-2] == float("inf")
+    def evaluate(name, score, violation):
+        trials = (_evaluation(nominal, score), _evaluation(light, score, violation=violation))
+        results = tuple(ScenarioResult(item.request.scenario, item, (item,)) for item in trials)
+        return aggregate_candidate(study, Candidate(name), results)
+
+    accepted = evaluate("accepted", 2.0, 0.0)
+    rejected = evaluate("rejected", 1.0, 1.0)
+    assert rejected.feasible_fraction == accepted.feasible_fraction == 1.0
+    assert candidate_rank_key(study, accepted) < candidate_rank_key(study, rejected)
 
 
 def test_incomplete_candidate_order_prioritizes_evidence_then_feasible_coverage():
-    scenario = Scenario("nominal")
-    study = StudySpec("coverage-rank", scenarios=(scenario,), objectives=(Objective("score"),))
-    evaluation = _evaluation(scenario, 2.0)
-    scenario_result = ScenarioResult(scenario, evaluation, (evaluation,))
+    light, heavy = Scenario("light", weight=1.0), Scenario("heavy", weight=3.0)
+    study = StudySpec("coverage-rank", scenarios=(light, heavy), objectives=(Objective("score"),))
 
-    successful = CandidateResult(
-        Candidate("successful"),
-        (scenario_result,),
-        {"score": 100.0},
-        feasible_fraction=0.5,
-        success_fraction=1.0,
-        total_violation=100.0,
-    )
-    failed_evidence = CandidateResult(
-        Candidate("failed-evidence"),
-        (scenario_result,),
-        {"score": 0.0},
-        feasible_fraction=0.75,
-        success_fraction=0.75,
-        total_violation=0.0,
-    )
-    higher_coverage = CandidateResult(
-        Candidate("higher-coverage"),
-        (scenario_result,),
-        {"score": 100.0},
-        feasible_fraction=0.5,
-        success_fraction=1.0,
-        total_violation=100.0,
-    )
-    lower_coverage = CandidateResult(
-        Candidate("lower-coverage"),
-        (scenario_result,),
-        {"score": 0.0},
-        feasible_fraction=0.25,
-        success_fraction=1.0,
-        total_violation=0.0,
-    )
+    def summarize(*trials):
+        scenarios = tuple(ScenarioResult(item.request.scenario, item, (item,)) for item in trials)
+        return aggregate_candidate(study, Candidate("design"), scenarios)
 
-    assert candidate_rank_key(study, successful) < candidate_rank_key(study, failed_evidence)
+    def unavailable(scenario):
+        return replace(
+            _evaluation(scenario, 0.0),
+            constraints=(ConstraintResult("limit", False, 1.0, evidence_available=False),),
+        )
+
+    higher_coverage = summarize(_evaluation(light, 100.0, violation=400.0), _evaluation(heavy, 10.0))
+    lower_coverage = summarize(_evaluation(light, 10.0), _evaluation(heavy, 100.0, violation=2.0))
+    incomplete_light = summarize(unavailable(light), _evaluation(heavy, 0.0))
+    incomplete_heavy = summarize(_evaluation(light, 0.0), unavailable(heavy))
+    failed_heavy = summarize(_evaluation(light, 0.0), _evaluation(heavy, 0.0, status="failed"))
+
+    assert higher_coverage.success_fraction == incomplete_light.success_fraction == 1.0
     assert candidate_rank_key(study, higher_coverage) < candidate_rank_key(study, lower_coverage)
+    assert candidate_rank_key(study, lower_coverage) < candidate_rank_key(study, incomplete_light)
+    assert candidate_rank_key(study, incomplete_light) < candidate_rank_key(study, incomplete_heavy)
+    assert candidate_rank_key(study, incomplete_light) < candidate_rank_key(study, failed_heavy)
 
 
 def test_candidate_order_uses_worst_control_margin_only_after_objectives():
@@ -259,8 +249,6 @@ def test_pareto_front_uses_declared_directions_and_only_complete_feasible_eviden
                 EvaluationResult(
                     EvaluationRequest(candidate, scenario, ControlState({"tune": 1})),
                     RawResult("failed", error="solver failed"),
-                    MetricSet(),
-                    (ConstraintResult("evaluation_success", False, 1.0),),
                 )
             )
         return CandidateResult(

@@ -237,22 +237,22 @@ class EvaluationRequest:
     scenario: Scenario
     control: ControlState
 
-    def merged_inputs(self) -> dict[str, Any]:
-        """Merge role-separated inputs, rejecting ambiguous duplicate names."""
-
-        result: dict[str, Any] = {}
+    def __post_init__(self) -> None:
         owners: dict[str, str] = {}
         for owner, values in (
             ("candidate", self.candidate.values),
             ("scenario", self.scenario.values),
             ("control", self.control.values),
         ):
-            for name, value in values.items():
-                if name in result:
+            for name in values:
+                if name in owners:
                     raise ValueError(f"input {name!r} belongs to both {owners[name]} and {owner}")
-                result[name] = to_plain(value)
                 owners[name] = owner
-        return result
+
+    def merged_inputs(self) -> dict[str, Any]:
+        """Return detached values from the three disjoint input roles."""
+
+        return to_plain({**self.candidate.values, **self.scenario.values, **self.control.values})
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -335,12 +335,15 @@ class ConstraintResult:
     limit: float | None = None
     detail: str | None = None
     margin: float | None = None
+    evidence_available: bool = True
 
     def __post_init__(self) -> None:
         _require_id(self.name, "constraint")
         violation = float(self.violation)
         if not math.isfinite(violation) or violation < 0:
             raise ValueError("constraint violation must be finite and non-negative")
+        if self.satisfied and not self.evidence_available:
+            raise ValueError("a constraint cannot pass without evidence")
         for name, value in (("value", self.value), ("limit", self.limit), ("margin", self.margin)):
             if value is None:
                 continue
@@ -362,6 +365,7 @@ class ConstraintResult:
             "limit": self.limit,
             "detail": self.detail,
             "margin": self.margin,
+            **({"evidence_available": False} if not self.evidence_available else {}),
         }
 
     @classmethod
@@ -374,6 +378,7 @@ class ConstraintResult:
             limit=float(data["limit"]) if data.get("limit") is not None else None,
             detail=str(data["detail"]) if data.get("detail") is not None else None,
             margin=float(data["margin"]) if data.get("margin") is not None else None,
+            evidence_available=bool(data.get("evidence_available", True)),
         )
 
 
@@ -401,8 +406,13 @@ class EvaluationResult:
         return self.raw.ok and all(item.satisfied for item in self.constraints)
 
     @property
+    def evidence_available(self) -> bool:
+        return self.raw.ok and all(item.evidence_available for item in self.constraints)
+
+    @property
     def total_violation(self) -> float:
-        return sum(item.violation for item in self.constraints)
+        # Keep the search penalty for an unavailable point outside its declared limits.
+        return sum((item.violation for item in self.constraints), float(not self.raw.ok))
 
     @property
     def constraint_margins(self) -> dict[str, float]:
@@ -429,11 +439,22 @@ class EvaluationResult:
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> EvaluationResult:
+        raw = RawResult.from_dict(data["raw"])
+        constraints = [ConstraintResult.from_dict(item) for item in data.get("constraints", []) or []]
+        # Earlier records represented the raw-status penalty as a synthetic constraint.
+        legacy_status = ConstraintResult(
+            "evaluation_success",
+            raw.ok,
+            violation=float(not raw.ok),
+            detail=None if raw.ok else raw.error or raw.status,
+        )
+        if legacy_status in constraints:
+            constraints.remove(legacy_status)
         return cls(
             request=EvaluationRequest.from_dict(data["request"]),
-            raw=RawResult.from_dict(data["raw"]),
+            raw=raw,
             metrics=MetricSet.from_dict(data.get("metrics", {}) or {}),
-            constraints=tuple(ConstraintResult.from_dict(item) for item in data.get("constraints", []) or []),
+            constraints=tuple(constraints),
             raw_cache_key=str(data.get("raw_cache_key", "")),
             duration_s=float(data.get("duration_s", 0.0)),
             from_cache=bool(data.get("from_cache", False)),
@@ -482,6 +503,14 @@ class ScenarioResult:
             "trials": [item.to_dict() for item in self.trials],
         }
 
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> ScenarioResult:
+        trials = tuple(EvaluationResult.from_dict(item) for item in data["trials"])
+        selected = data["selected_trial"]
+        if type(selected) is not int or not 0 <= selected < len(trials):
+            raise ValueError("scenario result selected_trial is outside its control trials")
+        return cls(Scenario.from_dict(data["scenario"]), trials[selected], trials, data.get("control_margin"))
+
 
 @dataclass(frozen=True, slots=True)
 class CandidateResult:
@@ -526,15 +555,14 @@ class CandidateResult:
     def feasible(self) -> bool:
         """Every selected condition meets its limits; weights never waive limits."""
 
-        return self.successful and all(item.feasible for item in self.evaluations)
+        return all(item.feasible for item in self.evaluations)
 
     @property
     def control_margin(self) -> float | None:
-        """Worst selected control margin across scenarios, or null when not numeric."""
+        """Worst selected control margin when every scenario has a numeric range."""
 
-        margins = [item.control_margin for item in self.scenarios]
-        numeric = [item for item in margins if item is not None]
-        return min(numeric) if numeric else None
+        margins = [item.control_margin for item in self.scenarios if item.control_margin is not None]
+        return min(margins) if margins and len(margins) == len(self.scenarios) else None
 
     @property
     def edge_limited(self) -> bool:
@@ -567,3 +595,16 @@ class CandidateResult:
             "edge_limited": self.edge_limited,
             "scenarios": [item.to_dict() for item in self.scenarios],
         }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> CandidateResult:
+        if data.get("schema") != "candidate_result.v2":
+            raise ValueError("unsupported saved candidate result schema")
+        return cls(
+            candidate=Candidate.from_dict(data["candidate"]),
+            scenarios=tuple(ScenarioResult.from_dict(item) for item in data["scenarios"]),
+            aggregates=data["aggregates"],
+            feasible_fraction=data["feasible_fraction"],
+            success_fraction=data["success_fraction"],
+            total_violation=data["total_violation"],
+        )

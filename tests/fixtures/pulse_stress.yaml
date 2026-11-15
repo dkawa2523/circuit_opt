@@ -8,9 +8,9 @@ source:
   v1_V: 0
   v2_V: 200
   delay_s: 3.5713e-7
-  rise_s: 1e-11
-  fall_s: 1e-11
-  width_s: 1e-11
+  rise_s: 3e-11
+  fall_s: 3e-11
+  width_s: 3e-11
   period_s: 1e-6
 circuit:
   builder: from_yaml
@@ -25,7 +25,8 @@ load:
 measurement: {load_current: auto}
 solver:
   name: ngspice_cli
-  tran: {step_s: 1e-8, stop_s: 8e-6}
+  # Bound tmax so ngspice 42 resolves each 90 ps pulse across the full run.
+  tran: {step_s: 2e-10, stop_s: 8e-6}
 target:
   objective: rf_load
   fundamental_Hz: 1e6

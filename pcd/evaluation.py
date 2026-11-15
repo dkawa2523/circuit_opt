@@ -18,6 +18,8 @@ from .metrics import measure_response
 from .records import load_simulation_result, read_sim_record
 from .sim_core import DEBUG_MANIFEST_FILE, SimRecord, execute_case
 from .simulation import SimulationResult
+from .simulation_input import SolverSettings
+from .solver import require_bound_solver_inputs
 
 
 class CaseEvaluationBackend:
@@ -31,12 +33,14 @@ class CaseEvaluationBackend:
         *,
         case_archive_root: Path | None = None,
         artifact_namespace: str = "default",
+        solver_settings: SolverSettings | None = None,
     ) -> None:
         self.case = case
         self.study_root = study_root
         self.solver_override = solver_override
         self.case_archive_root = case_archive_root or study_root
         self.artifact_namespace = artifact_namespace
+        self.solver_settings = solver_settings
         self._fresh_responses: dict[str, tuple[SimulationResult, dict[str, Any]]] = {}
 
     def evaluate(self, request: EvaluationRequest) -> RawResult:
@@ -52,6 +56,7 @@ class CaseEvaluationBackend:
             run_id=f"e_{self.artifact_namespace}_{digest}",
             solver_override=self.solver_override,
             case_archive_root=self.case_archive_root,
+            solver_settings=self.solver_settings,
         )
         raw = self._raw_result(run.record)
         if raw.ok:
@@ -66,6 +71,7 @@ class CaseEvaluationBackend:
         key = str(raw.artifacts["manifest"])
         fresh = self._fresh_responses.pop(key, None)
         if fresh is None:
+            require_bound_solver_inputs(self.solver_settings)
             record = read_sim_record(self.study_root / key)
             response = load_simulation_result(record)
             params = dict(record.get("params") or {})

@@ -12,19 +12,12 @@ import pandas as pd
 
 from pcd.analysis.traces import ac_trace, harmonic_trace, transfer_trace
 
-from .figures import _headless_pyplot
+from .figures import _headless_pyplot, save_figure_files
 
 
 def save_figure(figure: Any, destination: Path, name: str, formats: list[str]) -> list[str]:
-    files = []
-    try:
-        figure.tight_layout()
-        for extension in formats:
-            file = f"{name}.{extension}"
-            figure.savefig(destination / file, dpi=170)
-            files.append(file)
-    finally:
-        _headless_pyplot().close(figure)
+    files = [f"{name}.{extension}" for extension in formats]
+    save_figure_files(figure, [destination / file for file in files])
     return files
 
 
@@ -35,21 +28,10 @@ def _signal(catalog: dict[str, Any], name: str, domain: str) -> dict[str, Any]:
     return item
 
 
-def _range(frame: pd.DataFrame, axis: str, limits: list[float] | None) -> pd.DataFrame:
-    if limits is None:
-        return frame
+def _check_saved_range(frame: pd.DataFrame, axis: str, limits: list[float]) -> None:
     tolerance = max(abs(limits[0]), abs(limits[1])) * 1e-9
     if limits[0] < frame[axis].min() - tolerance or limits[1] > frame[axis].max() + tolerance:
         raise ValueError(f"requested plot range {limits} lies outside saved {axis} data")
-    # Retain every solver knot; axes clip display without resampling measurements.
-    return frame
-
-
-def _check_log_waveform(frame: pd.DataFrame, column: str, recipe: dict[str, Any]) -> None:
-    visible = frame.loc[frame["time_s"].between(*recipe["time_s"])] if "time_s" in recipe else frame
-    for option, values in (("xscale", visible["time_s"]), ("yscale", visible[column])):
-        if recipe.get(option) == "log" and (values <= 0).any():
-            raise ValueError(f"plot {option}=log requires positive values in the displayed range")
 
 
 def _coverage(table: pd.DataFrame, kind: str, recipe: dict[str, Any]) -> dict[str, Any]:
@@ -91,6 +73,14 @@ def render_recipe(
     if domain == "ac" and (ac is None or ac.empty):
         raise ValueError(f"plot {name!r} needs saved AC data")
     ac = cast(pd.DataFrame, ac)
+    visible_waveform = waveform
+    if domain == "transient" and "time_s" in recipe:
+        _check_saved_range(waveform, "time_s", recipe["time_s"])
+        visible_waveform = waveform.loc[waveform["time_s"].between(*recipe["time_s"])]
+    if kind == "waveform" and recipe.get("xscale") == "log" and (visible_waveform["time_s"] <= 0).any():
+        raise ValueError("plot xscale=log requires positive values in the displayed range")
+    if domain == "ac" and "frequency_Hz" in recipe:
+        _check_saved_range(ac, "frequency_Hz", recipe["frequency_Hz"])
     figure_title = f"{recipe['title']}\n{title}" if "title" in recipe else title
     if kind == "bode" and "title" not in recipe:
         figure_title += f"\n{recipe['numerator']} / {recipe['denominator']}"
@@ -103,7 +93,6 @@ def render_recipe(
             if first["unit"] != second["unit"]:
                 raise ValueError("a dimensionless Bode ratio requires numerator and denominator of the same unit")
             table = transfer_trace(ac, first["columns"]["ac"], second["columns"]["ac"])
-            _range(table, "frequency_Hz", recipe.get("frequency_Hz"))
             tables[name] = table
             figure, axes = plt.subplots(2, 1, figsize=(8.4, 6.3), sharex=True)
             marker = "o" if len(table) == 1 else None
@@ -126,20 +115,15 @@ def render_recipe(
                 for signal, item in channels:
                     label = item["label"] or signal
                     if kind == "waveform":
-                        table = _range(waveform, "time_s", recipe.get("time_s"))
                         column = item["columns"]["transient"][0]
-                        _check_log_waveform(table, column, recipe)
-                        axis.plot(table["time_s"], table[column], label=label)
-                        tables[signal] = table[["time_s", column]]
-                        axis.set_xlabel("time [s]")
-                        if "time_s" in recipe:
-                            axis.set_xlim(recipe["time_s"])
-                        axis.set_xscale(recipe.get("xscale", "linear"))
-                        axis.set_yscale(recipe.get("yscale", "linear"))
+                        if recipe.get("yscale") == "log" and (visible_waveform[column] <= 0).any():
+                            raise ValueError("plot yscale=log requires positive values in the displayed range")
+                        # Axis limits clip the figure without dropping solver knots from the table.
+                        axis.plot(waveform["time_s"], waveform[column], label=label)
+                        tables[signal] = waveform[["time_s", column]]
                     elif kind == "ac":
                         phase_axis = axes[index + 1, 0]
                         table = ac_trace(ac, item["columns"]["ac"])
-                        _range(table, "frequency_Hz", recipe.get("frequency_Hz"))
                         marker = "o" if len(table) == 1 else None
                         axis.plot(table["frequency_Hz"], table["magnitude"], marker=marker, label=label)
                         phase_axis.plot(table["frequency_Hz"], table["phase_deg"], marker=marker, label=label)
@@ -151,13 +135,9 @@ def render_recipe(
                         frequency = recipe.get("fundamental_Hz", fundamental_hz)
                         if frequency is None:
                             raise ValueError("harmonics require an explicit periodic fundamental_Hz")
-                        selected = waveform
-                        if "time_s" in recipe:
-                            _range(waveform, "time_s", recipe["time_s"])
-                            selected = waveform.loc[waveform["time_s"].between(*recipe["time_s"])]
                         table = harmonic_trace(
-                            selected["time_s"].to_numpy(float),
-                            selected[item["columns"]["transient"][0]].to_numpy(float),
+                            visible_waveform["time_s"].to_numpy(float),
+                            visible_waveform[item["columns"]["transient"][0]].to_numpy(float),
                             float(frequency),
                             recipe.get("count"),
                             measurement=measurement,
@@ -172,6 +152,12 @@ def render_recipe(
                     axis.set_ylabel(
                         "level [dBc]" if kind == "harmonics" else f"{'magnitude' if kind == 'ac' else 'value'} [{unit}]"
                     )
+                if kind == "waveform":
+                    axis.set_xlabel("time [s]")
+                    if "time_s" in recipe:
+                        axis.set_xlim(recipe["time_s"])
+                    axis.set_xscale(recipe.get("xscale", "linear"))
+                    axis.set_yscale(recipe.get("yscale", "linear"))
                 axis.legend(fontsize=8)
                 if phase_axis is not None:
                     phase_axis.legend(fontsize=8)

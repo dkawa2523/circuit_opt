@@ -46,6 +46,13 @@ def _add_study_commands(sub: argparse._SubParsersAction) -> None:
     p.add_argument("--trials", type=int, help="exploratory trial budget; exact candidate grids infer their count")
     p.add_argument("--seed", type=int, help="exploratory optimizer seed")
     p.add_argument(
+        "--resume",
+        nargs="?",
+        const="auto",
+        metavar="GENERATION",
+        help="replay a matching interrupted study checkpoint, optionally selecting its g_... ID",
+    )
+    p.add_argument(
         "--require-acceptance",
         action="store_true",
         help="exit nonzero unless the selected design meets every declared acceptance limit",
@@ -62,13 +69,15 @@ def _add_study_commands(sub: argparse._SubParsersAction) -> None:
     p.add_argument("--json", action="store_true", help="print the complete machine-readable result")
 
     p = sub.add_parser("result-summary", help="summarize candidates from a completed study")
-    p.add_argument("study_root")
+    p.add_argument("study_root", help="a study directory, published generation directory, or study result JSON")
     p.add_argument("--out")
 
-    p = sub.add_parser("result-prune", help="plan or remove inactive study generations")
+    p = sub.add_parser("result-prune", help="preview or remove inactive generations or raw cache indices")
     p.add_argument("study_root")
-    p.add_argument("--keep", type=int, default=3, help="number of newest generations to retain; default: 3")
-    p.add_argument("--apply", action="store_true", help="remove the listed generations; default is dry-run")
+    p.add_argument("--raw-cache", action="store_true", help="select raw cache indices instead of generations")
+    p.add_argument("--keep", type=int, help="number of newest items to retain (default for generations: 3)")
+    p.add_argument("--max-bytes", type=int, help="maximum total retained index size in bytes (raw cache only)")
+    p.add_argument("--apply", action="store_true", help="remove the listed items (default: dry run)")
     p.add_argument("--json", action="store_true")
 
     p = sub.add_parser("validate-case", help="validate a case file without simulation or metric evaluation")
@@ -99,6 +108,11 @@ def _add_simulation_commands(sub: argparse._SubParsersAction) -> None:
     p.add_argument("case")
     p.add_argument("--out", default="netlist.cir")
 
+    p = sub.add_parser("network-run", help="measure complex S-parameters of a SPICE DUT at declared ports")
+    p.add_argument("specification")
+    p.add_argument("--out", required=True)
+    p.add_argument("--json", action="store_true")
+
     p = sub.add_parser("visualize-netlist", help="render a simple topology schematic from a SPICE netlist")
     p.add_argument("netlist")
     p.add_argument("--out", required=True)
@@ -107,10 +121,14 @@ def _add_simulation_commands(sub: argparse._SubParsersAction) -> None:
     p.add_argument("--view", choices=["physical", "instrumented"], default="physical")
     p.add_argument("--format", choices=["auto", "deck", "fragment"], default="auto", dest="netlist_mode")
 
-    p = sub.add_parser("analyze", help="regenerate an electrical summary and standard figures from a saved run")
-    p.add_argument("run", help="a run directory, summary.json, or debug/manifest.json")
+    p = sub.add_parser(
+        "analyze", help="regenerate figures and tables from a saved simulation, study, or identification"
+    )
+    p.add_argument("run", help="a run directory or its simulation, study, or identification result JSON")
     p.add_argument("--out", help="output directory; default: <run>/analysis")
-    p.add_argument("--frequency-Hz", type=float, dest="frequency_hz", help="operating point; default: saved source")
+    p.add_argument(
+        "--frequency-Hz", type=float, dest="frequency_hz", help="AC operating point for one saved simulation"
+    )
     p.add_argument(
         "--case", dest="output_case", help="read only output settings from this YAML; physical inputs remain archived"
     )
@@ -166,12 +184,8 @@ def _cmd_validate_case(args: argparse.Namespace) -> int:
     from .validation import validate_case
 
     case = load_case(args.case)
-    report = validate_case(case, strict=args.strict)
+    report = validate_case(case, strict=args.strict, include_plan=args.plan)
     payload = report.to_dict()
-    if args.plan and report.ok:
-        from .study_config import describe_case
-
-        payload["plan"] = describe_case(case)
     if args.json:
         _dump(payload)
     else:
@@ -191,20 +205,27 @@ def _cmd_run(args: argparse.Namespace) -> int:
         or (case.data.get("study") or {}).get("control_margin_min") is not None
     ):
         raise ValueError("--require-acceptance requires explicit engineering limits in the input")
-    result = run_case_study(
-        case,
-        run_root=args.output,
-        n_trials=args.trials,
-        optimizer_name=args.optimizer,
-        solver_override=args.solver,
-        seed=args.seed,
-    )
+    try:
+        result = run_case_study(
+            case,
+            run_root=args.output,
+            n_trials=args.trials,
+            optimizer_name=args.optimizer,
+            solver_override=args.solver,
+            seed=args.seed,
+            resume=args.resume,
+        )
+    except KeyboardInterrupt:
+        print(
+            "Study interrupted. If a search checkpoint is available, repeat the command with --resume.", file=sys.stderr
+        )
+        return 130
     if args.json:
         _dump(result)
     else:
         _print_run_summary(result)
-        if result.get("output"):
-            print(f"Output: {result['output']['status']} ({result['output']['summary']})")
+        if output := result.get("output"):
+            _print_output_summary(output)
     verification = result.get("verification") or {}
     failed = bool(result.get("n_failed_evaluations", 0)) or bool(verification.get("n_failed_evaluations", 0))
     rejected = args.require_acceptance and (result.get("best") or {}).get("status") != "meets_declared_acceptance"
@@ -229,17 +250,28 @@ def _cmd_identify(args: argparse.Namespace) -> int:
     else:
         print(f"Identification: {result['case_id']}")
         print(f"Status: {result['status']}")
-        if result.get("output"):
-            print(f"Output: {result['output']['status']} ({result['output']['summary']})")
+        if uncertainty := result.get("uncertainty"):
+            print(
+                f"Nominal status: {uncertainty['nominal_status']} | "
+                f"Declared realizations identified: {uncertainty['n_identified']}/{uncertainty['n_realizations']} | "
+                f"Evidence unavailable: {uncertainty['n_unavailable']}"
+            )
+        if output := result.get("output"):
+            _print_output_summary(output)
         if result.get("reason"):
             print(f"Reason: {result['reason']}")
         validation = result.get("validation") or {}
         if validation:
             print(f"Holdout scope: {validation['scope']}")
+            if groups := validation.get("acquisition_groups"):
+                print(
+                    f"Declared acquisition groups: {len(groups['fit'])} fit, {len(groups['holdout'])} holdout "
+                    "(acquisition independence unverified)"
+                )
             if validation.get("identical_observations"):
                 print("Holdout contains identical observations; independent acquisition is not established")
         print(
-            "Estimated latent parameters: "
+            ("Nominal latent parameters: " if result.get("uncertainty") else "Estimated latent parameters: ")
             + json.dumps(result["estimated_latent"], ensure_ascii=False, separators=(",", ":"), default=str)
         )
         fit, holdout = result["fit"], result["holdout"]
@@ -300,10 +332,10 @@ def _print_electrical_context(study: Mapping[str, Any]) -> None:
         parts.append(f"{float(frequency) / 1e6:.6g} MHz")
     reference_plane = metadata.get("reference_plane")
     if reference_plane:
-        parts.append(f"reference plane={reference_plane}")
+        parts.append(f"load plane={reference_plane}")
     reference_impedance = metadata.get("reference_impedance_ohm")
     if reference_impedance is not None:
-        parts.append(f"Z0={float(reference_impedance):.6g} ohm")
+        parts.append(f"source-port Z0={float(reference_impedance):.6g} ohm")
     if parts:
         print("Electrical context: " + ", ".join(parts))
 
@@ -358,6 +390,16 @@ def _print_run_summary(result: dict) -> None:
     termination = (execution.get("optimizer_outcome") or {}).get("termination")
     if termination:
         print(f"Candidate search: {execution.get('optimizer', '')} ({termination})")
+    restart = execution.get("restart") or {}
+    if restart.get("scope") == "deterministic_candidate_replay":
+        print(
+            f"Search checkpoint: {restart['generation']} "
+            f"({restart['replayed_candidates']} candidates replayed, "
+            f"{restart['new_evaluations_from_raw_cache']} new evaluations reused raw cache, "
+            f"{restart['previous_incomplete_invocations']} prior incomplete invocations)"
+        )
+    elif restart.get("reason"):
+        print(f"Search checkpoint unavailable: {restart['reason']}")
     candidate = best.get("candidate") or {}
     candidate_id = candidate.get("candidate_id", "")
     candidate_values = candidate.get("values") or {}
@@ -370,7 +412,7 @@ def _print_run_summary(result: dict) -> None:
     _print_constant_inputs(result.get("parameters"))
     print(
         f"Candidates: {result.get('n_candidates', 0)}  Conditions: {len(scenarios)}  "
-        f"Electrical solves: {result.get('n_evaluations', 0)}"
+        f"Search evaluations: {result.get('n_evaluations', 0)}"
     )
     _print_final_verification(result.get("verification"))
     coverage = best.get("coverage") or {}
@@ -378,10 +420,10 @@ def _print_run_summary(result: dict) -> None:
         total = int(coverage.get("conditions", 0))
         print(
             f"Condition coverage: accepted {int(coverage.get('accepted', 0))}/{total}, "
-            f"solved {int(coverage.get('solved', 0))}/{total}"
+            f"evaluated {int(coverage.get('solved', 0))}/{total}"
         )
     if result.get("n_failed_evaluations", 0):
-        print(f"Failed electrical solves: {result['n_failed_evaluations']}")
+        print(f"Failed evaluations: {result['n_failed_evaluations']}")
     for objective in study.get("objectives") or []:
         metric = str(objective.get("metric", ""))
         if metric in aggregates:
@@ -408,6 +450,8 @@ def _cmd_result_summary(args: argparse.Namespace) -> int:
     from .results import candidate_summary
 
     frame = candidate_summary(args.study_root)
+    if frame.empty:
+        raise ValueError(f"saved study has no candidate history: {args.study_root}")
     if args.out:
         Path(args.out).parent.mkdir(parents=True, exist_ok=True)
         frame.to_csv(args.out, index=False)
@@ -418,16 +462,27 @@ def _cmd_result_summary(args: argparse.Namespace) -> int:
 
 
 def _cmd_result_prune(args: argparse.Namespace) -> int:
-    from .results import prune_generations
+    from .results import prune_generations, prune_raw_cache
 
-    result = prune_generations(args.study_root, keep=args.keep, apply=args.apply)
+    if args.raw_cache:
+        result = prune_raw_cache(args.study_root, keep=args.keep, max_bytes=args.max_bytes, apply=args.apply)
+        items = "raw cache indices"
+    else:
+        if args.max_bytes is not None:
+            raise ValueError("--max-bytes requires --raw-cache")
+        result = prune_generations(args.study_root, keep=3 if args.keep is None else args.keep, apply=args.apply)
+        items = "generation(s)"
     if args.json:
         _dump(result)
     else:
         action = "Removed" if args.apply else "Would remove"
-        print(f"{action}: {len(result['removed'])} generation(s)")
+        print(f"{action}: {len(result['removed'])} {items}")
         for path in result["removed"]:
             print(f"  {path}")
+        if busy := result.get("busy"):
+            print("Kept busy or inaccessible generations:")
+            for path in busy:
+                print(f"  {path}")
         if not args.apply and result["removed"]:
             print("Re-run with --apply to remove them.")
     return 0
@@ -459,12 +514,18 @@ def _cmd_sim_run(args: argparse.Namespace) -> int:
     )
 
 
+def _print_output_summary(output: Mapping[str, Any]) -> None:
+    detail = output.get("summary") or output.get("error")
+    status = output["status"]
+    print(f"Output: {status} ({detail})" if detail else f"Output: {status}")
+
+
 def _print_sim_summary(summary: dict) -> None:
     version = f" ({summary['solver_version']})" if summary.get("solver_version") else ""
     print(f"Simulation: {summary.get('case_id', '')}")
     print(f"Status: {summary.get('status', '')}")
-    if summary.get("output"):
-        print(f"Output: {summary['output']['status']} ({summary['output']['summary']})")
+    if output := summary.get("output"):
+        _print_output_summary(output)
     print(f"Solver: {summary.get('solver', '')}{version}")
     if summary.get("params"):
         print("Resolved point: " + json.dumps(summary["params"], ensure_ascii=False, separators=(",", ":")))
@@ -479,15 +540,14 @@ def _print_sim_summary(summary: dict) -> None:
 
 def _cmd_sim_netlist(args: argparse.Namespace) -> int:
     from .case import default_params, load_case
-    from .netlist import build_circuit, build_load_subckt, render_ngspice_netlist
+    from .netlist import compile_netlist
     from .simulation_input import resolve_simulation_case
 
     case = load_case(args.case)
     params = default_params(case)
-    _, circuit = build_circuit(case, params)
-    _, load = build_load_subckt(case, params)
     simulation = resolve_simulation_case(case, params)
-    Path(args.out).write_text(render_ngspice_netlist(case, circuit, load, params, simulation), encoding="utf-8")
+    _, _, text = compile_netlist(case, params, simulation)
+    Path(args.out).write_text(text, encoding="utf-8")
     print("Preview only: one default parameter point; no study or acceptance evaluation")
     print("Parameters: " + json.dumps(params, ensure_ascii=False, separators=(",", ":")))
     print(args.out)
@@ -514,6 +574,10 @@ def _print_analysis_summary(summary: dict[str, Any]) -> None:
     print(f"Analysis: {summary.get('case_id', '')}")
     print(f"Results: {summary.get('output_dir', '')}")
     print(f"Output status: {summary.get('status', 'complete')}")
+    if engineering := summary.get("engineering_status"):
+        print(f"Archived engineering decision: {engineering}")
+    if identification := summary.get("identification_status"):
+        print(f"Archived identification decision: {identification}")
     for item in (summary.get("output") or {}).get("plots", []):
         if item.get("status") != "complete":
             print(f"Unavailable plot {item['recipe']['name']}: {item['reason']}")
@@ -527,25 +591,33 @@ def _print_analysis_summary(summary: dict[str, Any]) -> None:
 
 
 def _print_ac_analysis(ac: dict[str, Any]) -> None:
-    resistance, reactance = ac.get("resistance_ohm"), ac.get("reactance_ohm")
-    impedance = (
-        "unavailable (open or undefined)"
-        if resistance is None or reactance is None
-        else f"{resistance:.6g}{reactance:+.6g}j ohm"
-    )
-    reflection = ac.get("reflection_magnitude")
-    gamma = "unavailable" if reflection is None else f"{reflection:.6g}"
-    print(f"AC: {float(ac['frequency_Hz']) / 1e6:.6g} MHz, Z={impedance}, |Gamma|={gamma}")
+    if port_issue := ac.get("source_port_unavailable_reason"):
+        print(f"AC source-port metrics unavailable: {port_issue}. Saved AC probes remain available.")
+    elif (frequency := ac.get("frequency_Hz")) is not None:
+        resistance, reactance = ac.get("resistance_ohm"), ac.get("reactance_ohm")
+        impedance = (
+            "unavailable (open or undefined)"
+            if resistance is None or reactance is None
+            else f"{resistance:.6g}{reactance:+.6g}j ohm"
+        )
+        reflection = ac.get("reflection_magnitude")
+        gamma = "unavailable" if reflection is None else f"{reflection:.6g}"
+        basis = " (interpolated)" if ac.get("frequency_basis") == "interpolated" else ""
+        print(f"AC: {frequency / 1e6:.6g} MHz{basis}, Z={impedance}, |Gamma|={gamma}")
+    elif reason := ac.get("operating_point_unavailable_reason"):
+        print(f"AC operating point: {reason}")
     sweep = ac.get("sweep")
     if isinstance(sweep, dict):
         _print_sweep_analysis(sweep)
 
 
 def _print_sweep_analysis(sweep: dict[str, Any]) -> None:
-    best = float(sweep["sampled_best_match_frequency_Hz"]) / 1e6
+    best = sweep.get("sampled_best_match_frequency_Hz")
+    match = "reflection unavailable" if best is None else f"best sampled match={best / 1e6:.6g} MHz"
     resonance = sweep.get("half_power_resonance")
     if not isinstance(resonance, dict):
-        print(f"Sweep: {sweep['sample_count']} points, best sampled match={best:.6g} MHz; -3 dB band not bracketed")
+        band = sweep.get("half_power_unavailable_reason", "-3 dB band not bracketed")
+        print(f"Sweep: {sweep['sample_count']} points, {match}; {band}")
         return
     print(
         f"Sweep: {sweep['sample_count']} points, "
@@ -563,10 +635,34 @@ def _print_transient_analysis(transient: dict[str, Any]) -> None:
         f"Transient: {transient.get('samples', 0)} samples, "
         f"Vpeak={float(transient['waveform_voltage_peak_V']):.6g} V, periodic={status}"
     )
+    energy = transient.get("energy") or {}
+    ports = []
+    for port in ("source", "load"):
+        name = f"{port}_net_energy_J"
+        if name in energy:
+            value = energy[name]
+            ports.append(f"{port}={value:.6g} J" if value is not None else f"{port}=unavailable")
+    if ports:
+        print(f"Net energy over [{energy['start_s']:.6g}, {energy['end_s']:.6g}] s: {', '.join(ports)}")
+
+
+def _cmd_network_run(args: argparse.Namespace) -> int:
+    from .network import run_network
+
+    result = run_network(args.specification, args.out)
+    if args.json:
+        _dump(result)
+    else:
+        print(
+            f"{result['status']} | {len(result['ports'])} ports | "
+            f"{result['solved_points']}/{result['frequency_points']} frequency points"
+        )
+        print(result["run_root"])
+    return 0 if result["status"] == "complete" else 1
 
 
 def _cmd_analyze(args: argparse.Namespace) -> int:
-    from .reporting import analyze_run
+    from .reporting import analyze_saved
 
     output = None
     if args.output_case:
@@ -576,7 +672,7 @@ def _cmd_analyze(args: argparse.Namespace) -> int:
         if "output" not in configured:
             raise ValueError("--case must contain output settings; analysis never changes the archived circuit")
         output = normalize_quantities(configured["output"])
-    summary = analyze_run(args.run, out_dir=args.out, frequency_hz=args.frequency_hz, output=output)
+    summary = analyze_saved(args.run, out_dir=args.out, frequency_hz=args.frequency_hz, output=output)
     if args.json:
         _dump(summary)
     else:
@@ -594,6 +690,7 @@ HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
     "result-prune": _cmd_result_prune,
     "sim-run": _cmd_sim_run,
     "sim-netlist": _cmd_sim_netlist,
+    "network-run": _cmd_network_run,
     "visualize-netlist": _cmd_visualize_netlist,
     "analyze": _cmd_analyze,
 }

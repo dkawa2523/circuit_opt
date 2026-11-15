@@ -10,11 +10,18 @@ import json
 import math
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any
 
 HERE = Path(__file__).resolve().parent
+ROOT = HERE.parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from pcd.solver import default_ngspice_executable  # noqa: E402
+
 SOURCE_PATH = HERE / "raw_tables_iii_iv.csv"
 DERIVED_PATH = HERE / "derived_impedance_all32.csv"
 DERIVED_66PA_PATH = HERE / "derived_impedance_66pa.csv"
@@ -206,9 +213,10 @@ def _committed_view_matches(path: Path, fields: tuple[str, ...], expected: list[
 
 
 def _ngspice_replay(derived_rows: list[dict[str, Any]]) -> dict[str, Any]:
-    executable = shutil.which("ngspice_con.exe") or shutil.which("ngspice")
+    name = default_ngspice_executable()
+    executable = shutil.which(name)
     if executable is None:
-        return {"available": False, "executed": False, "rows": []}
+        raise RuntimeError(f"ngspice replay requires {name} on PATH")
 
     frequency = DRIVE_FREQUENCY_HZ
     omega = 2.0 * math.pi * frequency
@@ -298,7 +306,7 @@ def _range(rows: list[dict[str, Any]], field: str) -> dict[str, float]:
     return {"min": min(values), "max": max(values)}
 
 
-def run(*, run_ngspice: bool, require_ngspice: bool) -> dict[str, Any]:
+def run(*, run_ngspice: bool = True) -> dict[str, Any]:
     source_rows, source_fields = _load_rows(SOURCE_PATH)
     expected_keys = {
         (table, group, pressure, vpp)
@@ -402,15 +410,13 @@ def run(*, run_ngspice: bool, require_ngspice: bool) -> dict[str, Any]:
     spice: dict[str, Any] = (
         _ngspice_replay(derived_rows) if run_ngspice else {"available": False, "executed": False, "rows": []}
     )
-    if require_ngspice and not spice["executed"]:
-        raise RuntimeError("ngspice replay is required but ngspice is not available")
-    spice_pass = not spice["executed"] or all(bool(row["pass"]) for row in spice["rows"])
     checks = {
         "source_integrity": all(source_checks.values()),
         "committed_views": all(committed_view_checks.values()),
         "physical_and_power_consistency": all(physical_checks.values()),
-        "ngspice_replay": spice_pass,
     }
+    if run_ngspice:
+        checks["ngspice_replay"] = all(bool(row["pass"]) for row in spice["rows"])
     passed = all(checks.values())
     result: dict[str, Any] = {
         "schema": "literature_table_benchmark.v1",
@@ -441,7 +447,6 @@ def run(*, run_ngspice: bool, require_ngspice: bool) -> dict[str, Any]:
         "identity_checks": identity_rows,
         "ngspice": {
             "requested": run_ngspice,
-            "required": require_ngspice,
             "available": spice["available"],
             "executed": spice["executed"],
             "maximum_absolute_error_ohm": max(
@@ -464,11 +469,13 @@ def run(*, run_ngspice: bool, require_ngspice: bool) -> dict[str, Any]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, help="optional JSON result path")
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument("--no-ngspice", action="store_true", help="skip the series-RC circuit replay")
-    group.add_argument("--require-ngspice", action="store_true", help="fail if the circuit replay cannot run")
+    parser.add_argument("--no-ngspice", action="store_true", help="validate source tables without a circuit replay")
     args = parser.parse_args()
-    result = run(run_ngspice=not args.no_ngspice, require_ngspice=args.require_ngspice)
+    try:
+        result = run(run_ngspice=not args.no_ngspice)
+    except (OSError, ValueError, RuntimeError) as exc:
+        print(f"benchmark setup failed: {exc}", file=sys.stderr)
+        return 2
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -485,11 +492,10 @@ def main() -> int:
         f"{result['ranges']['reactance_ohm']['max']:.3f} ohm"
     )
     print(f"  max |P1-P_reported|/P_reported: {100.0 * result['maximum_fundamental_power_relative_difference']:.3f}%")
-    print(
-        "  ngspice replay: "
-        f"{'executed' if result['ngspice']['executed'] else 'skipped'}; "
-        f"max relative error={result['ngspice']['maximum_relative_error']}"
-    )
+    if result["ngspice"]["executed"]:
+        print(f"  ngspice replay: executed; max relative error={result['ngspice']['maximum_relative_error']}")
+    else:
+        print("  scope: source checks only (--no-ngspice)")
     return 0 if result["status"] == "PASS" else 1
 
 

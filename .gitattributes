@@ -1,0 +1,3 @@
+bench/literature/p2_minesi2022_pulse/source/*.txt -text whitespace=cr-at-eol,-blank-at-eol
+bench/literature/p2_kopf2023_common_mode/source/*.s1p -text whitespace=cr-at-eol,-blank-at-eol,-blank-at-eof
+bench/literature/p2_hoft2023_dbd/digitized.csv text eol=lf

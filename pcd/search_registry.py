@@ -18,8 +18,8 @@ def register(name: str) -> Callable[[OptimizerFactory], OptimizerFactory]:
     return _REGISTRY.register("optimizer", name)
 
 
-def get(name: str) -> OptimizerFactory:
-    return _REGISTRY.get("optimizer", name)
+def get(name: str, *, plugins: tuple[Path, ...] | None = None) -> OptimizerFactory:
+    return _REGISTRY.get("optimizer", name, plugins=plugins)
 
 
 def available() -> list[str]:
@@ -30,5 +30,4 @@ def conflicts() -> list[dict[str, str]]:
     return _REGISTRY.conflicts()
 
 
-def load_plugins(paths: list[str] | None, base_dir: Path) -> None:
-    _REGISTRY.load_plugins(paths, base_dir)
+load_plugins = _REGISTRY.load_plugins

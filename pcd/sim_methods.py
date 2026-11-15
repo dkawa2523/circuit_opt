@@ -6,20 +6,27 @@ from typing import Any
 from .case import Case, resolve_path
 from .component_models import series_resistance_ohm
 from .component_profiles import profiled_resistor_line
-from .netlist import Circuit, circuit_config, load_config
+from .netlist import (
+    Circuit,
+    case_spice_names,
+    circuit_config,
+    load_config,
+    reject_generated_name_collisions,
+    spice_names,
+)
 from .netlist_import import NETLIST_IMPORT_MODES, SOURCE_POLICIES, executable_netlist_lines, flatten_netlist_file
 from .probes import core_node, loss_reference, meter_node, meter_reference
 from .rf_loads import (
-    ccp_lumped_impedance,
-    icp_effective_impedance,
+    EFFECTIVE_LOAD_PARAMETERS,
+    effective_load_parameters,
     impedance_point,
     impedance_point_reactive_element,
 )
 from .sim_registry import register, register_solver
 from .simulation import SimulationResult
-from .simulation_input import SolverRunRequest
+from .simulation_input import SolverRunRequest, resolve_analysis_request
 from .solver import ngspice_cli
-from .sources import source_specs
+from .sources import source_name, source_specs
 from .spice import fundamental_hz, pick_value, resolve_value, spice_value
 from .topology_catalog import matching_topology
 
@@ -51,7 +58,9 @@ def circuit_from_yaml(case: Case, params: dict[str, Any]) -> Circuit:
     cfg = circuit_config(case)
     c = Circuit(output_node=str(cfg.get("output_node", "out")))
     c.params.update(params)
-    for item in _component_specs(cfg, "circuit"):
+    items = _component_specs(cfg, "circuit")
+    generated: list[str] = []
+    for item in items:
         if "raw" in item:
             if item.get("observe") or "series_resistance_ohm" in item:
                 raise ValueError(
@@ -60,11 +69,21 @@ def circuit_from_yaml(case: Case, params: dict[str, Any]) -> Circuit:
                 )
             c.raw(str(item["raw"]))
         else:
-            _add_declared_component(case, c, item, params)
+            _add_declared_component(case, c, item, params, generated)
+    if generated:
+        authored = case_spice_names(case, c.output_node)
+        for item in items:
+            if "raw" in item:
+                authored.update(spice_names(str(item["raw"])))
+            else:
+                authored.update(str(item[key]) for key in ("ref", "n1", "n2"))
+        reject_generated_name_collisions(generated, authored)
     return c
 
 
-def _add_declared_component(case: Case, circuit: Circuit, item: dict[str, Any], params: dict[str, Any]) -> None:
+def _add_declared_component(
+    case: Case, circuit: Circuit, item: dict[str, Any], params: dict[str, Any], generated: list[str]
+) -> None:
     """Add an ideal or effective-series-loss two-terminal component."""
 
     reference = str(item["ref"])
@@ -72,13 +91,17 @@ def _add_declared_component(case: Case, circuit: Circuit, item: dict[str, Any], 
     start = n1
     if item.get("observe"):
         observed_node = meter_node(reference)
-        circuit.raw(f"{meter_reference(reference)} {n1} {observed_node} DC 0")
+        meter = meter_reference(reference)
+        generated.extend((meter, observed_node))
+        circuit.raw(f"{meter} {n1} {observed_node} DC 0")
         start = observed_node
 
     resistance = series_resistance_ohm(item, params)
     if resistance is not None and resistance > 0:
         internal = core_node(reference)
-        circuit.raw(f"{loss_reference(reference)} {start} {internal} {spice_value(resistance)}")
+        loss = loss_reference(reference)
+        generated.extend((loss, internal))
+        circuit.raw(f"{loss} {start} {internal} {spice_value(resistance)}")
         start = internal
     profiled = profiled_resistor_line(case, params, reference, start, n2, item["value"])
     if profiled is None:
@@ -118,20 +141,10 @@ def _matching_circuit(case: Case, params: dict[str, Any], name: str) -> Circuit:
 # -----------------------------------------------------------------------------
 
 
-_MISSING = object()
-
-
-def _load_number(
-    config: dict[str, Any],
-    params: dict[str, Any],
-    field: str,
-    model: str,
-    default: Any = _MISSING,
-) -> float:
-    if field not in config and default is _MISSING:
-        raise ValueError(f"load.{field} is required for {model}")
-    raw = config.get(field, default)
-    value = resolve_value(raw, params)
+def _impedance_point_number(config: dict[str, Any], params: dict[str, Any], field: str) -> float:
+    if field not in config:
+        raise ValueError(f"load.{field} is required for impedance_point")
+    value = resolve_value(config[field], params)
     try:
         return float(value)
     except (TypeError, ValueError) as exc:
@@ -160,15 +173,17 @@ def load_impedance_point(case: Case, params: dict[str, Any]) -> str:
     """Realize a measured ``R+jX`` at one declared model frequency."""
 
     cfg = load_config(case)
-    resistance = _load_number(cfg, params, "resistance_ohm", "impedance_point")
-    reactance = _load_number(cfg, params, "reactance_ohm", "impedance_point")
-    frequency = _load_number(cfg, params, "model_frequency_Hz", "impedance_point")
-    drive_frequency = fundamental_hz(case, params)
-    if not math.isclose(frequency, drive_frequency, rel_tol=1e-12, abs_tol=1e-9):
-        raise ValueError(
-            "impedance_point model_frequency_Hz must equal the run's fundamental frequency; "
-            "use independent scenarios for independent measured frequency points"
-        )
+    resistance = _impedance_point_number(cfg, params, "resistance_ohm")
+    reactance = _impedance_point_number(cfg, params, "reactance_ohm")
+    frequency = _impedance_point_number(cfg, params, "model_frequency_Hz")
+    analysis = resolve_analysis_request(case, params)
+    if analysis.ac is not None:
+        if analysis.ac.start_hz != analysis.ac.stop_hz:
+            raise ValueError("impedance_point requires a single AC frequency; use solver.ac.frequency_Hz")
+        if not math.isclose(frequency, analysis.ac.start_hz, rel_tol=1e-12):
+            raise ValueError("impedance_point model_frequency_Hz must equal the requested AC frequency")
+    if analysis.transient is not None and not math.isclose(frequency, fundamental_hz(case, params), rel_tol=1e-12):
+        raise ValueError("impedance_point model_frequency_Hz must equal the transient fundamental frequency")
     impedance_point(resistance, reactance)
     reactive = impedance_point_reactive_element(reactance, frequency)
     lines = [
@@ -190,13 +205,10 @@ def load_impedance_point(case: Case, params: dict[str, Any]) -> str:
 def load_ccp_lumped(case: Case, params: dict[str, Any]) -> str:
     """Effective CCP one-port for a qualified frequency range."""
 
-    cfg = load_config(case)
-    resistance = _load_number(cfg, params, "R_eff_ohm", "ccp_lumped")
-    inductance = _load_number(cfg, params, "L_eff_H", "ccp_lumped")
-    capacitance = _load_number(cfg, params, "C_sheath_eq_F", "ccp_lumped")
-    # Validate numeric values before emitting a netlist.  The frequency value
-    # is immaterial to positivity, so the case fundamental is sufficient.
-    ccp_lumped_impedance(fundamental_hz(case, params), resistance, inductance, capacitance)
+    values = _resolved_effective_load_parameters(case, params, "ccp_lumped")
+    resistance = values["R_eff_ohm"]
+    inductance = values["L_eff_H"]
+    capacitance = values["C_sheath_eq_F"]
     return f"""
 * load model: ccp_lumped (effective port R-L-C, not a plasma-state solver)
 .subckt load_model p n
@@ -211,13 +223,12 @@ Csheath_eq ns n {spice_value(capacitance)}
 def load_icp_transformer(case: Case, params: dict[str, Any]) -> str:
     """ICP coil one-port using identifiable reflected-load parameters."""
 
-    cfg = load_config(case)
-    rc = _load_number(cfg, params, "R_coil_ohm", "icp_transformer")
-    lc = _load_number(cfg, params, "L_coil_H", "icp_transformer")
-    cp = _load_number(cfg, params, "C_parallel_F", "icp_transformer", 0.0)
-    reflected = _load_number(cfg, params, "reflected_inductance_H", "icp_transformer")
-    damping = _load_number(cfg, params, "secondary_damping_rate_rad_s", "icp_transformer")
-    icp_effective_impedance(fundamental_hz(case, params), rc, lc, reflected, damping, cp)
+    values = _resolved_effective_load_parameters(case, params, "icp_transformer")
+    rc = values["R_coil_ohm"]
+    lc = values["L_coil_H"]
+    reflected = values["reflected_inductance_H"]
+    damping = values["secondary_damping_rate_rad_s"]
+    cp = values["C_parallel_F"]
     # Any L_secondary scale gives the same terminal response.  Choosing
     # L_secondary=L_coil yields a well-scaled numerical realization; these
     # secondary element values are not physical parameters.
@@ -248,6 +259,12 @@ def load_icp_transformer(case: Case, params: dict[str, Any]) -> str:
         lines.append(f"Cparallel p n {spice_value(cp)}")
     lines.append(".ends load_model")
     return "\n".join(lines)
+
+
+def _resolved_effective_load_parameters(case: Case, params: dict[str, Any], model: str) -> dict[str, float]:
+    cfg = load_config(case)
+    values = {name: resolve_value(cfg[name], params) for name in EFFECTIVE_LOAD_PARAMETERS[model] if name in cfg}
+    return effective_load_parameters(model, values)
 
 
 @register("load", "from_yaml")
@@ -304,13 +321,13 @@ def circuit_from_netlist(case: Case, params: dict[str, Any]) -> Circuit:
     if source_policy not in SOURCE_POLICIES:
         raise ValueError(f"circuit.source_policy must be one of {sorted(SOURCE_POLICIES)}")
     path = resolve_path(case, declared)
-    flattened, _dependencies = flatten_netlist_file(path)
+    flattened, _dependencies = flatten_netlist_file(path, mode=mode)
     imported = executable_netlist_lines(flattened, mode=mode)
 
     circuit = Circuit(output_node=str(cfg.get("output_node", "out")))
     circuit.params.update(params)
     for item in imported:
-        if item.top_level and source_policy == "replace_named" and _matches_case_source_name(case, item.text):
+        if item.top_level and source_policy == "replace_named" and _matches_case_source_name(case, item.statement):
             circuit.notes.append(f"replaced same-named source line from netlist: {item.text}")
             continue
         circuit.preamble_raw(item.text)
@@ -323,9 +340,5 @@ def _matches_case_source_name(case: Case, line: str) -> bool:
     parts = line.split()
     if len(parts) < 3 or parts[0][:1].upper() not in {"V", "I"}:
         return False
-    names = {
-        str(src.get("name", "Vsrc" if index == 0 else f"Vsrc{index}")).lower()
-        for index, src in enumerate(source_specs(case))
-        if "raw" not in src
-    }
+    names = {source_name(src, index).lower() for index, src in enumerate(source_specs(case)) if "raw" not in src}
     return parts[0].lower() in names

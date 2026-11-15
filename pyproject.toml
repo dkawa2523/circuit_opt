@@ -34,7 +34,7 @@ pcd = ["py.typed"]
 
 # Install the same manual maintained in the repository, without a second copy.
 [tool.setuptools.data-files]
-"share/pcd/docs" = ["docs/manual-ja.md", "docs/roadmap-ja.md"]
+"share/pcd/docs" = ["docs/manual-ja.md"]
 "share/pcd/docs/assets" = ["docs/assets/*.svg", "docs/assets/evidence.json"]
 "share/pcd/examples" = ["examples/*.yaml", "examples/*.csv", "examples/README.md"]
 "share/pcd/examples/circuits" = ["examples/circuits/*.cir"]
@@ -49,7 +49,7 @@ version = {attr = "pcd.__version__"}
 cache-keys = [
   { file = "pyproject.toml" }, { file = "pcd/__init__.py" }, { file = "README.md" },
   { file = "docs/manual-ja.md" }, { file = "docs/assets/*.svg" }, { file = "docs/assets/evidence.json" },
-  { file = "docs/roadmap-ja.md" }, { file = "examples/**" },
+  { file = "examples/**" },
 ]
 
 [dependency-groups]
@@ -63,24 +63,13 @@ dev = [
   "import-linter>=2.0",
 ]
 
-# Optional dependencies for the reproducible OptunaHub/TPE benchmark only.
-# They are not imported by the PCD runtime or ordinary studies.
-optuna-benchmark = [
-  "optuna>=5.0,<6",
-  "optunahub>=0.5,<0.6",
-  "cmaes>=0.12,<1",
-  "evotorch>=0.6,<0.7",
-  "greenlet>=3.2,<4",
-  "torch>=2.3,<3",
-]
-
 # -----------------------------------------------------------------------------
 # Ruff: format + lint.  Rules are selected explicitly (never "ALL").
 # -----------------------------------------------------------------------------
 [tool.ruff]
 line-length = 120
 target-version = "py310"
-extend-exclude = ["runs", "quality"]
+extend-exclude = ["runs"]
 
 [tool.ruff.lint]
 select = [
@@ -118,11 +107,7 @@ known-first-party = ["pcd"]
 # -----------------------------------------------------------------------------
 [tool.pyrefly]
 project-includes = ["pcd", "tests", "bench", "noxfile.py"]
-project-excludes = [
-  "**/__pycache__/**", "**/.venv/**", "runs/**",
-  # This publication-only plugin needs the optional optuna-benchmark group.
-  "bench/figures/cases/plugins/optuna_samplers.py",
-]
+project-excludes = ["**/__pycache__/**", "**/.venv/**", "runs/**"]
 python-version = "3.10"
 
 # -----------------------------------------------------------------------------
@@ -133,7 +118,7 @@ testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "-ra --strict-markers --strict-config"
 markers = [
-  "e2e: end-to-end CLI journey; run in quality-pr and quality-nightly",
+  "e2e: end-to-end CLI journey; included in quality-pr",
 ]
 
 [tool.coverage.run]
@@ -142,4 +127,4 @@ source = ["pcd"]
 
 [tool.coverage.report]
 show_missing = true
-exclude_lines = ["pragma: no cover", "if TYPE_CHECKING:", "if __name__ == .__main__.:"]
+exclude_lines = ["if TYPE_CHECKING:", "if __name__ == .__main__.:"]

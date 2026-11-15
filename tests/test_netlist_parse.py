@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from pcd.netlist_parse import netlist_summary, node_sort_key, parse_netlist
+from pcd.netlist_parse import node_sort_key, parse_netlist
 
 
 def _write(tmp_path: Path, body: str) -> Path:
@@ -51,7 +51,7 @@ def test_subcircuits_are_expanded_so_load_internals_stay_visible(tmp_path):
         ".subckt load_model p n\nRbulk p nb 20\nLbulk nb ns 2e-7\nCsh ns n 5e-11\n.ends load_model\n"
         "Xload out 0 load_model\n.end\n",
     )
-    summary = netlist_summary(netlist)
+    summary = parse_netlist(netlist).summary()
     assert summary["subckts"] == ["load_model"]
     refs = {edge["ref"] for edge in summary["edges"]}
     assert {"Xload:Rbulk", "Xload:Lbulk", "Xload:Csh"} <= refs
@@ -75,7 +75,7 @@ def test_an_unresolved_subcircuit_becomes_a_single_edge(tmp_path):
 
 def test_the_summary_counts_components_by_kind(tmp_path):
     netlist = _write(tmp_path, "Vsrc src 0 DC 1\nR1 src a 50\nR2 a out 50\nC1 out 0 1e-9\n.end\n")
-    summary = netlist_summary(netlist)
+    summary = parse_netlist(netlist).summary()
     assert summary["component_counts"] == {"voltage": 1, "resistor": 2, "capacitor": 1}
     assert summary["n_edges"] == 4
     assert summary["n_nodes"] == 4
@@ -114,4 +114,4 @@ def test_a_transmission_line_is_drawn_along_its_signal_path(tmp_path):
 
 def test_couplings_appear_in_the_summary(tmp_path):
     netlist = _write(tmp_path, "Lp src 0 1e-6\nLs out 0 9e-6\nKx Lp Ls 0.9\n.end\n")
-    assert netlist_summary(netlist)["couplings"][0]["ref"] == "Kx"
+    assert parse_netlist(netlist).summary()["couplings"][0]["ref"] == "Kx"

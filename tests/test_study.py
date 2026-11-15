@@ -24,6 +24,8 @@ from pcd.core import (
     StudyRunner,
     StudySpec,
 )
+from pcd.netlist_import import stochastic_netlist_function
+from pcd.problem import project_candidate_case
 from pcd.results import (
     best_decision_summary,
     candidate_summary,
@@ -34,7 +36,9 @@ from pcd.results import (
     study_artifact_path,
 )
 from pcd.results import store as store_module
-from pcd.sim_core import archive_case_bundle
+from pcd.search import BaseOptimizer
+from pcd.search_registry import register as register_optimizer
+from pcd.sim_core import archive_case_bundle, prepare_case
 from pcd.sim_registry import register_solver
 from pcd.simulation import SimulationResult
 from pcd.study import (
@@ -45,7 +49,7 @@ from pcd.study import (
     resolve_study_case,
     run_case_study,
 )
-from pcd.study_config import CaseControlPolicy, candidate_case, study_spec_from_case
+from pcd.study_config import CaseControlPolicy, study_spec_from_case
 
 
 def test_study_config_separates_design_scenario_and_control(topology_case):
@@ -61,12 +65,12 @@ def test_study_config_separates_design_scenario_and_control(topology_case):
     }
     case = Case(topology_case.path, data)
     spec = study_spec_from_case(case)
-    projected = candidate_case(case)
+    projected = project_candidate_case(case)
     assert [scenario.scenario_id for scenario in spec.scenarios] == ["light", "heavy"]
     assert set(projected.data["variables"]) == {"C1", "L1"}
     assert spec.metadata["analysis"] == "transient"
     assert spec.metadata["frequency_Hz"] == pytest.approx(1.0e6)
-    assert spec.metadata["reference_plane"] == "load_ports"
+    assert spec.metadata["reference_plane"] == "electrode"
     assert spec.metadata["reference_impedance_ohm"] == pytest.approx(50.0)
 
 
@@ -97,14 +101,17 @@ def test_case_study_runs_through_the_generic_pipeline(tmp_path, topology_case):
     assert result["best"]["coverage"] == {"conditions": 1, "solved": 1, "accepted": 1}
     assert result["best"]["conditions"][0]["status"] == "accepted"
     assert result["best"]["conditions"][0]["objectives"].keys() == {"loss"}
-    assert result["execution"] == {
+    assert {key: value for key, value in result["execution"].items() if key != "restart"} == {
         "solver": "test_fake",
         "optimizer": "random",
         "trials": 2,
         "seed": 3,
         "optimizer_outcome": {"termination": "candidate_budget_exhausted"},
     }
+    assert result["execution"]["restart"]["scope"] == "deterministic_candidate_replay"
     assert (study_root / "study_result.json").exists()
+    history = json.loads((study_root / result["artifacts"]["history"]).read_text(encoding="utf-8"))
+    assert all(row["rank"][-1] is None for row in history)
     evaluation_table = pd.read_csv(study_root / result["artifacts"]["evaluation_table"])
     assert len(evaluation_table) == 2
     assert {
@@ -198,6 +205,45 @@ def test_final_verification_replays_only_the_selected_control_per_scenario(tmp_p
     assert all(selected_evaluation(scenario)["from_cache"] is False for scenario in selected["scenarios"])
 
 
+def test_study_enforces_budget_at_optimizer_evaluation_boundary(rc_case, tmp_path, monkeypatch):
+    @register_optimizer("test_over_budget_optimizer")
+    class OverBudgetOptimizer(BaseOptimizer):
+        def optimize(self, evaluate, budget):
+            for index in range(budget + 1):
+                evaluate({"C1": 1e-9 + index * 1e-10})
+
+    evaluated = []
+    evaluate_candidate = StudyRunner.evaluate_candidate
+
+    def record(self, candidate):
+        evaluated.append(candidate.candidate_id)
+        return evaluate_candidate(self, candidate)
+
+    monkeypatch.setattr(StudyRunner, "evaluate_candidate", record)
+    with pytest.raises(ValueError, match="exceeded the candidate budget of 1"):
+        run_case_study(
+            rc_case, tmp_path, n_trials=1, optimizer_name="test_over_budget_optimizer", solver_override="test_fake"
+        )
+    assert evaluated == ["trial_0000"]
+    assert not list(tmp_path.rglob("study_result.json"))
+
+
+def test_study_does_not_treat_a_plugin_population_size_as_grid_size(rc_case, tmp_path):
+    @register_optimizer("test_population_optimizer")
+    class PopulationOptimizer(BaseOptimizer):
+        n_points = 3
+
+        def ask(self):
+            return {"C1": 1e-9}
+
+    result = run_case_study(
+        rc_case, tmp_path, n_trials=1, optimizer_name="test_population_optimizer", solver_override="test_fake"
+    )
+
+    assert result["n_candidates"] == 1
+    assert result["execution"]["optimizer_outcome"] == {"termination": "candidate_budget_exhausted"}
+
+
 def test_continuous_study_persists_reproducible_search_evidence(tmp_path, rc_case):
     result = run_case_study(
         rc_case,
@@ -212,7 +258,7 @@ def test_continuous_study_persists_reproducible_search_evidence(tmp_path, rc_cas
     pareto = pd.read_csv(study_root / result["artifacts"]["pareto_front"])
     evaluations = pd.read_csv(study_root / result["artifacts"]["evaluation_table"])
 
-    assert result["execution"] == {
+    assert {key: value for key, value in result["execution"].items() if key != "restart"} == {
         "solver": "test_fake",
         "optimizer": "differential_evolution",
         "trials": 16,
@@ -454,7 +500,7 @@ def test_best_decision_summary_distinguishes_failed_evidence_and_control_margin(
     assert limited["conditions"][0]["failed_constraints"] == [margin_constraint.to_dict()]
 
 
-def test_candidate_summary_matches_evidence_coverage_and_objective_direction(tmp_path):
+def test_candidate_summary_matches_evidence_coverage_and_objective_direction(tmp_path, monkeypatch):
     study_root = tmp_path / "summary"
     generation = study_root / "generations" / "g_test"
     generation.mkdir(parents=True)
@@ -479,7 +525,8 @@ def test_candidate_summary_matches_evidence_coverage_and_objective_direction(tmp
     save("complete-edge", 1.0, 1.0, 2.0, 0.0)
     save("complete-center", 1.0, 1.0, 2.0, 1.0)
     (generation / "study_history.json").write_text(json.dumps(history), encoding="utf-8")
-    (study_root / "study_result.json").write_text(
+    pointer = study_root / "study_result.json"
+    pointer.write_text(
         json.dumps(
             {
                 "study": {"objectives": [{"metric": "score", "direction": "maximize", "aggregation": "worst"}]},
@@ -490,7 +537,17 @@ def test_candidate_summary_matches_evidence_coverage_and_objective_direction(tmp
         encoding="utf-8",
     )
 
+    reads = []
+    read_bytes = Path.read_bytes
+
+    def track_read(path, *args, **kwargs):
+        if path == pointer:
+            reads.append(path)
+        return read_bytes(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_bytes", track_read)
     summary = candidate_summary(study_root)
+    assert reads == [pointer]
     assert summary["candidate_id"].tolist() == [
         "complete-center",
         "complete-edge",
@@ -498,6 +555,60 @@ def test_candidate_summary_matches_evidence_coverage_and_objective_direction(tmp
         "incomplete",
         "failed",
     ]
+
+
+def test_candidate_summary_uses_saved_rank_when_weighted_coverage_hides_a_failed_condition(tmp_path):
+    history = []
+    for candidate_id, incomplete, objective in (("partial", 1.0, 1.0), ("complete", 0.0, 2.0)):
+        history.append(
+            {
+                "candidate_id": candidate_id,
+                "success_fraction": 1.0,
+                "feasible_fraction": 1.0,
+                "total_violation": 0.0,
+                "aggregates": {"loss": objective},
+                "rank": [incomplete, 0.0, 0.0, 0.0, objective, None],
+            }
+        )
+    (tmp_path / "history.json").write_text(json.dumps(history), encoding="utf-8")
+    (tmp_path / "study_result.json").write_text(
+        json.dumps({"artifacts": {"history": "history.json"}}), encoding="utf-8"
+    )
+
+    assert candidate_summary(tmp_path)["candidate_id"].tolist() == ["complete", "partial"]
+
+
+def test_study_readers_pin_a_published_generation_and_reject_a_conflicting_pointer(tmp_path):
+    generation = tmp_path / "generations" / "g_0000000000000001"
+    generation.mkdir(parents=True)
+    candidate = {"candidate_id": "first"}
+    (generation / "best.json").write_text(json.dumps(candidate), encoding="utf-8")
+    (generation / "evaluations.csv").write_text("scenario_id\n001\n", encoding="utf-8")
+    relative = generation.relative_to(tmp_path).as_posix()
+    result = {
+        "schema": "study_result.v1",
+        "artifacts": {
+            "generation": relative,
+            "best_candidate": f"{relative}/best.json",
+            "evaluation_table": f"{relative}/evaluations.csv",
+        },
+    }
+    pointer = tmp_path / "study_result.json"
+    saved = generation / "generation_result.json"
+    saved.write_text(json.dumps(result), encoding="utf-8")
+    pointer.write_bytes(saved.read_bytes())
+    # The active pointer is already committed if the process stopped before its marker.
+    assert read_best_candidate(generation) == candidate
+    assert read_evaluation_table(saved)["scenario_id"].tolist() == ["001"]
+
+    pointer.write_text(json.dumps({**result, "unexpected": True}), encoding="utf-8")
+    with pytest.raises(ValueError, match="active study result does not match"):
+        read_best_candidate(tmp_path)
+    with pytest.raises(ValueError, match="does not match its published generation"):
+        read_best_candidate(saved)
+
+    (generation / ".published").touch()
+    assert read_best_candidate(saved) == candidate
 
 
 def test_selected_evaluation_reads_the_indexed_candidate_trial():
@@ -591,6 +702,23 @@ def test_a_failed_final_replay_cannot_report_complete_evaluation_evidence(tmp_pa
     assert result["verification"]["status"] == "failed"
     assert result["best"]["status"] == "incomplete_evidence"
     assert result["best"]["evaluation_evidence"] == "incomplete_evidence"
+    assert result["best"]["conditions"][0]["failed_constraints"] == []
+
+
+def test_missing_acceptance_metric_is_incomplete_even_when_solver_and_objective_succeed(tmp_path, rc_case):
+    rc_case.data["target"]["constraints"] = {"metric_bounds": {"load_power_W": {"min": 0.001}}}
+    result = run_case_study(rc_case, tmp_path, n_trials=1, optimizer_name="random", solver_override="test_fake")
+
+    assert result["n_failed_evaluations"] == result["verification"]["n_failed_evaluations"] == 0
+    assert result["verification"]["status"] == "incomplete_evidence"
+    best = result["best"]
+    assert best["status"] == best["evaluation_evidence"] == "incomplete_evidence"
+    assert best["coverage"] == {"conditions": 1, "solved": 1, "accepted": 0}
+    assert best["evidence_limitation"] == "missing_acceptance_evidence"
+    failed = best["conditions"][0]["failed_constraints"]
+    assert failed[0]["evidence_available"] is False
+    assert "load_power_W" in failed[0]["detail"]
+    assert ConstraintResult.from_dict(failed[0]).evidence_available is False
 
 
 def test_case_evaluation_keeps_a_successful_ac_response_canonical(tmp_path):
@@ -702,10 +830,11 @@ def test_raw_cache_is_invalidated_when_a_declared_artifact_changes(tmp_path):
     assert store.load_raw(request) is None
 
     cache_path = store.raw_dir(request) / "raw_result.json"
-    cache_path.write_text("{broken", encoding="utf-8")
-    assert store.load_raw(request) is None
-    store.save_raw(request, raw)
-    assert store.load_raw(request) is not None
+    for damaged in ("{broken", "[]"):
+        cache_path.write_text(damaged, encoding="utf-8")
+        assert store.load_raw(request) is None
+        store.save_raw(request, raw)
+        assert store.load_raw(request) is not None
 
 
 def test_explicit_objective_and_control_axes_are_translated(topology_case):
@@ -755,7 +884,7 @@ def test_scenario_table_is_loaded_and_excluded_from_design_variables(tmp_path, t
     assert [scenario.scenario_id for scenario in spec.scenarios] == ["corner_a", "corner_b"]
     assert spec.scenarios[0].values == {"Rload": 20.0, "Xload": -90.0}
     assert spec.scenarios[0].weight == 2.0
-    assert {"Rload", "Xload"}.isdisjoint(candidate_case(case).data["variables"])
+    assert {"Rload", "Xload"}.isdisjoint(project_candidate_case(case).data["variables"])
 
 
 @pytest.mark.parametrize(
@@ -817,7 +946,7 @@ def test_inline_and_table_scenarios_cannot_both_own_the_same_axis(tmp_path, topo
     [
         (3, "study must be a mapping"),
         ({"scenarios": []}, "scenarios must be a non-empty list"),
-        ({"fidelities": []}, "no longer supported"),
+        ({"unknown_axis": []}, "unsupported fields.*unknown_axis"),
         ({"objectives": []}, "objectives must be a non-empty list"),
     ],
 )
@@ -831,15 +960,15 @@ def test_malformed_study_axes_fail_at_translation(topology_case, study, message)
 def test_design_projection_accepts_inline_specs_and_rejects_ambiguous_forms(topology_case):
     data = copy.deepcopy(topology_case.data)
     data["study"] = {"design_variables": {"custom": {"bounds": [1.0, 2.0], "default": 1.5}}}
-    projected = candidate_case(Case(topology_case.path, data))
+    projected = project_candidate_case(Case(topology_case.path, data))
     assert projected.data["variables"] == {"custom": {"bounds": [1.0, 2.0], "default": 1.5}}
 
     data["study"] = {"design_variables": ["not_declared"]}
     with pytest.raises(ValueError, match="not declared"):
-        candidate_case(Case(topology_case.path, data))
+        project_candidate_case(Case(topology_case.path, data))
     data["study"] = {"design_variables": "C1"}
     with pytest.raises(ValueError, match="list or mapping"):
-        candidate_case(Case(topology_case.path, data))
+        project_candidate_case(Case(topology_case.path, data))
 
 
 def test_runtime_fingerprint_hashes_present_plugins_and_marks_missing_ones(tmp_path, topology_case):
@@ -907,6 +1036,110 @@ def test_fingerprints_track_external_physics_and_metric_files_separately(tmp_pat
     assert _simulation_fingerprint(case, "test_fake") != raw_before
 
 
+@pytest.mark.parametrize("function", ["AGAUSS", "gauss", "aunif", "unif", "sgauss", "sunif", "TRRANDOM", "TRNOISE"])
+def test_ngspice_random_function_detection_uses_executable_logical_statements(function):
+    ordinary = (
+        "agauss(0,1,1) in deck title\n"
+        "* gauss(0,1,1) in a comment\n"
+        ".param R=limit(1,2,3) ; unif(0,1) in an inline comment\n"
+        ".control\nlet q=sgauss(0)\n.endc\n"
+    )
+    assert stochastic_netlist_function(ordinary, mode="deck") is None
+    random_deck = ordinary + f".param R =\n+ {function} (0,1)\n"
+    assert stochastic_netlist_function(random_deck, mode="deck") == function.lower()
+
+
+def test_ngspice_study_rejects_random_included_deck_but_forward_preparation_accepts_it(tmp_path, make_case):
+    (tmp_path / "parts.inc").write_text(".param resistance={agauss(50,10,1)}\n", encoding="utf-8")
+    (tmp_path / "divider.cir").write_text(
+        'Divider\n.include "parts.inc"\nV1 src 0 AC 1\nR1 src 0 {resistance}\n.end\n', encoding="utf-8"
+    )
+    case = make_case(
+        {
+            "circuit": {"builder": "from_netlist", "netlist_file": "divider.cir", "netlist_mode": "deck"},
+            "solver": {"ac": {"frequency_Hz": 1e6}},
+            "target": {"objective": "impedance_match"},
+        }
+    )
+    forward = prepare_case(case, run_root=tmp_path / "forward")
+    assert "agauss(50,10,1)" in (forward.run_dir / forward.netlist_file).read_text(encoding="utf-8")
+    with pytest.raises(ValueError, match=r"random function 'agauss'.*forward simulation"):
+        run_case_study(case, tmp_path / "study", n_trials=1, optimizer_name="grid")
+
+
+@pytest.mark.parametrize("input_kind", ["netlist", "plugin"])
+def test_study_cache_keys_follow_captured_inputs(tmp_path, make_case, monkeypatch, input_kind):
+    import pcd.study as studies
+
+    if input_kind == "netlist":
+        dependency = tmp_path / "divider.cir"
+        contents = "V1 src 0 AC 1\nR1 src 0 {}\n"
+        config = {"circuit": {"builder": "from_netlist", "netlist_file": dependency.name, "output_node": "src"}}
+    else:
+        dependency = tmp_path / "resistance.txt"
+        contents = "{}\n"
+        plugin = tmp_path / "builder.py"
+        plugin.write_text(
+            "from pcd.api import Circuit, register_simulation\n"
+            "@register_simulation('circuit', 'test_captured_plugin_data')\n"
+            "def build(case, params):\n"
+            "    circuit = Circuit(output_node='src')\n"
+            "    path = case.base_dir / case.data['circuit']['model']['resistance_file']\n"
+            "    circuit.add('R1', 'src', '0', float(path.read_text()))\n"
+            "    return circuit\n",
+            encoding="utf-8",
+        )
+        config = {
+            "circuit": {"builder": "test_captured_plugin_data", "model": {"resistance_file": dependency.name}},
+            "source": {"type": "dc_voltage", "voltage_V": 1, "ac_magnitude_V": 1},
+            "plugins": [plugin.name],
+        }
+    dependency.write_text(contents.format(50), encoding="utf-8")
+    solver_name = f"test_captured_{input_kind}"
+    case = make_case(
+        {
+            **config,
+            "solver": {"name": solver_name, "ac": {"frequency_Hz": 1e6}},
+            "target": {"objective": "impedance_match"},
+        }
+    )
+
+    @register_solver(solver_name)
+    def solve(request):
+        line = next(line for line in request.netlist_path.read_text().splitlines() if line.startswith("R1 src"))
+        resistance = float(line.split()[-1])
+        ac = pd.DataFrame(
+            {
+                "frequency_Hz": [1e6],
+                "voltage_re": [1.0],
+                "voltage_im": [0.0],
+                "current_re": [-1 / resistance],
+                "current_im": [0.0],
+            }
+        )
+        return SimulationResult(np.array([]), np.array([]), frequency_response=ac)
+
+    candidate = Candidate("fixed")
+    _, original, _ = build_case_runner(case, tmp_path / "results", transactional=True)
+    first = original.evaluate_candidate(candidate).evaluations[0]
+    assert first.metrics.values["resistance_ohm"] == 50
+
+    archive = studies.archive_case_bundle
+
+    def update_before_capture(*args, **kwargs):
+        dependency.write_text(contents.format(100), encoding="utf-8")
+        snapshot = archive(*args, **kwargs)
+        dependency.write_text(contents.format(200), encoding="utf-8")
+        return snapshot
+
+    monkeypatch.setattr(studies, "archive_case_bundle", update_before_capture)
+    _, updated, _ = build_case_runner(case, tmp_path / "results", transactional=True)
+    second = updated.evaluate_candidate(candidate).evaluations[0]
+
+    assert not second.from_cache
+    assert second.metrics.values["resistance_ohm"] == 100
+
+
 def test_study_requires_a_positive_trial_budget(tmp_path, topology_case):
     with pytest.raises(ValueError, match="positive"):
         run_case_study(topology_case, n_trials=0, run_root=tmp_path)
@@ -958,6 +1191,7 @@ def test_optimizer_signal_uses_coverage_while_final_rank_keeps_the_full_order():
     higher_coverage = _feasibility_first_loss((1.0, 0.0, 0.25, 100.0, -1e30))
     lower_coverage = _feasibility_first_loss((1.0, 0.0, 0.75, 0.0, -1e30))
     same_coverage_lower_violation = _feasibility_first_loss((1.0, 0.0, 0.25, 0.0, -1e30))
+    incomplete_with_negligible_weight = _feasibility_first_loss((2.0, 1e-30, 0.0, 0.0, -1e30))
 
-    assert feasible_bad_objective < higher_coverage < lower_coverage
+    assert feasible_bad_objective < higher_coverage < lower_coverage < incomplete_with_negligible_weight < 2.0
     assert same_coverage_lower_violation < higher_coverage

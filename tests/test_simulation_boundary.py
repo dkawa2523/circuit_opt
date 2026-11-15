@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
 from pcd.netlist import render_control_lines
 from pcd.probes import NamedProbe, ProbePlan
-from pcd.simulation import AcSweep, AnalysisRequest
+from pcd.simulation import AcSweep, AnalysisRequest, SimulationResult
 from pcd.simulation_input import SolverSettings, resolve_simulation_case
+from pcd.sources import ac_port_issue, transient_power_balance_issue
 
 
 def _probe_plan(*transient_vectors: str, ac_vectors: tuple[str, ...] = ()) -> ProbePlan:
@@ -99,6 +101,10 @@ def test_typed_execution_models_keep_their_own_invariants():
         SolverSettings(name="")
     with pytest.raises(ValueError, match="timeout_s"):
         SolverSettings(timeout_s=0)
+    signal = np.array([0.0, 1.0])
+    result = SimulationResult(signal, signal, probes={"voltage_V": signal + 100.0})
+    with pytest.raises(ValueError, match="cannot replace canonical waveform columns"):
+        result.as_frame()
 
 
 @pytest.mark.parametrize(
@@ -180,3 +186,38 @@ def test_ac_probes_follow_source_load_and_distinct_display_vectors():
         load_voltage_vector="v(load)",
     )
     assert "wrdata ac.csv v(src) i(Vsrc) v(load) v(mid) i(Vobserve_L1)" in lines
+
+
+def test_only_known_distinct_ac_drive_and_observation_ports_have_an_issue(make_case):
+    case = make_case({"sources": [{"name": "Vdrive"}, {"name": "Vobserved"}]})
+
+    assert (
+        ac_port_issue(case, "Vobserved", "Vdrive") == "observed source 'Vobserved' differs from AC excitation 'Vdrive'"
+    )
+    assert ac_port_issue(case, "vdrive", "Vdrive") is None
+    assert ac_port_issue(case, "Vexternal_meter", "Vdrive") is None
+
+
+def test_ac_and_transient_inventory_distinguish_bias_and_hidden_drives(make_case, tmp_path):
+    deck = tmp_path / "sources.cir"
+    case = make_case(
+        {
+            "source": {"name": "Vdrive"},
+            "circuit": {"builder": "from_netlist", "netlist_file": "sources.cir", "source_policy": "replace_named"},
+        }
+    )
+    top = "Vdrive src 0 AC 1\n"
+    deck.write_text(top + "Vbias bias 0 DC 2\nVmeter in out DC 0\n", encoding="utf-8")
+    assert ac_port_issue(case, "Vdrive", "Vdrive") is None
+    assert "Vbias" in (transient_power_balance_issue(case, "Vdrive") or "")
+
+    deck.write_text(top + "Vaux aux 0 DC 2 AC 1\n", encoding="utf-8")
+    assert ac_port_issue(case, "Vdrive", "Vdrive") == "multiple AC excitations are active: Vdrive, Vaux"
+
+    # Top-level replacement must not remove the same-named source inside a subcircuit.
+    deck.write_text(top + ".subckt model p n\nVdrive p n DC 2 AC 1\n.ends\nX1 a 0 model\n", encoding="utf-8")
+    assert "nested" in (ac_port_issue(case, "Vdrive", "Vdrive") or "")
+    assert "nested" in (transient_power_balance_issue(case, "Vdrive") or "")
+
+    deck.write_text(top + ".if (1)\nVaux aux 0 AC 1\n.else\nVaux aux 0 DC 0\n.endif\n", encoding="utf-8")
+    assert "conditional AC excitations" in (ac_port_issue(case, "Vdrive", "Vdrive") or "")

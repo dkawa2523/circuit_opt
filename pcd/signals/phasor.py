@@ -6,7 +6,7 @@ from collections.abc import Iterable
 
 import numpy as np
 
-from .series import clean_series, interval_series, trapezoid_weights
+from .series import interval_observed, interval_series, trapezoid_weights
 from .windows import PeriodicWindow, periodic_window
 
 
@@ -27,34 +27,36 @@ def harmonic_phasors(
     """
 
     requested = tuple(dict.fromkeys(int(item) for item in harmonics))
-    if not requested or any(item < 1 for item in requested) or fundamental_hz <= 0:
-        return {}
-    time, signal = clean_series(time_s, values)
-    if len(time) < 2 * len(requested) + 1:
+    if not requested or any(item < 1 for item in requested) or not np.isfinite(fundamental_hz) or fundamental_hz <= 0:
         return {}
     selected = window or periodic_window(
-        time,
-        signal,
+        time_s,
+        values,
         fundamental_hz,
         measure_cycles=measure_cycles,
         consecutive=1,
         tolerance=float("inf"),
     )
-    if selected is None:
+    max_step_s = 0.5 / max(requested) / fundamental_hz
+    if selected is None or not interval_observed(
+        time_s, values, selected.start_s, selected.end_s, max_step_s=max_step_s
+    ):
         return {}
-    time, signal = interval_series(time, signal, start_s=selected.start_s, end_s=selected.end_s)
-    if len(time) < 2 * len(requested) + 1:
+    time, signal = interval_series(time_s, values, start_s=selected.start_s, end_s=selected.end_s)
+    weights = trapezoid_weights(time)
+    usable = weights > 0
+    if np.count_nonzero(usable) < 2 * len(requested) + 1:
         return {}
 
-    relative = time - selected.start_s
-    columns = [np.ones(len(time), dtype=float)]
+    relative = time[usable] - selected.start_s
+    columns = [np.ones(len(relative), dtype=float)]
     for harmonic in requested:
         angle = 2.0 * np.pi * harmonic * fundamental_hz * relative
         columns.extend((np.cos(angle), np.sin(angle)))
     matrix = np.column_stack(columns)
-    root_weight = np.sqrt(trapezoid_weights(time))
+    root_weight = np.sqrt(weights[usable])
     weighted_matrix = matrix * root_weight[:, None]
-    weighted_signal = signal * root_weight
+    weighted_signal = signal[usable] * root_weight
     coefficients, _residuals, rank, _singular = np.linalg.lstsq(weighted_matrix, weighted_signal, rcond=None)
     if rank < matrix.shape[1]:
         return {}

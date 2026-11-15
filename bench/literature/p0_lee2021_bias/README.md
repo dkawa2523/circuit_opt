@@ -15,12 +15,11 @@ It asks three narrow questions:
 Run it from the repository root:
 
 ```powershell
-uv run python bench/literature/p0_lee2021_bias/run.py
+uv run --frozen python bench/literature/p0_lee2021_bias/run.py --run-root runs/literature/lee2021_bias --output runs/literature/lee2021_bias/result.json
 ```
 
-Add `--run-root <path>` to retain generated netlists and solver artifacts, or
-`--output <file.json>` to retain the compact result. By default all run
-artifacts are temporary.
+Open `result.json` for the three reference-plane comparisons. The selected
+run root also holds the generated netlists and solver artifacts.
 
 The 10% reflected-power limit is a platform decision criterion, not a claim
 that Lee et al. specified a universal chamber limit. The benchmark consumes

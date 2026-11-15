@@ -6,7 +6,7 @@ import math
 import time
 from dataclasses import replace
 
-from .aggregation import aggregate_candidate, candidate_rank_key, control_margin, evaluation_rank_key
+from .aggregation import aggregate_candidate, candidate_rank_key, control_margin, evaluation_rank_key, objective_rank
 from .models import (
     Candidate,
     CandidateResult,
@@ -111,22 +111,16 @@ class StudyRunner:
 
     def _control_rank(self, result: EvaluationResult, margin: float | None) -> tuple[float, ...]:
         if self.study.control_margin_min is not None:
-            electrical = tuple(item for item in result.constraints if item.name != "min_control_margin")
+            # The final constraint is added by _with_control_margin after measuring this point.
+            electrical, headroom = result.constraints[:-1], result.constraints[-1]
             electrical_feasible = result.raw.ok and all(item.satisfied for item in electrical)
-            electrical_violation = sum(item.violation for item in electrical)
-            margin_constraint = next(
-                (item for item in result.constraints if item.name == "min_control_margin"),
-                None,
-            )
-            margin_violation = 1.0 if margin_constraint is None else margin_constraint.violation
-            objective_rank = evaluation_rank_key(self.study, result)[3:]
             return (
-                0.0 if result.raw.ok else 1.0,
+                0.0 if result.evidence_available else 1.0,
                 0.0 if result.feasible else 1.0,
                 0.0 if electrical_feasible else 1.0,
-                electrical_violation,
-                margin_violation,
-                *objective_rank,
+                sum((item.violation for item in electrical), float(not result.raw.ok)),
+                headroom.violation,
+                *objective_rank(self.study, result.metrics.values),
                 float("inf") if margin is None else -margin,
             )
         return (*evaluation_rank_key(self.study, result), float("inf") if margin is None else -margin)
@@ -143,7 +137,8 @@ class StudyRunner:
                 False,
                 violation=1.0,
                 limit=limit,
-                detail="control margin is unavailable because the control grid has no numeric axis",
+                detail="control margin is unavailable because no numeric control axis has a nonzero range",
+                evidence_available=False,
             )
         else:
             distance = max(0.0, limit - margin)
@@ -160,9 +155,6 @@ class StudyRunner:
     def _evaluate_control(self, candidate, scenario, control, *, reuse_cached: bool) -> EvaluationResult:
         started = time.perf_counter()
         request = EvaluationRequest(candidate, scenario, control)
-        # Collision checking is a semantic guard, not optional validation:
-        # one value must never silently be both a design and an environment.
-        request.merged_inputs()
         raw = self.store.load_raw(request) if self.store and reuse_cached else None
         from_cache = raw is not None
         if raw is None:
@@ -197,14 +189,6 @@ class StudyRunner:
                 metrics = MetricSet()
                 constraints = []
 
-        constraints.append(
-            ConstraintResult(
-                name="evaluation_success",
-                satisfied=raw.ok,
-                violation=0.0 if raw.ok else 1.0,
-                detail=None if raw.ok else raw.error or raw.status,
-            )
-        )
         raw_cache_key = self.store.raw_key(request) if self.store else ""
         return EvaluationResult(
             request=request,
@@ -229,11 +213,19 @@ class StudyRunner:
     def _require_objectives(self, metrics: MetricSet) -> None:
         """A candidate may only be ranked from complete objective evidence."""
 
+        unavailable = None
         for objective in self.study.objectives:
             raw = metrics.values.get(objective.metric)
+            if raw is None and objective.metric in metrics.values:
+                unavailable = unavailable or objective.metric
+                continue
             try:
-                value = float(raw) if raw is not None else float("nan")
+                value = float(str(raw))
             except (TypeError, ValueError):
                 value = float("nan")
             if not math.isfinite(value):
                 raise ValueError(f"objective metric {objective.metric!r} is unavailable or non-finite")
+        if unavailable is not None:
+            reason = metrics.values.get(f"{unavailable}_unavailable_reason")
+            message = f"objective metric {unavailable!r} is unavailable"
+            raise MeasurementUnavailableError(f"{message}: {reason}" if reason else message)

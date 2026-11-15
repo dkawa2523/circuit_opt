@@ -1,19 +1,13 @@
-"""Circuit metrics and candidate-search behaviour.
-
-This layer only ever reads saved waveforms, so it must be robust to non-finite
-and out-of-order data.
-"""
+"""Circuit metrics and candidate-search behaviour."""
 
 from __future__ import annotations
-
-import json
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
 
-from pcd.metrics import interpolate_to_target, measure_record, measure_response
+from pcd import metrics as metrics_module
+from pcd.metrics import MetricLimitConstraint, interpolate_to_target, measure_response
 from pcd.search import create_optimizer, validate_proposal
 from pcd.simulation import SimulationResult
 
@@ -76,24 +70,8 @@ def test_optimizer_proposals_reject_missing_and_invalid_typed_values(make_case):
         validate_proposal(numeric_case, {"x": 1.5, "positive": 0})
 
 
-def _saved_waveform_record(tmp_path: Path, frame: pd.DataFrame, name: str = "run") -> dict:
-    """Persist the same artifact shape produced by simulation, without a fake importer API."""
-
-    run_dir = tmp_path / name
-    data_dir = run_dir / "data"
-    debug_dir = run_dir / "debug"
-    data_dir.mkdir(parents=True)
-    debug_dir.mkdir()
-    frame.to_csv(data_dir / "transient.csv", index=False)
-    record = {
-        "schema": "simulation_record.v2",
-        "run_dir": str(run_dir),
-        "status": "ok",
-        "params": {},
-        "artifacts": {"waveform": "data/transient.csv"},
-    }
-    (debug_dir / "manifest.json").write_text(json.dumps(record), encoding="utf-8")
-    return record
+def _waveform_response(frame: pd.DataFrame) -> SimulationResult:
+    return SimulationResult(time_s=frame["time_s"].to_numpy(float), voltage_V=frame["voltage_V"].to_numpy(float))
 
 
 def _candidate_frame(case, n: int, seed: int) -> pd.DataFrame:
@@ -104,14 +82,34 @@ def _candidate_frame(case, n: int, seed: int) -> pd.DataFrame:
 # --- objectives ------------------------------------------------------------
 
 
-def test_scoring_a_target_against_itself_is_zero_error(tmp_path, rc_case):
+def test_scoring_a_target_against_itself_is_zero_error(rc_case):
     """Boundary condition: a perfect match must give zero normalized RMSE."""
 
     target = pd.read_csv(rc_case.base_dir / "target_rc.csv")
-    record = _saved_waveform_record(tmp_path, target[["time_s", "voltage_V"]])
-    metrics = measure_record(rc_case, record)
+    metrics = measure_response(rc_case, _waveform_response(target))
     assert metrics["normalized_rmse"] == pytest.approx(0.0, abs=1e-12)
     assert metrics["rmse_V"] == pytest.approx(0.0, abs=1e-12)
+
+
+@pytest.mark.parametrize(("sample", "expected_peak"), [(20.0, 20.0), (np.nan, None)])
+def test_waveform_peak_limit_uses_complete_solver_observations(rc_case, monkeypatch, sample, expected_peak):
+    from pcd.core import Candidate, ControlState, EvaluationRequest, MetricSet, RawResult, Scenario
+
+    def metric(_case, _params, response):
+        response.voltage_V.fill(0.0)
+        return {"loss": 0.0, "peak_abs_voltage_V": 0.0}
+
+    monkeypatch.setattr(metrics_module, "get_metric", lambda *_args, **_kwargs: metric)
+    response = SimulationResult(np.array([0.0, 1.0, 2.0]), np.array([0.0, sample, 0.0]))
+    values = measure_response(rc_case, response)
+    assert values["peak_abs_voltage_V"] == expected_peak
+
+    request = EvaluationRequest(Candidate("point"), Scenario("condition"), ControlState())
+    limit = MetricLimitConstraint("peak_abs_voltage_V", "max", 10.0)
+    result = limit.evaluate(request, RawResult("ok"), MetricSet(values))
+    assert not result.satisfied
+    if expected_peak is None:
+        assert "full waveform" in str(result.detail)
 
 
 def test_terminal_vi_fit_uses_delivered_current_to_recover_complex_impedance(make_case):
@@ -156,6 +154,46 @@ def test_terminal_vi_fit_uses_delivered_current_to_recover_complex_impedance(mak
     assert metrics["reactance_ohm"] == pytest.approx(-30.0)
 
 
+def test_terminal_vi_fit_selects_the_solved_observation_frequency(make_case):
+    from pcd.core.models import MeasurementUnavailableError
+
+    case = make_case(
+        {
+            "source": {"type": "sine_voltage", "frequency_Hz": 1e6},
+            "solver": {"ac": {"sweep": "lin", "points": 3, "start_Hz": 1e6, "stop_Hz": 3e6}},
+            "target": {
+                "objective": "terminal_vi_fit",
+                "impedance_scale_ohm": 1.0,
+                "observation_frequency_parameter": "f_observed",
+            },
+        }
+    )
+    ac = pd.DataFrame(
+        {
+            "frequency_Hz": [1e6, 2e6, 3e6],
+            "voltage_re": [1.0, 1.0, 1.0],
+            "voltage_im": [0.0, 0.0, 0.0],
+            "current_re": [-0.1, -0.05, -1 / 30],
+            "current_im": [0.0, 0.0, 0.0],
+        }
+    )
+    params = {
+        "f_observed": 2e6,
+        "target_voltage_re_V": 1.0,
+        "target_voltage_im_V": 0.0,
+        "target_current_re_A": 0.05,
+        "target_current_im_A": 0.0,
+    }
+    empty = np.asarray([])
+    measured = measure_response(case, SimulationResult(empty, empty, frequency_response=ac), params)
+    assert measured["observed_frequency_Hz"] == measured["match_frequency_Hz"] == 2e6
+    assert measured["loss"] == pytest.approx(0.0)
+
+    missing = SimulationResult(empty, empty, frequency_response=ac.iloc[[0, 2]])
+    with pytest.raises(MeasurementUnavailableError, match="requires a solved sample"):
+        measure_response(case, missing, params)
+
+
 @pytest.mark.parametrize(
     ("values", "message"),
     [
@@ -187,13 +225,22 @@ def test_terminal_vi_fit_uses_delivered_current_to_recover_complex_impedance(mak
             },
             "must be nonzero",
         ),
+        (
+            {
+                "target_voltage_re_V": 1.0e300,
+                "target_voltage_im_V": 0.0,
+                "target_current_re_A": 1.0e-20,
+                "target_current_im_A": 0.0,
+            },
+            "target impedance must be finite",
+        ),
     ],
 )
 def test_terminal_vi_fit_rejects_invalid_target_observations(values, message):
-    from pcd.metrics import _target_impedance
+    from pcd.metrics import terminal_observation_impedance
 
     with pytest.raises(ValueError, match=message):
-        _target_impedance(values)
+        terminal_observation_impedance(values)
 
 
 @pytest.mark.parametrize(
@@ -213,24 +260,19 @@ def test_terminal_vi_fit_requires_a_positive_finite_scale(make_case, target, mes
         _target_impedance_scale(case)
 
 
-def test_the_objective_ignores_waveform_row_order(tmp_path, rc_case):
+def test_the_objective_ignores_waveform_row_order(rc_case):
     """Interpolation sorts by time, so a shuffled waveform must score the same."""
 
     frame = pd.read_csv(rc_case.base_dir / "target_rc.csv")[["time_s", "voltage_V"]]
-    a = measure_record(rc_case, _saved_waveform_record(tmp_path, frame, "ordered"))
-    b = measure_record(
-        rc_case,
-        _saved_waveform_record(tmp_path, frame.sample(frac=1.0, random_state=0), "shuffled"),
-    )
+    a = measure_response(rc_case, _waveform_response(frame))
+    b = measure_response(rc_case, _waveform_response(frame.sample(frac=1.0, random_state=0)))
     assert a["loss"] == pytest.approx(b["loss"], rel=RTOL_LOSS)
 
 
-def test_a_failed_record_is_not_measured_as_a_fake_large_loss(tmp_path, topology_case):
-    debug = tmp_path / "debug"
-    debug.mkdir()
-    (debug / "manifest.json").write_text(json.dumps({"run_dir": str(tmp_path), "status": "failed"}), encoding="utf-8")
+def test_a_failed_response_is_not_measured_as_a_fake_large_loss(topology_case):
+    response = SimulationResult(time_s=np.array([]), voltage_V=np.array([]), status="failed")
     with pytest.raises(ValueError, match="status 'failed'"):
-        measure_record(topology_case, tmp_path)
+        measure_response(topology_case, response)
 
 
 # --- interpolation and non-finite data -------------------------------------
@@ -253,12 +295,12 @@ def test_interpolation_marks_times_outside_the_observed_range_as_unavailable():
     assert aligned[1:3].tolist() == [0.0, 1.0]
 
 
-def test_waveform_objective_rejects_partial_time_coverage(tmp_path, rc_case):
+def test_waveform_objective_rejects_partial_time_coverage(rc_case):
     target = pd.read_csv(rc_case.base_dir / "target_rc.csv")
     partial = target.iloc[1:-1][["time_s", "voltage_V"]]
 
     with pytest.raises(ValueError, match="does not cover"):
-        measure_record(rc_case, _saved_waveform_record(tmp_path, partial))
+        measure_response(rc_case, _waveform_response(partial))
 
 
 def test_non_finite_samples_are_dropped_before_interpolation():
@@ -274,11 +316,11 @@ def test_non_finite_samples_are_dropped_before_interpolation():
     assert v.max() <= 1.0 + 1e-12
 
 
-def test_duplicate_timestamps_are_averaged():
-    target = pd.DataFrame({"time_s": [0.0, 1.0, 2.0], "voltage_V": [0.0, 1.0, 2.0]})
+def test_duplicate_timestamps_average_only_the_exact_target_tie():
+    target = pd.DataFrame({"time_s": [0.0, 0.5, 1.0, 1.5, 2.0], "voltage_V": np.zeros(5)})
     waveform = pd.DataFrame({"time_s": [0.0, 1.0, 1.0, 2.0], "voltage_V": [0.0, 2.0, 4.0, 6.0]})
     _t, _vt, v = interpolate_to_target(target, waveform)
-    assert v[1] == pytest.approx(3.0)
+    assert v.tolist() == pytest.approx([0.0, 1.0, 3.0, 5.0, 6.0])
 
 
 @pytest.mark.parametrize(("n_target", "n_source"), [(2, 2), (8, 3), (3, 8), (64, 17)])
@@ -359,33 +401,30 @@ def test_an_optimizer_with_no_results_has_no_best(topology_case):
 
 
 def test_a_metric_may_return_a_named_objective_instead_of_loss(tmp_path, rc_case):
+    from pcd.api import execute_case
     from pcd.metric_registry import register
-    from pcd.sim_core import simulate_case
 
     @register("missing_loss")
     def missing_loss(case, params, response):
         del case, params, response
         return {"something_else": 1.0}
 
-    rec = simulate_case(rc_case, run_root=tmp_path, solver_override="test_fake")
+    run = execute_case(rc_case, run_root=tmp_path, solver_override="test_fake")
     case = rc_case
     case.data["target"]["objective"] = "missing_loss"
-    assert measure_record(case, rec.manifest())["something_else"] == 1.0
+    assert measure_response(case, run.response, run.record.params)["something_else"] == 1.0
 
 
-def test_rf_load_is_a_named_study_metric_with_exact_port_current(tmp_path, make_case):
+def test_rf_load_is_a_named_study_metric_with_exact_port_current(make_case):
     frequency_hz = 1.0e6
     time_s = np.linspace(0.0, 8.0 / frequency_hz, 801)
     phase = 2.0 * np.pi * frequency_hz * time_s
-    frame = pd.DataFrame(
-        {
-            "time_s": time_s,
-            "voltage_V": 10.0 * np.sin(phase),
-            # Source current follows ngspice's into-source sign convention.
-            "current_A": -2.0 * np.sin(phase),
-            "source_voltage_V": 10.0 * np.sin(phase),
-            "load_current_A": 2.0 * np.sin(phase),
-        }
+    response = SimulationResult(
+        time_s=time_s,
+        voltage_V=10.0 * np.sin(phase),
+        # Source current follows ngspice's into-source sign convention.
+        current_A=-2.0 * np.sin(phase),
+        probes={"source_voltage_V": 10.0 * np.sin(phase), "load_current_A": 2.0 * np.sin(phase)},
     )
     case = make_case(
         {
@@ -397,8 +436,7 @@ def test_rf_load_is_a_named_study_metric_with_exact_port_current(tmp_path, make_
         }
     )
 
-    record = _saved_waveform_record(tmp_path, frame)
-    metrics = measure_record(case, record)
+    metrics = measure_response(case, response)
 
     assert "loss" not in metrics
     assert metrics["load_real_power_W"] == pytest.approx(10.0, rel=1e-3)
@@ -408,24 +446,22 @@ def test_rf_load_is_a_named_study_metric_with_exact_port_current(tmp_path, make_
 
 
 def test_a_non_finite_loss_is_a_failed_measurement_not_a_store_error(tmp_path, rc_case):
+    from pcd.api import execute_case
     from pcd.metric_registry import register
-    from pcd.sim_core import simulate_case
 
     @register("nonfinite_loss")
     def nonfinite_loss(case, params, response):
         del case, params, response
         return {"loss": float("inf")}
 
-    rec = simulate_case(rc_case, run_root=tmp_path, solver_override="test_fake")
+    run = execute_case(rc_case, run_root=tmp_path, solver_override="test_fake")
     rc_case.data["target"]["objective"] = "nonfinite_loss"
     with pytest.raises(ValueError, match="non-finite loss"):
-        measure_record(rc_case, rec.manifest())
+        measure_response(rc_case, run.response, run.record.params)
 
 
-def test_total_reflection_keeps_a_finite_loss_and_null_unbounded_values(tmp_path, make_case):
-    from pcd.metrics import impedance_match
-
-    del tmp_path
+@pytest.mark.parametrize(("source_voltage", "expected_loss"), [(1.0, 1.0), (0.0, None)])
+def test_open_port_distinguishes_total_reflection_from_zero_excitation(make_case, source_voltage, expected_loss):
     case = make_case(
         {
             "case_id": "open_match",
@@ -434,24 +470,24 @@ def test_total_reflection_keeps_a_finite_loss_and_null_unbounded_values(tmp_path
             "target": {"objective": "impedance_match"},
         }
     )
-    from pcd.simulation import SimulationResult
-
     response = SimulationResult(
         time_s=np.asarray([]),
         voltage_V=np.asarray([]),
         frequency_response=pd.DataFrame(
             {
                 "frequency_Hz": [13.56e6],
-                "voltage_re": [1.0],
+                "voltage_re": [source_voltage],
                 "voltage_im": [0.0],
                 "current_re": [0.0],
                 "current_im": [0.0],
             }
         ),
     )
-    metrics = impedance_match(case, {}, response)
+    metrics = measure_response(case, response)
 
-    assert metrics["loss"] == pytest.approx(1.0)
+    assert metrics["loss"] == expected_loss
+    if expected_loss is None:
+        assert metrics["loss_unavailable_reason"] == metrics["reflection_magnitude_unavailable_reason"]
     assert metrics["vswr"] is None
     assert metrics["resistance_ohm"] is None
 
@@ -629,10 +665,16 @@ def test_grid_optimizer_rejects_a_continuous_axis(make_case):
 def test_grid_optimizer_reports_completion_and_best_result(make_case):
     case = make_case({"case_id": "finite", "variables": {"C1": {"choices": [1.0, 2.0]}}})
     optimizer = create_optimizer(case, optimizer_name="grid")
-    for loss in (2.0, 1.0):
-        params = optimizer.ask()
-        optimizer.tell(params, {"loss": loss})
+    losses = iter((2.0, 1.0))
 
+    def evaluate(params):
+        feedback = {"loss": next(losses)}
+        optimizer.tell(params, feedback)
+        return feedback
+
+    optimizer.optimize(evaluate, 2)
+
+    assert optimizer.outcome == {"termination": "declared_grid_completed"}
     state = optimizer.state()
     assert state["complete"] is True
     assert state["n_points"] == 2
@@ -676,6 +718,48 @@ def test_differential_evolution_is_seeded_bounded_and_traceable(make_case):
     assert first[8][1]["phase"] == "evolution"
     assert first[8][1]["strategy"] == "DE/rand/1/bin"
     assert len(first[8][1]["parents"]) == 3
+
+
+@pytest.mark.parametrize(("bounds", "default"), [([5e-10, 1e-7], 5e-10), ([1e-10, 2e-10], 2e-10)])
+def test_differential_evolution_preserves_log_axis_boundary_defaults(make_case, bounds, default):
+    case = make_case(
+        {
+            "case_id": "log_boundary",
+            "run": {"trials": 8},
+            "variables": {"C": {"bounds": bounds, "scale": "log", "default": default}},
+        }
+    )
+    optimizer = create_optimizer(case, optimizer_name="differential_evolution")
+
+    assert validate_proposal(optimizer.case, optimizer.ask()) == {"C": default}
+
+
+@pytest.mark.parametrize("optimum", [1.0, 8.0])
+def test_least_squares_can_move_interior_from_a_declared_bound(make_case, optimum):
+    case = make_case(
+        {
+            "case_id": "terminal_boundary",
+            "variables": {"R": {"role": "latent", "bounds": [1.0, 10.0], "default": 1.0}},
+            "target": {"objective": "terminal_vi_fit"},
+            "study": {
+                "candidate_role": "latent",
+                "objectives": [{"metric": "normalized_impedance_error", "aggregation": "rms"}],
+            },
+            "optimizer": {"name": "least_squares"},
+        }
+    )
+    optimizer = create_optimizer(case)
+    proposed = []
+
+    def evaluate(params):
+        proposed.append(params["R"])
+        return {"residuals": [(params["R"] - optimum) / 100.0]}
+
+    optimizer.optimize(evaluate, 32)
+
+    assert optimizer.outcome["termination"] == "converged"
+    assert proposed[0] == 1.0
+    assert min(proposed, key=lambda value: abs(value - optimum)) == pytest.approx(optimum, abs=1e-6)
 
 
 def test_differential_evolution_does_not_spend_trials_on_duplicate_points(make_case):

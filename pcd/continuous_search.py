@@ -8,14 +8,13 @@ the pipeline's feasibility-first rank for selection.
 
 from __future__ import annotations
 
-import math
 from typing import Any
 
 import numpy as np
 
 from .case import Case
 from .core.spaces import ContinuousAxis
-from .search import BaseOptimizer, candidate_defaults, candidate_specs, feedback_rank
+from .search import BaseOptimizer, candidate_specs, feedback_rank
 
 _MUTATION = 0.8
 _CROSSOVER = 0.7
@@ -31,8 +30,10 @@ def continuous_space(
     case: Case, method: str = "differential_evolution"
 ) -> tuple[tuple[ContinuousAxis, ...], dict[str, Any]]:
     axes: list[ContinuousAxis] = []
-    fixed = candidate_defaults(case)
+    fixed = {}
     for name, spec in candidate_specs(case).items():
+        if "default" in spec:
+            fixed[name] = spec["default"]
         choices = spec.get("choices", spec.get("values"))
         if choices is not None:
             fixed[name] = _single_choice(name, choices, method)
@@ -59,18 +60,10 @@ def _single_choice(name: str, choices: Any, method: str) -> Any:
 def _continuous_axis(name: str, spec: dict[str, Any], method: str) -> ContinuousAxis:
     if spec.get("type") in {"bool", "int", "str", "string"}:
         raise ValueError(f"{method} variable {name!r} must be continuous, not {spec.get('type')!r}")
-    try:
-        low, high = (float(item) for item in spec["bounds"])
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"{method} variable {name!r} needs two finite numeric bounds") from exc
-    if not math.isfinite(low) or not math.isfinite(high) or low >= high:
-        raise ValueError(f"{method} variable {name!r} needs increasing finite bounds")
-    scale = str(spec.get("scale", "linear"))
-    if scale not in {"linear", "log"}:
-        raise ValueError(f"{method} variable {name!r} scale must be linear or log")
-    if scale == "log" and low <= 0:
-        raise ValueError(f"{method} variable {name!r} needs positive log-scale bounds")
-    return ContinuousAxis(name, low, high, scale == "log")
+    low, high = map(float, spec["bounds"])
+    if low == high:
+        raise ValueError(f"{method} variable {name!r} needs increasing bounds")
+    return ContinuousAxis(name, low, high, spec.get("scale") == "log")
 
 
 def _trial_budget(case: Case) -> int:

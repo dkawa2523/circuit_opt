@@ -8,7 +8,6 @@ htmlcov/
 # Tool caches.
 .ruff_cache/
 .import_linter_cache/
-.importlinter_cache/
 .grimp_cache/
 .hypothesis/
 .nox/
@@ -21,11 +20,6 @@ env/
 build/
 dist/
 *.egg-info/
-
-report.html
-*.pptx
-.chart-data-*/
-.codex-pptx-build/
 
 .env
 .env.*

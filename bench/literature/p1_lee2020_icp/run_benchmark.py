@@ -27,6 +27,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from pcd.rf_loads import icp_effective_impedance  # noqa: E402
+from pcd.solver import default_ngspice_executable  # noqa: E402
 
 PAPER_DOI = "https://doi.org/10.1063/1.5133862"
 PYTHON_REL_TOL = 1.0e-12
@@ -193,7 +194,7 @@ def _pcd_impedance(case: AlgebraCase, oracle: Oracle) -> complex:
 
 
 def _ngspice_available() -> bool:
-    return bool(shutil.which("ngspice_con.exe") or shutil.which("ngspice"))
+    return shutil.which(default_ngspice_executable()) is not None
 
 
 def _ngspice_result(case: AlgebraCase, oracle: Oracle, working_root: Path) -> NgspiceResult:
@@ -226,7 +227,7 @@ quit
         encoding="utf-8",
     )
 
-    executable = shutil.which("ngspice_con.exe") or shutil.which("ngspice")
+    executable = shutil.which(default_ngspice_executable())
     if executable is None:
         raise RuntimeError("ngspice disappeared from PATH after availability check")
     completed = subprocess.run(
@@ -372,16 +373,15 @@ def _symmetry_checks(results: list[dict[str, Any]]) -> dict[str, bool]:
     }
 
 
-def run(*, cases_path: Path, run_ngspice: bool, require_ngspice: bool) -> dict[str, Any]:
+def run(*, cases_path: Path, run_ngspice: bool = True) -> dict[str, Any]:
     available = _ngspice_available()
-    if require_ngspice and not available:
-        raise RuntimeError("ngspice is required but neither ngspice_con.exe nor ngspice is on PATH")
-    use_ngspice = run_ngspice and available
+    if run_ngspice and not available:
+        raise RuntimeError(f"ngspice is required but {default_ngspice_executable()} is unavailable on PATH")
 
     cases = load_cases(cases_path)
     with tempfile.TemporaryDirectory(prefix="pcd-lee2020-") as temporary:
         working_root = Path(temporary)
-        results = [evaluate_case(case, use_ngspice=use_ngspice, ngspice_root=working_root) for case in cases]
+        results = [evaluate_case(case, use_ngspice=run_ngspice, ngspice_root=working_root) for case in cases]
     coverage = _coverage_checks(results)
     symmetry = _symmetry_checks(results)
     passed = all(result["passed"] for result in results) and all(coverage.values()) and all(symmetry.values())
@@ -399,7 +399,8 @@ def run(*, cases_path: Path, run_ngspice: bool, require_ngspice: bool) -> dict[s
                 "Eq. 18 passive-port impedance reduction",
                 "Eq. 19 absorbed-power identity with peak-current convention",
                 "mapping Lref=M^2/(Lp+Le), gamma=Rp/(Lp+Le)",
-                "PCD analytic implementation and an independent optional ngspice transformer",
+                "PCD analytic implementation",
+                *(["independent ngspice transformer comparison"] if run_ngspice else []),
             ],
             "does_not_validate": [
                 "geometry-to-circuit plasma model",
@@ -419,8 +420,7 @@ def run(*, cases_path: Path, run_ngspice: bool, require_ngspice: bool) -> dict[s
         "ngspice": {
             "requested": run_ngspice,
             "available": available,
-            "executed": use_ngspice,
-            "required": require_ngspice,
+            "executed": run_ngspice,
         },
         "coverage_checks": coverage,
         "symmetry_checks": symmetry,
@@ -440,7 +440,7 @@ def _print_human(report: dict[str, Any]) -> None:
     print(f"Lee 2020 ICP Eq.18/19 benchmark: {status}")
     print(
         f"cases: {report['summary']['passed_case_count']}/{report['summary']['case_count']} passed; "
-        f"ngspice: {'executed' if ngspice['executed'] else 'skipped'}"
+        f"scope: {'equations and ngspice comparison' if ngspice['executed'] else 'equations only (--no-ngspice)'}"
     )
     print("case_id                         gamma/omega        Re(Z) ohm        Im(Z) ohm       Pabs W")
     for result in report["cases"]:
@@ -468,20 +468,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cases", type=Path, default=HERE / "cases.csv")
     parser.add_argument("--json", action="store_true", help="print the full machine-readable report")
     parser.add_argument("--output", type=Path, help="also write the full report as JSON")
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument("--no-ngspice", action="store_true", help="run only Eq.18/19 vs the PCD Python function")
-    group.add_argument("--require-ngspice", action="store_true", help="fail if the ngspice comparison cannot run")
+    parser.add_argument("--no-ngspice", action="store_true", help="run only Eq.18/19 vs the PCD Python function")
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
     try:
-        report = run(
-            cases_path=args.cases.resolve(),
-            run_ngspice=not args.no_ngspice,
-            require_ngspice=args.require_ngspice,
-        )
+        report = run(cases_path=args.cases.resolve(), run_ngspice=not args.no_ngspice)
     except (OSError, ValueError, RuntimeError, json.JSONDecodeError) as exc:
         print(f"benchmark setup failed: {exc}", file=sys.stderr)
         return 2

@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping
+from dataclasses import replace
 from typing import Any
 
 from .case import Case, default_params, resolve_path
 from .core.models import Candidate, ControlState, Objective, Scenario, StudySpec
 from .core.spaces import grid_values, parameter_grid
-from .inputs import integer, reject_unknown
-from .problem import ParameterRole, project_candidate_case, resolve_parameter_set
+from .inputs import condition_value, integer, load_plane_label, reject_unknown
+from .problem import ParameterRole, ParameterSet, resolve_parameter_set, validate_parameter_value
+from .simulation_input import ResolvedSimulationCase
 from .tables import read_csv_rows
 
 
@@ -22,14 +24,16 @@ def mapping(value: Any, path: str) -> dict[str, Any]:
     return {str(key): item for key, item in value.items()}
 
 
-def _scenario_specs(case: Case) -> tuple[Scenario, ...]:
+def _scenario_specs(case: Case, parameters: ParameterSet | None = None) -> tuple[Scenario, ...]:
+    parameters = resolve_parameter_set(case) if parameters is None else parameters
+    specs = {item.name: item.spec for item in parameters.definitions}
     study_cfg = mapping(case.data.get("study"), "study")
     raw = study_cfg.get("scenarios")
     table = study_cfg.get("scenario_table")
     if raw is not None and table is not None:
         raise ValueError("study.scenarios and study.scenario_table are mutually exclusive")
     if table is not None:
-        return _scenario_table_specs(case, mapping(table, "study.scenario_table"))
+        return _scenario_table_specs(case, mapping(table, "study.scenario_table"), specs)
     if raw is None:
         return (Scenario("nominal"),)
     if not isinstance(raw, list) or not raw:
@@ -41,12 +45,17 @@ def _scenario_specs(case: Case) -> tuple[Scenario, ...]:
         if "id" in cfg and "scenario_id" in cfg:
             raise ValueError(f"study.scenarios[{index}] must use only one of id or scenario_id")
         scenario_id = str(cfg.get("id", cfg.get("scenario_id", f"scenario_{index:03d}")))
-        values = mapping(cfg.get("values"), f"study.scenarios[{index}].values")
+        values = {
+            name: condition_value(value, name, specs.get(name, {}), f"study.scenarios[{index}].values.{name}")
+            for name, value in mapping(cfg.get("values"), f"study.scenarios[{index}].values").items()
+        }
         scenarios.append(Scenario(scenario_id, values, float(cfg.get("weight", 1.0))))
     return tuple(scenarios)
 
 
-def _scenario_table_specs(case: Case, cfg: dict[str, Any]) -> tuple[Scenario, ...]:
+def _scenario_table_specs(
+    case: Case, cfg: dict[str, Any], specs: Mapping[str, Mapping[str, Any]]
+) -> tuple[Scenario, ...]:
     reject_unknown(cfg, {"table_file", "values", "id_column", "weight_column", "defaults"}, "study.scenario_table")
     raw_path = cfg.get("table_file")
     if not raw_path:
@@ -70,12 +79,15 @@ def _scenario_table_specs(case: Case, cfg: dict[str, Any]) -> tuple[Scenario, ..
         if not scenario_id:
             raise ValueError(f"scenario table row {index} has an empty {id_column}")
         values = {
-            **defaults,
-            **{
-                parameter: _scenario_cell(row[str(column)], f"{path}:{index}:{column}")
-                for parameter, column in value_columns.items()
-            },
+            name: condition_value(value, name, specs.get(name, {}), f"{path}:{index}:{name}")
+            for name, value in defaults.items()
+            if name not in value_columns
         }
+        for name, column in value_columns.items():
+            raw_value = row[str(column)].strip()
+            if not raw_value:
+                raise ValueError(f"scenario value is empty at {path}:{index}:{column}")
+            values[name] = condition_value(raw_value, name, specs.get(name, {}), f"{path}:{index}:{column}")
         weight_raw = row.get(weight_column, "").strip()
         if weight_column in row and not weight_raw:
             raise ValueError(f"scenario weight is empty at {path}:{index}:{weight_column}")
@@ -83,19 +95,6 @@ def _scenario_table_specs(case: Case, cfg: dict[str, Any]) -> tuple[Scenario, ..
     if not scenarios:
         raise ValueError(f"scenario table is empty: {path}")
     return tuple(scenarios)
-
-
-def _scenario_cell(raw: Any, location: str) -> Any:
-    text = str(raw).strip()
-    if not text:
-        raise ValueError(f"scenario value is empty at {location}")
-    try:
-        value = float(text)
-    except ValueError:
-        return text
-    if not math.isfinite(value):
-        raise ValueError(f"scenario value must be finite at {location}")
-    return value
 
 
 def _objective_specs(case: Case) -> tuple[Objective, ...]:
@@ -124,7 +123,7 @@ def _electrical_context(case: Case) -> dict[str, Any]:
     analyses = [name for name in ("ac", "tran") if name in solver]
     context: dict[str, Any] = {
         "analysis": "+".join("transient" if name == "tran" else name for name in analyses) or "unspecified",
-        "reference_plane": str(load.get("reference_plane", "load_ports")),
+        "reference_plane": load_plane_label(load.get("reference_plane")),
         "reference_impedance_ohm": float(measurement.get("reference_impedance_ohm", 50.0)),
     }
 
@@ -138,16 +137,12 @@ def _electrical_context(case: Case) -> dict[str, Any]:
     return context
 
 
-def study_spec_from_case(case: Case) -> StudySpec:
+def study_spec_from_case(case: Case, *, parameters: ParameterSet | None = None) -> StudySpec:
     study_cfg = mapping(case.data.get("study"), "study")
     target_cfg = mapping(case.data.get("target"), "target")
-    parameters = resolve_parameter_set(case)
+    if parameters is None:
+        parameters = resolve_parameter_set(case)
     analysis_mode = str(study_cfg.get("analysis_mode", "")).strip()
-    if "fidelities" in study_cfg:
-        raise ValueError(
-            "study.fidelities is no longer supported; select one solver in solver.name "
-            "and run separate explicit studies when two numerical methods must be compared"
-        )
     reject_unknown(
         study_cfg,
         {
@@ -171,7 +166,7 @@ def study_spec_from_case(case: Case) -> StudySpec:
         raise ValueError("put aggregation and cvar_alpha inside each declared objective")
     return StudySpec(
         study_id=case.case_id,
-        scenarios=_scenario_specs(case),
+        scenarios=_scenario_specs(case, parameters),
         objectives=_objective_specs(case),
         control_margin_min=(
             float(study_cfg["control_margin_min"]) if study_cfg.get("control_margin_min") is not None else None
@@ -188,12 +183,6 @@ def study_spec_from_case(case: Case) -> StudySpec:
     )
 
 
-def candidate_case(case: Case) -> Case:
-    """Project a case onto the parameters that an optimizer may change."""
-
-    return project_candidate_case(case)
-
-
 def select_simulation_inputs(
     case: Case,
     params: Mapping[str, Any] | None = None,
@@ -203,14 +192,13 @@ def select_simulation_inputs(
 ) -> dict[str, Any]:
     """Select one physical point explicitly when a case describes several."""
 
-    from .search import _validate_proposed_value
-
     supplied = dict(params or {})
-    definitions = resolve_parameter_set(case).definitions
+    parameters = resolve_parameter_set(case)
+    definitions = parameters.definitions
     specs = {item.name: item.spec for item in definitions}
     if unknown := sorted(set(supplied) - set(specs)):
         raise ValueError(f"unknown simulation parameters {unknown}")
-    study = study_spec_from_case(case)
+    study = study_spec_from_case(case, parameters=parameters)
     if scenario_id is None and len(study.scenarios) != 1:
         raise ValueError("sim-run needs --scenario for a case with multiple conditions; use run for the complete study")
     scenario = next((row for row in study.scenarios if scenario_id is None or row.scenario_id == scenario_id), None)
@@ -230,7 +218,7 @@ def select_simulation_inputs(
             supplied[item.name] = values[0]
         elif bounds:
             supplied[item.name] = bounds[0]
-    policy = CaseControlPolicy(case)
+    policy = CaseControlPolicy(case, study.scenarios)
     available = policy.controls(study, Candidate("single_point", supplied), scenario)
     requested_controls = dict(controls or {})
     matches = [
@@ -249,32 +237,49 @@ def select_simulation_inputs(
     for name, spec in specs.items():
         if name not in resolved:
             raise ValueError(f"simulation parameter {name!r} has no selected value")
-        resolved[name] = _validate_proposed_value(name, resolved[name], spec)
+        resolved[name] = validate_parameter_value(name, resolved[name], spec)
     return resolved
 
 
 def describe_case(case: Case) -> dict[str, Any]:
-    """Explain the existing compiled plan without introducing another validator."""
+    """Describe the declared study and the default simulation point."""
 
-    from .artifacts import data_file_references
     from .netlist import build_netlist_inputs
-    from .simulation_input import resolve_simulation_case
+    from .simulation_input import bind_load_probe, resolve_simulation_case
 
     study = study_spec_from_case(case)
-    parameters = resolve_parameter_set(case)
-    simulation = resolve_simulation_case(case, default_params(case))
-    netlist = build_netlist_inputs(case, default_params(case))
-    policy = CaseControlPolicy(case)
-    counts = {
-        scenario.scenario_id: len(policy.controls(study, Candidate("preview"), scenario))
-        for scenario in study.scenarios
-    }
+    defaults = default_params(case)
+    simulation = resolve_simulation_case(case, defaults)
+    netlist = build_netlist_inputs(case, defaults)
+    simulation = replace(simulation, probes=bind_load_probe(simulation.probes, attached=bool(netlist.load_subckt)))
+    return case_plan_summary(
+        case, study, control_state_counts(case, study), defaults, simulation, netlist.circuit.output_node
+    )
+
+
+def control_state_counts(case: Case, study: StudySpec) -> dict[str, int]:
+    policy = CaseControlPolicy(case, study.scenarios)
+    candidate = Candidate("preview")
+    return {scenario.scenario_id: len(policy.controls(study, candidate, scenario)) for scenario in study.scenarios}
+
+
+def case_plan_summary(
+    case: Case,
+    study: StudySpec,
+    counts: dict[str, int],
+    defaults: dict[str, Any],
+    simulation: ResolvedSimulationCase,
+    output_node: str,
+) -> dict[str, Any]:
+    from .artifacts import data_file_references
+
+    probes = simulation.probes
     return {
         "output": dict(case.data.get("output") or {}),
-        "workflow": (case.data.get("metadata") or {}).get(
-            "workflow", "identification" if case.data.get("identification") else "study"
-        ),
-        "parameter_roles": parameters.role_names(),
+        "workflow": "simulation"
+        if case.is_forward_simulation
+        else ("identification" if case.data.get("identification") is not None else "study"),
+        "parameter_roles": study.metadata["parameter_roles"],
         "condition_ids": [scenario.scenario_id for scenario in study.scenarios],
         "control_states_per_condition": counts,
         "candidate_budget": (case.data.get("run") or {}).get("trials", 1),
@@ -282,17 +287,17 @@ def describe_case(case: Case) -> dict[str, Any]:
         "solver": dict(case.data.get("solver") or {}),
         "measurement": {
             **dict(case.data.get("measurement") or {}),
-            "current_source": simulation.probes.source_name,
-            "source_voltage_vector": simulation.probes.source_voltage_vector,
-            "load_current_column": simulation.probes.load_current_column,
-            "voltage_node": simulation.measurement.voltage_node or netlist.circuit.output_node,
+            "current_source": probes.source_name,
+            "source_voltage_vector": probes.source_voltage_vector,
+            "load_current_column": probes.load_current_column,
+            "voltage_node": simulation.measurement.voltage_node or output_node,
             "load_ports": {
-                "p": simulation.measurement.load_positive or netlist.circuit.output_node,
+                "p": simulation.measurement.load_positive or output_node,
                 "n": simulation.measurement.load_negative,
             },
             "load_reference_plane": simulation.measurement.reference_plane,
         },
-        "preview_params": default_params(case),
+        "preview_params": defaults,
         "preview_scope": "default point only; sim-run requires selection when multiple points are declared",
         "analysis_mode": study.metadata.get("analysis_mode", "circuit_response"),
         "dependencies": [str(resolve_path(case, path)) for _field, path in data_file_references(case.data)],
@@ -303,7 +308,7 @@ def describe_case(case: Case) -> dict[str, Any]:
 class CaseControlPolicy:
     """Expand tunable controls separately from each candidate design."""
 
-    def __init__(self, case: Case) -> None:
+    def __init__(self, case: Case, scenarios: tuple[Scenario, ...] | None = None) -> None:
         study_cfg = mapping(case.data.get("study"), "study")
         control_cfg = mapping(study_cfg.get("controls"), "study.controls")
         reject_unknown(control_cfg, {"defaults", "variables", "budget", "by_scenario"}, "study.controls")
@@ -313,11 +318,13 @@ class CaseControlPolicy:
             for name, spec in mapping(control_cfg.get("variables"), "study.controls.variables").items()
         }
         self.budget = integer(control_cfg.get("budget", 27), "study.controls.budget", minimum=1)
+        self.axis_values = {}
         self.numeric_ranges = {}
         for name, spec in self.variables.items():
             if spec.get("role", "control") != "control":
                 raise ValueError(f"study.controls.variables.{name}.role must be control")
             values = grid_values(spec)
+            self.axis_values[name] = values
             if all(isinstance(value, int | float) and not isinstance(value, bool) for value in values):
                 self.numeric_ranges[name] = (min(values), max(values))
         self.by_scenario = {
@@ -330,7 +337,7 @@ class CaseControlPolicy:
             inline = mapping(cfg.get("controls"), f"study.scenarios[{index}].controls")
             if inline:
                 self.by_scenario[scenario_id] = {**self.by_scenario.get(scenario_id, {}), **inline}
-        ids = {scenario.scenario_id for scenario in _scenario_specs(case)}
+        ids = {scenario.scenario_id for scenario in (_scenario_specs(case) if scenarios is None else scenarios)}
         if unknown := sorted(set(self.by_scenario) - ids):
             raise ValueError(f"study.controls.by_scenario references unknown scenarios {unknown}")
 
@@ -341,12 +348,19 @@ class CaseControlPolicy:
         scenario: Scenario,
     ) -> tuple[ControlState, ...]:
         del study, candidate
-        observed = self.by_scenario.get(scenario.scenario_id, {})
+        observed = {
+            name: condition_value(
+                value, name, self.variables[name], f"scenario {scenario.scenario_id!r} control {name!r}"
+            )
+            if name in self.variables
+            else value
+            for name, value in self.by_scenario.get(scenario.scenario_id, {}).items()
+        }
         # Observed condition settings pin axes; they must never be replaced
         # by a more favorable grid setting during evaluation or identification.
         for name, value in observed.items():
-            if name in self.variables and value not in grid_values(self.variables[name]):
+            if name in self.axis_values and value not in self.axis_values[name]:
                 raise ValueError(f"scenario {scenario.scenario_id!r} control {name!r}={value!r} is outside its grid")
-        remaining = {name: spec for name, spec in self.variables.items() if name not in observed}
+        remaining = {name: values for name, values in self.axis_values.items() if name not in observed}
         grid = parameter_grid(remaining, budget=self.budget)
         return tuple(ControlState({**self.defaults, **point, **observed}, self.numeric_ranges) for point in grid)

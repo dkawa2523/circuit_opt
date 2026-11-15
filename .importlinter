@@ -1,143 +1,36 @@
-; Architecture boundaries for the design-study engine.
-;
-; Keep only boundaries that protect the dependency direction. Numerical and
-; orchestration details are tested as behaviour, not encoded as import rules.
-
+; Contracts describe dependency direction. Public behavior is verified by tests.
 [importlinter]
 root_package = pcd
 
-[importlinter:contract:core-is-domain-independent]
-name = Generic core must not depend on circuit, solver, search implementations, or applications
-type = forbidden
-source_modules =
-    pcd.core
-forbidden_modules =
-    pcd.case
-    pcd.artifacts
-    pcd.spice
-    pcd.study
-    pcd.evaluation
-    pcd.netlist
-    pcd.solver
-    pcd.sim_core
-    pcd.sim_methods
-    pcd.rf_loads
-    pcd.metrics
-    pcd.metric_registry
-    pcd.search
-    pcd.search_registry
-    pcd.reporting
+[importlinter:contract:cli-entry-point]
+name = The CLI and module entry point stay outside library imports
+type = protected
+protected_modules =
     pcd.cli
+    pcd.__main__
+allowed_importers = pcd.__main__
 
-[importlinter:contract:signals-are-foundational]
-name = Signal primitives must not depend on application or orchestration code
-type = forbidden
-source_modules =
-    pcd.signals
-forbidden_modules =
-    pcd.core
-    pcd.case
-    pcd.artifacts
-    pcd.spice
-    pcd.study
-    pcd.evaluation
+[importlinter:contract:dependency-direction]
+name = Workflows depend on circuit execution and measurements, then on data and numerical primitives
+type = layers
+; Modules separated by ':' share a layer. Each layer may use the ones below it.
+layers =
+    pcd.api : pcd.network : pcd.identification : pcd.study : pcd.study_config : pcd.evaluation : pcd.validation : pcd.metrics : pcd.metric_registry : pcd.search : pcd.search_registry : pcd.continuous_search : pcd.least_squares_search : pcd.reporting : pcd.results : pcd.records : pcd.output : pcd.netlist_viz : pcd.figures
+    pcd.sim_core : pcd.simulation_input : pcd.sim_methods : pcd.sim_registry : pcd.solver : pcd.ngspice_io : pcd.netlist : pcd.netlist_import : pcd.netlist_parse : pcd.component_models : pcd.component_profiles : pcd.case : pcd.plan : pcd.problem : pcd.sources : pcd.spice : pcd.authoring : pcd.artifacts : pcd.rf_loads : pcd.registry : pcd.tables : pcd.topology_catalog
     pcd.analysis
-    pcd.netlist
-    pcd.solver
-    pcd.sim_core
-    pcd.metrics
-    pcd.search
-    pcd.rf_loads
-    pcd.reporting
-    pcd.cli
-
-[importlinter:contract:cli-is-a-leaf]
-name = The CLI is an entry point, never a library dependency
-type = forbidden
-source_modules =
+    pcd.probes : pcd.simulation
     pcd.core
-    pcd.signals
-    pcd.results
-    pcd.plan
-    pcd.case
-    pcd.artifacts
-    pcd.spice
-    pcd.study
-    pcd.analysis
-    pcd.rf_loads
-    pcd.netlist
-    pcd.solver
-    pcd.sim_core
-    pcd.metrics
-    pcd.metric_registry
-    pcd.search
-    pcd.search_registry
-    pcd.records
-    pcd.validation
-    pcd.reporting
-    pcd.evaluation
-forbidden_modules =
-    pcd.cli
+    pcd.signals | pcd.inputs
 
-[importlinter:contract:simulation-is-independent]
-name = Simulation preparation and execution stay below measurement, study, search, and reporting
+[importlinter:contract:execution-does-not-measure]
+name = Circuit execution produces observations without measuring them
 type = forbidden
 source_modules =
-    pcd.simulation
+    pcd.sim_core
     pcd.simulation_input
-    pcd.probes
-    pcd.ngspice_io
-    pcd.netlist
-    pcd.solver
-    pcd.sim_core
     pcd.sim_methods
     pcd.sim_registry
-forbidden_modules =
-    pcd.analysis
-    pcd.metrics
-    pcd.metric_registry
-    pcd.evaluation
-    pcd.study
-    pcd.study_config
-    pcd.search
-    pcd.search_registry
-    pcd.results
-    pcd.reporting
-    pcd.figures
-    pcd.cli
-
-[importlinter:contract:analysis-is-pure]
-name = Analysis consumes canonical data and foundational types only
-type = forbidden
-source_modules =
-    pcd.analysis
-forbidden_modules =
-    pcd.case
-    pcd.component_models
-    pcd.plan
-    pcd.validation
-    pcd.artifacts
-    pcd.records
-    pcd.spice
-    pcd.netlist
-    pcd.netlist_import
-    pcd.netlist_parse
-    pcd.netlist_viz
-    pcd.ngspice_io
     pcd.solver
-    pcd.sim_core
-    pcd.sim_methods
-    pcd.sim_registry
-    pcd.simulation_input
-    pcd.metrics
-    pcd.metric_registry
-    pcd.evaluation
-    pcd.study
-    pcd.study_config
-    pcd.search
-    pcd.search_registry
-    pcd.results
-    pcd.reporting
-    pcd.figures
-    pcd.rf_loads
-    pcd.cli
+    pcd.ngspice_io
+    pcd.netlist
+forbidden_modules = pcd.analysis

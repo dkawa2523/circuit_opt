@@ -14,10 +14,9 @@ from typing import Any
 import yaml
 
 from pcd.analysis import at_frequency, input_impedance
+from pcd.api import Case, execute_case
 from pcd.artifacts import write_json
-from pcd.case import Case
-from pcd.ngspice_io import read_frequency_response
-from pcd.sim_core import simulate_case
+from pcd.records import load_frequency_response
 
 HERE = Path(__file__).resolve().parent
 
@@ -78,10 +77,10 @@ def _replay_case(row: dict[str, str], run_root: Path, relative_tolerance: float)
             "target": {"objective": "impedance_match"},
         },
     )
-    record = simulate_case(case, run_root=run_root, run_id=f"replay_{scenario_id}")
+    record = execute_case(case, run_root=run_root, run_id=f"replay_{scenario_id}").record
     if record.status != "ok" or record.frequency_response_file is None:
         return {"scenario_id": scenario_id, "passed": False, "error": record.warnings}
-    response = input_impedance(read_frequency_response(record.run_dir / record.frequency_response_file))
+    response = input_impedance(load_frequency_response(record.run_dir))
     point = at_frequency(response, frequency)
     actual = complex(float(point["resistance_ohm"]), float(point["reactance_ohm"]))
     expected = complex(resistance, reactance)

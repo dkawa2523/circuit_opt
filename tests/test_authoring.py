@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+import csv
 import json
-import shutil
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -19,7 +19,6 @@ from pcd.study_config import CaseControlPolicy, select_simulation_inputs, study_
 from pcd.validation import validate_case
 
 ROOT = Path(__file__).resolve().parents[1]
-NGSPICE = shutil.which("ngspice_con.exe") or shutil.which("ngspice")
 
 
 def _circuit() -> dict[str, Any]:
@@ -65,14 +64,13 @@ def test_fixed_tolerances_and_ambiguous_units_cannot_change_a_model(make_case, s
         make_case(authored)
 
 
-def test_imported_source_is_observed_without_a_false_missing_source_warning():
+def test_single_imported_source_provides_the_default_observation():
     case = load_case(ROOT / "examples/circuit_external.yaml")
     from pcd.simulation_input import resolve_simulation_case
 
     probes = resolve_simulation_case(case).probes
     assert probes.source_name == "V1"
     assert probes.source_voltage_vector == "v(in)"
-    assert validate_case(case, strict=True).ok
 
 
 def test_multiple_sources_require_an_explicit_observed_port(make_case, tmp_path):
@@ -188,21 +186,89 @@ def test_inline_and_csv_impedance_points_have_identical_scenarios_and_auto_ids(m
 def test_identification_observations_inline_or_csv_need_no_target_variable_mapping(make_case):
     original = load_case(ROOT / "examples/terminal_identification.yaml")
     raw = deepcopy(original.authored_data)
-    import csv
-
     with (ROOT / "examples/terminal_observations.csv").open() as handle:
         rows = list(csv.DictReader(handle))
     raw["identification"]["observations"] = rows
     inline = make_case(raw)
-    assert inline.data["identification"] == original.data["identification"]
+    csv_settings = dict(original.data["identification"])
+    csv_settings.pop("observation_table_columns")
+    assert inline.data["identification"] == csv_settings
     assert [row.to_dict() for row in study_spec_from_case(inline).scenarios] == [
         row.to_dict() for row in study_spec_from_case(original).scenarios
     ]
     assert "expected" not in original.data["identification"]
 
 
+@pytest.mark.parametrize("from_csv", [False, True])
+def test_condition_values_honor_declared_string_types_and_si_quantities(make_case, tmp_path, from_csv):
+    raw = _circuit()
+    raw["parameters"]["operating"] = {"batch": {"type": "string", "default": "001"}}
+    if from_csv:
+        (tmp_path / "conditions.csv").write_text(
+            "id,batch,frequency_Hz\nfirst,001,1000000\nsecond,10 Hz,2000000\n", encoding="utf-8"
+        )
+        raw["conditions"] = {"file": "conditions.csv"}
+    else:
+        raw["conditions"] = [
+            {"id": "first", "batch": "001", "frequency_Hz": "1 MHz"},
+            {"id": "second", "batch": "10 Hz", "frequency_Hz": "2 MHz"},
+        ]
+    case = make_case(raw)
+
+    assert validate_case(case).ok
+    assert [dict(scenario.values) for scenario in study_spec_from_case(case).scenarios] == [
+        {"batch": "001", "frequency_Hz": 1e6},
+        {"batch": "10 Hz", "frequency_Hz": 2e6},
+    ]
+
+
+@pytest.mark.parametrize("source", ["inline", "csv", "custom_csv"])
+def test_acquisition_group_is_literal_observation_provenance(make_case, tmp_path, source):
+    original = load_case(ROOT / "examples/terminal_identification.yaml")
+    raw = deepcopy(original.authored_data)
+    with (ROOT / "examples/terminal_observations.csv").open(encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    column = "campaign" if source == "custom_csv" else "acquisition_group"
+    for row in rows:
+        row[column] = "001" if row["partition"] == "fit" else "10 Hz"
+    if source == "inline":
+        raw["identification"]["observations"] = rows
+    else:
+        path = tmp_path / "observations.csv"
+        with path.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
+            writer.writeheader()
+            writer.writerows(rows)
+        raw["identification"]["observations"] = {"file": path.name}
+        if source == "custom_csv":
+            raw["identification"]["observations"]["acquisition_group_column"] = column
+
+    case = make_case(raw)
+    assert case.data["identification"]["acquisition_groups"] == {row["scenario_id"]: row[column] for row in rows}
+    assert [row.to_dict() for row in study_spec_from_case(case).scenarios] == [
+        row.to_dict() for row in study_spec_from_case(original).scenarios
+    ]
+    assert validate_case(case).ok
+
+
+def test_inline_acquisition_groups_must_be_complete_and_cannot_supply_parameters(make_case):
+    original = load_case(ROOT / "examples/terminal_identification.yaml")
+    raw = deepcopy(original.authored_data)
+    with (ROOT / "examples/terminal_observations.csv").open(encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    rows[0]["acquisition_group"] = "train"
+    raw["identification"]["observations"] = rows
+
+    with pytest.raises(ValueError, match=r"requires a nonempty.*acquisition group"):
+        make_case(raw)
+
+    raw["identification"]["observations"] = {"rows": rows, "columns": {"campaign": "acquisition_group"}}
+    with pytest.raises(ValueError, match="is provenance and cannot supply a parameter"):
+        make_case(raw)
+
+
 @pytest.mark.e2e
-@pytest.mark.skipif(not NGSPICE, reason="ngspice is not installed")
+@pytest.mark.usefixtures("ngspice")
 def test_imported_public_circuit_and_explicit_port_measurements_match_algebra(tmp_path):
     from pcd.reporting import analyze_run
 

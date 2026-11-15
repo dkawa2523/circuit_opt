@@ -17,9 +17,9 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
-from .inputs import normalize_quantities
+from .inputs import load_plane_label, normalize_quantities
 from .inputs import reject_unknown as _reject_unknown
-from .rf_loads import ccp_lumped_impedance, icp_effective_impedance, impedance_point
+from .rf_loads import EFFECTIVE_LOAD_PARAMETERS, effective_load_parameters, impedance_point
 from .tables import read_csv_rows
 from .topology_catalog import MATCHING_TOPOLOGIES, matching_topology
 
@@ -856,37 +856,34 @@ def _resolved_load(load: Mapping[str, Any], frequency: float | str) -> dict[str,
         }
     if load_type == "impedance_point":
         return {"name": load_type, **common, **_point_parameters(load), "model_frequency_Hz": frequency}
-    return {"name": load_type, **common, **_effective_load_parameters(load_type, load)}
+    parameters = _mapping(load.get("parameters"), "load.parameters", required=True)
+    _reject_unknown(parameters, set(EFFECTIVE_LOAD_PARAMETERS[load_type]), "load.parameters")
+    values = effective_load_parameters(load_type, parameters, path="load.parameters")
+    return {"name": load_type, **common, **{name: values[name] for name in parameters}}
 
 
 def _validated_load_type(load: Mapping[str, Any]) -> str:
     load_type = str(load.get("type", ""))
-    allowed = {
-        "impedance_table": {"type", "file", "points", "reference_plane", "evidence"},
-        "impedance_profile": {"type", "file", "points", "reference_plane", "evidence"},
-        "impedance_point": {"type", "resistance_ohm", "reactance_ohm", "reference_plane", "evidence"},
-        "ccp_lumped": {"type", "parameters", "reference_plane", "evidence"},
-        "icp_transformer": {"type", "parameters", "reference_plane", "evidence"},
-    }.get(load_type)
-    if allowed is None:
-        raise ValueError(
-            "load.type must be impedance_table, impedance_profile, impedance_point, ccp_lumped, or icp_transformer"
-        )
-    _reject_unknown(load, allowed, "load")
+    fields = {
+        "impedance_table": {"file", "points"},
+        "impedance_profile": {"file", "points"},
+        "impedance_point": {"resistance_ohm", "reactance_ohm"},
+        **{model: {"parameters"} for model in EFFECTIVE_LOAD_PARAMETERS},
+    }
+    if load_type not in fields:
+        raise ValueError(f"load.type must be one of {', '.join(fields)}")
+    _reject_unknown(load, {"type", "reference_plane", "evidence"} | fields[load_type], "load")
     return load_type
 
 
 def _load_common(load: Mapping[str, Any]) -> dict[str, Any]:
-    reference_plane = str(load.get("reference_plane", "")).strip()
-    if not reference_plane:
-        raise ValueError("load.reference_plane is required")
     evidence = load.get("evidence")
     if evidence is not None and not isinstance(evidence, Mapping):
         raise ValueError("load.evidence must be a mapping")
 
     common: dict[str, Any] = {
         "ports": {"p": "electrode", "n": "0"},
-        "reference_plane": reference_plane,
+        "reference_plane": load_plane_label(load.get("reference_plane")),
     }
     if evidence is not None:
         common["characterization"] = deepcopy(dict(evidence))
@@ -901,45 +898,6 @@ def _point_parameters(load: Mapping[str, Any]) -> dict[str, Any]:
     reactance = _finite_number(load["reactance_ohm"], "load.reactance_ohm")
     impedance_point(resistance, reactance)
     return {"resistance_ohm": resistance, "reactance_ohm": reactance}
-
-
-def _effective_load_parameters(load_type: str, load: Mapping[str, Any]) -> dict[str, Any]:
-    parameters = _mapping(load.get("parameters"), "load.parameters", required=True)
-    if load_type == "ccp_lumped":
-        required = {"R_eff_ohm", "L_eff_H", "C_sheath_eq_F"}
-        _reject_unknown(parameters, required, "load.parameters")
-        if missing := sorted(required - set(parameters)):
-            raise ValueError(f"load.parameters is missing {missing} for {load_type}")
-        normalized = {name: _finite_number(parameters[name], f"load.parameters.{name}") for name in required}
-        ccp_lumped_impedance(
-            1.0,
-            normalized["R_eff_ohm"],
-            normalized["L_eff_H"],
-            normalized["C_sheath_eq_F"],
-        )
-        return normalized
-
-    required = {
-        "R_coil_ohm",
-        "L_coil_H",
-        "reflected_inductance_H",
-        "secondary_damping_rate_rad_s",
-    }
-    _reject_unknown(parameters, required | {"C_parallel_F"}, "load.parameters")
-    if missing := sorted(required - set(parameters)):
-        raise ValueError(f"load.parameters is missing {missing} for {load_type}")
-    normalized = {name: _finite_number(parameters[name], f"load.parameters.{name}") for name in required}
-    if "C_parallel_F" in parameters:
-        normalized["C_parallel_F"] = _finite_number(parameters["C_parallel_F"], "load.parameters.C_parallel_F")
-    icp_effective_impedance(
-        1.0,
-        normalized["R_coil_ohm"],
-        normalized["L_coil_H"],
-        normalized["reflected_inductance_H"],
-        normalized["secondary_damping_rate_rad_s"],
-        normalized.get("C_parallel_F", 0.0),
-    )
-    return normalized
 
 
 def _resolved_circuit(topology: str, loss_ohm: Mapping[str, Any], observed_refs: set[str]) -> dict[str, Any]:

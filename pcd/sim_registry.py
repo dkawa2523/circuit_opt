@@ -39,7 +39,16 @@ def invoke_solver(
     name: str,
     request: SolverRunRequest,
 ) -> SimulationResult:
-    """Invoke one solver through the single typed execution boundary."""
+    """Invoke a solver and check the response supplied by an extension."""
 
-    method = get("solver", name)
-    return method(request)
+    method = get("solver", name, plugins=request.plugin_paths)
+    result = method(request)
+    if not isinstance(result, SimulationResult):
+        raise TypeError(f"solver '{name}' must return SimulationResult")
+    # ngspice checks the numerical domain while translating external solver
+    # problems into failed results. A broken extension response is a code error.
+    from .sim_methods import solver_ngspice_cli
+
+    if method is not solver_ngspice_cli:
+        result.validate_for(request.simulation.analysis)
+    return result

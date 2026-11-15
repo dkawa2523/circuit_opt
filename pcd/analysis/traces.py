@@ -70,16 +70,32 @@ def transfer_trace(frame: pd.DataFrame, numerator: Sequence[str], denominator: S
 
 
 def frequency_metrics(
-    frame: pd.DataFrame, z0: float, load_current: str | None, components: tuple[ComponentObservation, ...]
+    frame: pd.DataFrame,
+    z0: float,
+    load_current: str | None,
+    components: tuple[ComponentObservation, ...],
+    *,
+    driven_port: bool = True,
+    power_balance_unavailable_reason: str | None = None,
 ) -> pd.DataFrame:
-    result = input_impedance(frame, z0)
-    result["return_loss_dB"] = -result["reflection_db"]
-    result["impedance_phase_deg"] = magnitude_phase(
-        result["resistance_ohm"].to_numpy() + 1j * result["reactance_ohm"].to_numpy()
-    )[1]
+    result = input_impedance(frame, z0) if driven_port else frame.copy()
+    if driven_port:
+        result["return_loss_dB"] = -result["reflection_db"]
+        result["impedance_phase_deg"] = magnitude_phase(
+            result["resistance_ohm"].to_numpy() + 1j * result["reactance_ohm"].to_numpy()
+        )[1]
     rows = []
     for _, row in frame.iterrows():
-        metrics = {**ac_power_flow(row, load_current, z0), **ac_component_metrics(row, components)}
+        metrics = {
+            **ac_power_flow(
+                row,
+                load_current,
+                z0,
+                driven_port=driven_port,
+                power_balance_unavailable_reason=power_balance_unavailable_reason,
+            ),
+            **ac_component_metrics(row, components),
+        }
         metrics.update(component_loss_balance(metrics))
         rows.append(metrics)
     metrics = pd.DataFrame(rows)
@@ -94,17 +110,6 @@ def relative_harmonic_levels(amplitude: np.ndarray) -> np.ndarray:
         with np.errstate(divide="ignore", invalid="ignore"):
             levels = 20 * np.log10(amplitude / amplitude[0])
     return levels
-
-
-def instantaneous_power(waveform: pd.DataFrame, load_current: str | None = None) -> pd.DataFrame:
-    result = pd.DataFrame({"time_s": waveform["time_s"]})
-    if {"current_A", "source_voltage_V"} <= set(waveform):
-        result["source_delivered_current_A"] = -waveform["current_A"]
-        result["source_power_W"] = -waveform["source_voltage_V"] * waveform["current_A"]
-    if load_current and load_current in waveform:
-        voltage = "load_voltage_V" if "load_voltage_V" in waveform else "voltage_V"
-        result["load_power_W"] = waveform[voltage] * waveform[load_current]
-    return result
 
 
 def harmonic_trace(

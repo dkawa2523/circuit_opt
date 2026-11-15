@@ -18,11 +18,9 @@ if str(REPOSITORY) not in sys.path:
     sys.path.insert(0, str(REPOSITORY))
 
 from pcd.analysis import input_impedance  # noqa: E402
-from pcd.case import Case, load_case  # noqa: E402
+from pcd.api import Case, execute_case, load_case, run_case_study  # noqa: E402
 from pcd.results import read_best_candidate, selected_evaluation  # noqa: E402
-from pcd.simulation_input import SolverRunRequest, resolve_simulation_case  # noqa: E402
-from pcd.solver import ngspice_cli  # noqa: E402
-from pcd.study import run_case_study  # noqa: E402
+from pcd.validation import validate_case  # noqa: E402
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
@@ -60,46 +58,40 @@ def _gamma(impedance: complex, reference_ohm: float = 50.0) -> complex:
     return (impedance - reference_ohm) / (impedance + reference_ohm)
 
 
-def _table_spice_netlist(values: dict[str, Any], frequency: float) -> str:
-    """Render the independent Table-I netlist with the current AC artifact contract."""
-
-    return "\n".join(
-        [
-            "* Lee 2021 Table I: Csheath series [Cfixed parallel (Rp series Lp)]",
-            "Vsrc src 0 AC 1",
-            f"Csheath src bulk {float(values['sheath_capacitance_F']):.12g}",
-            f"Cfixed bulk 0 {float(values['fixed_structure_capacitance_F']):.12g}",
-            f"Rplasma bulk rl {float(values['plasma_resistance_ohm']):.12g}",
-            f"Lplasma rl 0 {float(values['plasma_inductance_H']):.12g}",
-            ".control",
-            f"ac lin 1 {frequency:.12g} {frequency:.12g}",
-            # Source V/I are followed by the declared output voltage.  The
-            # corrected terminal being closed here is the source port itself.
-            "wrdata ac.csv v(src) i(Vsrc) v(src)",
-            "quit",
-            ".endc",
-            ".end",
-            "",
-        ]
-    )
+def _table_case(source: dict[str, Any], directory: Path) -> Case:
+    """Build the Table-I circuit as a case with standard AC acquisition."""
+    frequency = float(source["operating_condition"]["frequency_Hz"])
+    values = source["table_i"]["equivalent_circuit"]
+    components = [
+        ("Csheath", "src", "bulk", values["sheath_capacitance_F"]),
+        ("Cfixed", "bulk", "0", values["fixed_structure_capacitance_F"]),
+        ("Rplasma", "bulk", "rl", values["plasma_resistance_ohm"]),
+        ("Lplasma", "rl", "0", values["plasma_inductance_H"]),
+    ]
+    authored = {
+        "schema": "case_yaml.v1",
+        "case_id": "literature_p0_lee2021_table_i_closure",
+        "source": {"type": "dc_voltage", "name": "Vsrc", "p": "src", "voltage_V": 0, "ac_magnitude_V": 1},
+        "circuit": {
+            "builder": "from_yaml",
+            "output_node": "src",
+            "components": [{"ref": ref, "n1": p, "n2": n, "value": float(value)} for ref, p, n, value in components],
+        },
+        "solver": {"name": "ngspice_cli", "ac": {"frequency_Hz": frequency}},
+    }
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / "table_i_closure.yaml"
+    path.write_text(yaml.safe_dump(authored, sort_keys=False), encoding="utf-8")
+    return load_case(path)
 
 
 def _table_spice(source: dict[str, Any], root: Path) -> complex:
-    frequency = float(source["operating_condition"]["frequency_Hz"])
-    values = source["table_i"]["equivalent_circuit"]
-    run_dir = root / "table_i_closure"
-    run_dir.mkdir(parents=True, exist_ok=True)
-    netlist = run_dir / "table_i_closure.cir"
-    netlist.write_text(_table_spice_netlist(values, frequency), encoding="utf-8")
-    case = Case(
-        path=netlist,
-        data={
-            "case_id": "literature_p0_lee2021_table_i_closure",
-            "solver": {"name": "ngspice_cli", "ac": {"frequency_Hz": frequency}},
-        },
-    )
-    request = SolverRunRequest(netlist, run_dir, resolve_simulation_case(case))
-    simulation = ngspice_cli(request)
+    directory = root / "table_i_closure"
+    case = _table_case(source, directory)
+    validation = validate_case(case)
+    if not validation.ok:
+        raise ValueError(f"invalid Table-I case: {validation}")
+    simulation = execute_case(case, run_root=directory).response
     if simulation.status != "ok" or simulation.frequency_response is None:
         raise RuntimeError(f"Table-I ngspice run failed: {simulation.diagnostics}\n{simulation.log}")
     row = input_impedance(simulation.frequency_response).iloc[0]

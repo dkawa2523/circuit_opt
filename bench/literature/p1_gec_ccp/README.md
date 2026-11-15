@@ -26,14 +26,18 @@ committed files, checks table completeness, units, reference plane, passivity,
 power closure, and replays all 32 central points through NGSpice. Normal runs
 never rewrite files under `bench/`.
 
-Run the source and design checks from the repository root:
+Run the source and design checks from the repository root with ngspice on PATH:
 
 ```powershell
-uv run python bench/literature/p1_gec_ccp/run_all32_benchmark.py --require-ngspice --output runs/literature/hargis_source.json
-uv run python bench/literature/p1_gec_ccp/run_design_cases.py --run-root runs/literature/hargis_control
-uv run python bench/literature/p1_gec_ccp/run_phase_sensitivity.py --run-root runs/literature/hargis_phase
-uv run python bench/literature/p1_gec_ccp/run_hardware_family_comparison.py --run-root runs/literature/hargis_hardware
+uv run --frozen python bench/literature/p1_gec_ccp/run_all32_benchmark.py --output runs/literature/hargis_source.json
+uv run --frozen python bench/literature/p1_gec_ccp/run_design_cases.py --run-root runs/literature/hargis_control
+uv run --frozen python bench/literature/p1_gec_ccp/run_phase_sensitivity.py --run-root runs/literature/hargis_phase
+uv run --frozen python bench/literature/p1_gec_ccp/run_hardware_family_comparison.py --run-root runs/literature/hargis_hardware
 ```
+
+Read `hargis_source.json` for the transcription and solver replay, `design_evaluation.json`
+in `hargis_control`, and `evaluation.json` in `hargis_phase` and `hargis_hardware`.
+The hardware comparison also writes `REPORT.md`.
 
 ## Electrical derivation
 
@@ -74,10 +78,9 @@ For the fixed-L shortlist and 4x4 C1/C2 controls, the result vector is:
 | 1.5 | 22/32 | 30/32 | 7/8 | 8/8 |
 | 1.6 | 26/32 | 20/32 | 4/8 | 8/8 |
 
-No combined coverage, implicit 40/40/10/10 weighting, or global "best L1" is
-reported. The central family favors 1.6 uH; the spread and negative phase
-families favor 1.5 uH; the positive phase family ties 1.5 and 1.6 uH. A scalar
-decision requires an actual apparatus and an explicitly authorized objective.
+The central family favors 1.6 uH. The spread and negative phase families favor
+1.5 uH. The positive phase family ties 1.5 and 1.6 uH. A combined decision
+requires the apparatus conditions and the weighting specified for that design.
 
 ## What is and is not established
 

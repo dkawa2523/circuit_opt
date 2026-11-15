@@ -10,17 +10,19 @@ is :mod:`pcd.solver`; recording the run is :mod:`pcd.sim_core`.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import re
+from collections.abc import Callable, Iterable, Mapping
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from .case import Case
-from .probes import LOAD_AMMETER, ProbePlan
+from .netlist_import import executable_netlist_lines
+from .probes import LOAD_AMMETER, ProbePlan, source_meter_node, source_meter_reference
 from .sim_registry import get as get_sim_method
 from .sim_registry import load_plugins as load_sim_plugins
 from .simulation import AC_FILE, LOAD_CURRENT_COLUMN, WAVEFORM_FILE, AcSweep, AnalysisRequest, TransientAnalysis
-from .simulation_input import MeasurementReference, ResolvedSimulationCase
+from .simulation_input import MeasurementReference, ResolvedSimulationCase, bind_load_probe
 from .sources import ac_source_name, source_name, source_specs
 from .spice import param_ref_or_value, should_emit_spice_param, spice_value
 
@@ -160,18 +162,20 @@ def select_load_name(case: Case, params: dict[str, Any]) -> str:
 
 
 def build_circuit(case: Case, params: dict[str, Any]) -> tuple[str, Circuit]:
-    load_sim_plugins(case.data.get("plugins"), case.base_dir)
+    plugins = load_sim_plugins(case.data.get("plugins"), case.base_dir)
     name = select_circuit_name(case, params)
-    circuit = get_sim_method("circuit", name)(case.detached(), deepcopy(params))
+    method = get_sim_method("circuit", name, plugins=plugins)
+    circuit = method(case.detached(), deepcopy(params))
     if not isinstance(circuit, Circuit):
         raise TypeError(f"circuit builder '{name}' must return Circuit")
     return name, circuit
 
 
 def build_load_subckt(case: Case, params: dict[str, Any]) -> tuple[str, str]:
-    load_sim_plugins(case.data.get("plugins"), case.base_dir)
+    plugins = load_sim_plugins(case.data.get("plugins"), case.base_dir)
     name = select_load_name(case, params)
-    subckt = get_sim_method("load", name)(case.detached(), deepcopy(params))
+    method = get_sim_method("load", name, plugins=plugins)
+    subckt = method(case.detached(), deepcopy(params))
     if subckt is not None and not isinstance(subckt, str):
         raise TypeError(f"load builder '{name}' must return str or None")
     return name, "" if subckt is None else subckt.strip()
@@ -182,7 +186,116 @@ def build_netlist_inputs(case: Case, params: dict[str, Any]) -> NetlistInputs:
 
     circuit_name, circuit = build_circuit(case, params)
     load_name, load_subckt = build_load_subckt(case, params)
+    _check_assembly_names(case, circuit, load_subckt, params)
     return NetlistInputs(circuit_name, circuit, load_name, load_subckt)
+
+
+def compile_netlist(
+    case: Case, params: dict[str, Any], simulation: ResolvedSimulationCase
+) -> tuple[NetlistInputs, ResolvedSimulationCase, str]:
+    """Compile the same executable deck for preflight, preview and execution."""
+
+    inputs = build_netlist_inputs(case, params)
+    probes = bind_load_probe(simulation.probes, attached=bool(inputs.load_subckt))
+    simulation = replace(simulation, probes=probes)
+    text = render_ngspice_netlist(case, inputs.circuit, inputs.load_subckt, params, simulation)
+    return inputs, simulation, text
+
+
+def spice_names(text: str) -> set[str]:
+    """Find authored identifier tokens conservatively, including in raw statements."""
+
+    names: set[str] = set()
+    for raw in text.splitlines():
+        line = raw.strip()
+        if line.startswith("*"):
+            continue
+        content = re.split(r"\s[;$]", line, maxsplit=1)[0]
+        names.update(re.split(r"[\s(),{}=+*/<>;\[\]@'\"]+", content))
+    return names
+
+
+def case_spice_names(case: Case, output_node: str) -> set[str]:
+    """Names authored outside the circuit's component declarations."""
+
+    names = {output_node}
+    for index, source in enumerate(source_specs(case)):
+        if "raw" in source:
+            names.update(spice_names(str(source["raw"])))
+        else:
+            names.update((source_name(source, index), str(source.get("p", "src")), str(source.get("n", "0"))))
+    ports = load_config(case).get("ports")
+    if isinstance(ports, Mapping):
+        names.update(str(ports[key]) for key in ("p", "n") if key in ports)
+    return names
+
+
+def reject_generated_name_collisions(generated: Iterable[str], authored: Iterable[str]) -> None:
+    """Keep generated branches and nodes distinct in SPICE's caseless namespace."""
+
+    used = {name.lower() for name in authored}
+    for name in generated:
+        key = name.lower()
+        if key in used:
+            raise ValueError(f"generated SPICE name {name!r} collides with a circuit name; rename the conflicting name")
+        used.add(key)
+
+
+def _load_meter_node(positive: str) -> str:
+    return f"{positive}_metered"
+
+
+def _check_load_definition_names(circuit_text: str, params: dict[str, Any]) -> None:
+    device_names: set[str] = set()
+    # ngspice also reserves subcircuit definition names for parameter lookup.
+    model_names = {name for name, value in params.items() if should_emit_spice_param(name, value)}
+    subcircuit_depth = 0
+    for item in executable_netlist_lines(circuit_text):
+        name, *fields = item.statement.split()
+        directive = name.lower()
+        if directive == ".subckt":
+            if not subcircuit_depth and fields:
+                model_names.add(fields[0])
+            subcircuit_depth += 1
+        elif directive == ".ends":
+            subcircuit_depth = max(0, subcircuit_depth - 1)
+        elif item.top_level:
+            if directive == ".param" and re.search(r"(?i)\bload_model\s*=", item.statement):
+                model_names.add("load_model")
+            else:
+                device_names.add(name)
+    reject_generated_name_collisions(("Xload",), device_names)
+    reject_generated_name_collisions(("load_model",), model_names)
+
+
+def _check_assembly_names(case: Case, circuit: Circuit, load_subckt: str, params: dict[str, Any]) -> None:
+    generated = []
+    sources = source_specs(case)
+    for index, source in enumerate(sources):
+        if source.get("type") == "current_dc":
+            name = source_name(source, index)
+            generated.extend((source_meter_node(name), source_meter_reference(name)))
+    if load_subckt:
+        measurement = case.data.get("measurement") or {}
+        if measurement.get("load_current") is not None:
+            ports = load_config(case).get("ports") or {}
+            positive = str(ports.get("p", circuit.output_node))
+            generated.extend((LOAD_AMMETER, _load_meter_node(positive)))
+    if not generated and not load_subckt:
+        return
+    circuit_text = "\n".join(
+        [
+            *circuit.preamble,
+            *(str(source["raw"]) for source in sources if "raw" in source),
+            *(item.to_spice() for item in circuit.components),
+        ]
+    )
+    if generated:
+        authored = case_spice_names(case, circuit.output_node)
+        authored.update(spice_names(circuit_text))
+        reject_generated_name_collisions(generated, authored)
+    if load_subckt:
+        _check_load_definition_names(circuit_text, {**circuit.params, **params})
 
 
 # -----------------------------------------------------------------------------
@@ -202,9 +315,13 @@ def _pick(src: dict[str, Any], params: dict[str, Any], *keys: str, default: Any 
     return param_ref_or_value(default, params)
 
 
+def _sine_peak(src: dict[str, Any], params: dict[str, Any]) -> Any:
+    return _pick(src, params, "amplitude_V", "amplitude", default="Vamp")
+
+
 def _render_sine(name: str, p: str, n: str, src: dict[str, Any], params: dict[str, Any]) -> str:
     dc = _pick(src, params, "dc_V")
-    amp = _pick(src, params, "amplitude_V", "amplitude", default="Vamp")
+    amp = _sine_peak(src, params)
     freq = _pick(src, params, "frequency_Hz", "frequency", default="freq")
     phase = _pick(src, params, "phase_deg")
     return f"{name} {p} {n} SIN({spice_value(dc)} {spice_value(amp)} {spice_value(freq)} 0 0 {spice_value(phase)})"
@@ -258,7 +375,7 @@ def _source_ac_suffix(src: dict[str, Any], params: dict[str, Any]) -> str:
     elif "ac_magnitude_A" in src:
         magnitude = param_ref_or_value(src["ac_magnitude_A"], params)
     elif str(src.get("type", "sine_voltage")) in {"sine_voltage", "rf_voltage", "voltage_sine", "sine"}:
-        magnitude = _pick(src, params, "amplitude_V", "amplitude", default=1.0)
+        magnitude = _sine_peak(src, params)
     else:
         magnitude = 1.0
     phase = param_ref_or_value(src.get("ac_phase_deg", 0.0), params)
@@ -279,8 +396,6 @@ def render_source(
 
     lines: list[str] = []
     for i, src in enumerate(source_specs(case)):
-        if not src:
-            continue
         if "raw" in src:
             lines.append(str(src["raw"]))
             continue
@@ -293,7 +408,7 @@ def render_source(
         if not name.upper().startswith(prefix):
             raise ValueError(f"source {name!r} of type {typ!r} requires a {prefix}-prefixed SPICE name")
         positive = str(src.get("p", "src"))
-        measured_positive = f"source_meter_{name}" if typ == "current_dc" else positive
+        measured_positive = source_meter_node(name) if typ == "current_dc" else positive
         line = render(name, measured_positive, str(src.get("n", "0")), src, params)
         if active_source is not None:
             line += _source_ac_suffix(src, params) if name == active_source else " AC 0"
@@ -301,7 +416,7 @@ def render_source(
         if typ == "current_dc":
             # @I[current] remains the DC setting during AC analysis.
             # A series zero-volt ammeter measures the actual complex current.
-            lines.append(f"Vmeasure_{name} {positive} {measured_positive} DC 0")
+            lines.append(f"{source_meter_reference(name)} {positive} {measured_positive} DC 0")
     return lines
 
 
@@ -317,7 +432,7 @@ def render_ngspice_netlist(
     params: dict[str, Any],
     simulation: ResolvedSimulationCase,
 ) -> str:
-    """Assemble the full netlist, including its typed analysis request."""
+    """Render assembled circuit inputs with their typed analysis request."""
 
     request = simulation.analysis
     probes = simulation.probes
@@ -365,6 +480,44 @@ def _render_ac(sweep: AcSweep) -> str:
     return f"ac {sweep.sweep} {sweep.points} {spice_value(sweep.start_hz)} {spice_value(sweep.stop_hz)}"
 
 
+_SIMPLE_PROBE = re.compile(r"([+-]?)([vi])\(\s*([^(),\s]+)\s*(?:,\s*([^(),\s]+)\s*)?\)", re.IGNORECASE)
+_DEVICE_PROBE = re.compile(r"@[^\[\]\s(),+*/]+\[[^\[\]\s]+\]")
+
+
+def _probe_expression(vector: str) -> tuple[str, tuple[str, ...]]:
+    """Return a probe expression and the raw vectors ngspice must save."""
+
+    direct = _SIMPLE_PROBE.fullmatch(vector.strip())
+    if direct is None:
+        return vector, ("all", *_DEVICE_PROBE.findall(vector))
+    sign, kind, positive, negative = direct.groups()
+    if kind.lower() == "v":
+        if positive == "0":
+            if negative in {None, "0"}:
+                return "0", ()
+            node = f"v({negative})"
+            return (node if sign == "-" else f"-{node}"), (node,)
+        if negative == "0":
+            negative = None
+    raw = f"{kind}({positive},{negative})" if negative is not None else f"{kind}({positive})"
+    return f"{sign}{raw}", (raw,)
+
+
+def _wrdata_line(filename: str, vectors: list[str], scale: str, saved: list[str]) -> str:
+    fields = [scale] if scale == "time" else []
+    for vector in vectors:
+        expression, dependencies = _probe_expression(vector)
+        saved.extend(dependencies)
+        if dependencies == (expression,):
+            fields.append(expression)
+        else:
+            # Parentheses isolate signs from the preceding vector. Adding the
+            # zero scale broadcasts constants and promotes real AC expressions
+            # to the same complex layout as voltage and branch current.
+            fields.append(f"(({expression}) + 0 * {scale})")
+    return f"wrdata {filename} {' '.join(fields)}"
+
+
 def render_control_lines(
     request: AnalysisRequest,
     output_vector: str,
@@ -375,45 +528,40 @@ def render_control_lines(
     """Render ngspice control syntax from solver-neutral request/probe types."""
 
     voltage = output_vector if output_vector.strip().lower().startswith("v(") else f"v({output_vector})"
-    source_current = probes.source_current_vector or f"i({probes.source_name})"
-    transient_vectors = [voltage, source_current, *probes.transient_vectors, load_voltage_vector or voltage]
-    ac_vectors = [
-        probes.source_voltage_vector,
-        source_current,
-        load_voltage_vector or voltage,
-        voltage,
-        *probes.ac_vectors,
-    ]
+    source_current = probes.source_current
+    transient_vectors = [voltage]
+    if source_current is not None:
+        transient_vectors.append(source_current)
+    transient_vectors.extend((*probes.transient_vectors, load_voltage_vector or voltage))
 
     saved: list[str] = []
+    body: list[str] = []
     if request.transient is not None:
-        saved.extend(transient_vectors)
+        body += [_render_transient(request.transient), _wrdata_line(WAVEFORM_FILE, transient_vectors, "time", saved)]
     if request.ac is not None:
-        saved.extend(ac_vectors)
-    saved = list(dict.fromkeys(saved))
-
-    lines = [
-        f".save {' '.join(saved)}",
-        ".control",
-        # Impedance divides voltage by current.  The default wrdata precision
-        # loses the small in-phase current of high-Q RF loads.
-        "set numdgt=15",
-    ]
-    if request.transient is not None:
-        lines += [_render_transient(request.transient), f"wrdata {WAVEFORM_FILE} time {' '.join(transient_vectors)}"]
-    if request.ac is not None:
+        source_voltage = probes.source_voltage_vector
+        if source_voltage is None or source_current is None:
+            raise ValueError("AC analysis requires an observed source voltage and current")
+        ac_vectors = [source_voltage, source_current, load_voltage_vector or voltage, voltage, *probes.ac_vectors]
         sweep = request.ac
-        write = f"wrdata {AC_FILE} {' '.join(ac_vectors)}"
+        write = _wrdata_line(AC_FILE, ac_vectors, "frequency", saved)
         if sweep.sweep == "lin" and sweep.points == 2 and sweep.start_hz != sweep.stop_hz:
             # ngspice 46 collapses LIN 2 to one point. Execute the requested
             # endpoints explicitly, preserving the canonical response domain.
             for index, frequency in enumerate((sweep.start_hz, sweep.stop_hz)):
                 point = spice_value(frequency)
-                lines += [f"ac lin 1 {point} {point}", *(["set appendwrite"] if index else []), write]
-            lines.append("unset appendwrite")
+                body += [f"ac lin 1 {point} {point}", *(["set appendwrite"] if index else []), write]
+            body.append("unset appendwrite")
         else:
-            lines += [_render_ac(sweep), write]
-    lines += ["quit", ".endc", ".end"]
+            body += [_render_ac(sweep), write]
+    lines = [
+        f".save {' '.join(dict.fromkeys(saved))}",
+        ".control",
+        # Impedance divides voltage by current.  The default wrdata precision
+        # loses the small in-phase current of high-Q RF loads.
+        "set numdgt=15",
+    ]
+    lines += [*body, "quit", ".endc", ".end"]
     return lines
 
 
@@ -441,15 +589,13 @@ def _load_instance(
 ) -> list[str]:
     """Wire the load subcircuit in, optionally through an ammeter.
 
-    `measurement.load_current: auto` inserts a zero-volt source in series with
-    the load.  It changes no voltage, and it is the only way to measure the
-    current actually entering the electrode: the standard `i(Vsrc)` channel
-    also carries whatever the matching network's shunt elements draw.
+    When load-current measurement is requested, the zero-volt ammeter measures
+    current entering this load separately from any upstream parallel paths.
     """
 
     p = measurement.load_positive or output_node
     n = measurement.load_negative
     if load_current_column != LOAD_CURRENT_COLUMN:
         return [f"Xload {p} {n} load_model"]
-    metered = f"{p}_metered"
+    metered = _load_meter_node(p)
     return [f"{LOAD_AMMETER} {p} {metered} DC 0", f"Xload {metered} {n} load_model"]
