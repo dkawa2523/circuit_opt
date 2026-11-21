@@ -558,12 +558,7 @@ def test_saved_simulation_result_reproduces_rf_metrics(tmp_path):
     in_memory = rf_port_metrics(result.as_frame(), 1e6, "i(Vload)")
 
     result.as_frame().to_csv(tmp_path / "waveform.csv", index=False)
-    restored = load_waveform(
-        {
-            "run_dir": str(tmp_path),
-            "artifacts": {"waveform": "waveform.csv"},
-        }
-    )
+    restored = load_waveform(tmp_path / "waveform.csv")
     persisted = rf_port_metrics(restored, 1e6, "i(Vload)")
 
     assert persisted.keys() == in_memory.keys()

@@ -132,18 +132,15 @@ def test_evaluation_result_round_trip_preserves_all_boundary_fields():
 
     raw = RawResult("failed", error="solver failed")
     margin = ConstraintResult("min_control_margin", False, violation=0.5)
-    legacy = {
+    failed = {
         **original.to_dict(),
         "raw": raw.to_dict(),
-        "constraints": [
-            ConstraintResult("evaluation_success", False, violation=1.0, detail=raw.error).to_dict(),
-            margin.to_dict(),
-        ],
+        "constraints": [margin.to_dict()],
     }
-    restored_legacy = EvaluationResult.from_dict(legacy)
-    assert restored_legacy.raw.error == raw.error
-    assert restored_legacy.constraints == (margin,)
-    assert restored_legacy.total_violation == 1.5
+    restored_failed = EvaluationResult.from_dict(failed)
+    assert restored_failed.raw.error == raw.error
+    assert restored_failed.constraints == (margin,)
+    assert restored_failed.total_violation == 1.5
 
 
 def test_raw_key_describes_physics_not_study_attribution():

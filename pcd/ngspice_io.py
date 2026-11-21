@@ -1,7 +1,7 @@
 """Translate ngspice output files into canonical simulation data.
 
-This module decodes the generated ``wrdata`` layout and reads saved AC CSV
-observations. Measurements consume the resulting canonical data.
+This module decodes the generated ``wrdata`` layout. Saved canonical CSVs
+are read by the result-record layer.
 """
 
 from __future__ import annotations
@@ -19,14 +19,9 @@ def read_frequency_response(
     path: str | Path,
     extra_columns: Sequence[str] | None = None,
 ) -> pd.DataFrame:
-    """Read a canonical AC CSV or an ngspice complex ``wrdata`` file."""
+    """Read ngspice's complex ``wrdata`` output."""
 
     path = Path(path)
-    with path.open("r", encoding="utf-8-sig", errors="replace") as handle:
-        first_line = handle.readline().strip()
-    if first_line.split(",", 1)[0].strip() == "frequency_Hz":
-        return _read_canonical_frequency_response(path, extra_columns)
-
     values = np.loadtxt(path, ndmin=2)
     if values.shape[1] < 6:
         raise ValueError(f"AC output needs 6 columns (scale, re, im per vector): {path}")
@@ -45,18 +40,6 @@ def read_frequency_response(
         data[f"{name}_re"] = values[:, base + 1]
         data[f"{name}_im"] = values[:, base + 2]
     return pd.DataFrame(data)
-
-
-def _read_canonical_frequency_response(path: Path, extra_columns: Sequence[str] | None) -> pd.DataFrame:
-    frame = pd.read_csv(path)
-    required = ["frequency_Hz", "voltage_re", "voltage_im", "current_re", "current_im"]
-    required.extend(f"{name}_{part}" for name in (extra_columns or ()) for part in ("re", "im"))
-    missing = [name for name in required if name not in frame]
-    if missing:
-        raise ValueError(f"canonical AC output is missing columns {missing}: {path}")
-    for name in required:
-        frame[name] = pd.to_numeric(frame[name], errors="raise").astype(float)
-    return frame
 
 
 def read_transient_output(

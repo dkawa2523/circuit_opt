@@ -95,6 +95,7 @@ def _replay_case(row: dict[str, str], run_root: Path, relative_tolerance: float)
 
 
 def run(run_root: Path) -> dict[str, Any]:
+    run_root.mkdir(parents=True)
     manifest = yaml.safe_load((HERE / "axis_calibration.yaml").read_text(encoding="utf-8"))
     rows = _read_csv(HERE / "qualified_impedance.csv")
     excluded = _read_csv(HERE / "excluded_points.csv")

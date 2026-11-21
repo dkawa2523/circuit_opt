@@ -8,6 +8,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from pcd.artifacts import file_sha256
 from pcd.records import (
     artifact_path,
     frequency_response_path,
@@ -50,6 +51,7 @@ def _write_record(tmp_path: Path) -> dict:
         "case_id": "artifact_reader",
         "run_dir": str(tmp_path),
         "status": "ok",
+        "debug_manifest_sha256": file_sha256(debug / "manifest.json"),
         "artifacts": {
             "waveform": "data/transient.csv",
             "frequency_response": "data/ac.csv",
@@ -93,7 +95,9 @@ def test_record_paths_are_resolved_from_the_manifest(tmp_path):
 
     assert waveform_path(manifest) == tmp_path / "data" / "transient.csv"
     assert frequency_response_path(manifest) == tmp_path / "data" / "ac.csv"
-    assert frequency_response_path({"run_dir": str(tmp_path), "artifacts": {}}) is None
+    assert (
+        frequency_response_path({"schema": "simulation_record.v2", "run_dir": str(tmp_path), "artifacts": {}}) is None
+    )
 
 
 def test_any_declared_artifact_uses_the_same_path_boundary(tmp_path):
@@ -103,7 +107,11 @@ def test_any_declared_artifact_uses_the_same_path_boundary(tmp_path):
     shared.mkdir()
     case_path = shared / "case.yaml"
     case_path.write_text("schema: case_yaml.v1\n", encoding="utf-8")
-    record = {"run_dir": str(run_dir), "artifacts": {"case": "../../generation/case.yaml"}}
+    record = {
+        "schema": "simulation_record.v2",
+        "run_dir": str(run_dir),
+        "artifacts": {"case": "../../generation/case.yaml"},
+    }
 
     resolved = artifact_path(record, "case")
     assert resolved == run_dir / "../../generation/case.yaml"
@@ -112,7 +120,7 @@ def test_any_declared_artifact_uses_the_same_path_boundary(tmp_path):
 
 
 def test_waveform_path_requires_a_declared_artifact(tmp_path):
-    record = {"run_dir": str(tmp_path), "artifacts": {}}
+    record = {"schema": "simulation_record.v2", "run_dir": str(tmp_path), "artifacts": {}}
     with pytest.raises(ValueError, match="does not declare a waveform"):
         waveform_path(record)
 
@@ -135,25 +143,6 @@ def test_a_moved_run_resolves_artifacts_from_its_manifest_directory(tmp_path):
     record = read_sim_record(moved)
     assert record["run_dir"] == str(moved.resolve())
     assert waveform_path(record) == moved / "data" / "transient.csv"
-
-
-def test_a_moved_summary_anchors_legacy_manifest_and_artifact_paths(tmp_path):
-    original = tmp_path / "original"
-    original.mkdir()
-    manifest = _write_record(original)
-    (original / "debug" / "manifest.json").unlink()
-    nested = original / "debug" / "nested"
-    nested.mkdir()
-    manifest["artifacts"]["waveform"] = r"data\transient.csv"
-    (nested / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-    summary_path = original / "summary.json"
-    summary = json.loads(summary_path.read_text(encoding="utf-8"))
-    summary["artifacts"]["debug_manifest"] = r"debug\nested\manifest.json"
-    summary_path.write_text(json.dumps(summary), encoding="utf-8")
-    moved = original.rename(tmp_path / "moved")
-
-    assert read_sim_record(moved)["run_dir"] == str(moved)
-    assert waveform_path(moved / "summary.json") == moved / "data" / "transient.csv"
 
 
 def test_invalid_simulation_record_reports_a_value_error(tmp_path):

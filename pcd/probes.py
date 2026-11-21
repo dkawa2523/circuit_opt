@@ -18,8 +18,6 @@ from .simulation import (
 )
 
 LOAD_AMMETER = "Vload_meter"
-REPORT_ENERGY_COLUMNS = frozenset({"source_net_energy_J", "load_net_energy_J"})
-
 RESERVED_PROBE_COLUMNS = frozenset(
     {
         TIME_COLUMN,
@@ -35,7 +33,8 @@ RESERVED_PROBE_COLUMNS = frozenset(
         "source_delivered_current_A",
         "source_power_W",
         "load_power_W",
-        *REPORT_ENERGY_COLUMNS,
+        "source_net_energy_J",
+        "load_net_energy_J",
     }
 )
 
@@ -209,12 +208,6 @@ def signal_catalog(
         if probe.column in transient_columns:
             columns["transient"] = [probe.column]
         pair = [f"{ac_name}_re", f"{ac_name}_im"]
-        if probe.column == VOLTAGE_COLUMN and not all(name in ac_columns for name in pair):
-            # Older archives saved the same output under the load/source name.
-            if probe.vector == load_vector:
-                pair = [f"{LOAD_VOLTAGE_COLUMN}_re", f"{LOAD_VOLTAGE_COLUMN}_im"]
-            elif probe.vector == plan.source_voltage_vector:
-                pair = ["voltage_re", "voltage_im"]
         if all(name in ac_columns for name in pair):
             columns["ac"] = pair
         channels[probe.column] = {

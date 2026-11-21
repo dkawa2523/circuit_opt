@@ -56,7 +56,7 @@ def test_subcircuits_are_expanded_so_load_internals_stay_visible(tmp_path):
     refs = {edge["ref"] for edge in summary["edges"]}
     assert {"Xload:Rbulk", "Xload:Lbulk", "Xload:Csh"} <= refs
     # Internal nodes are namespaced so two instances cannot collide.
-    assert any(edge["n2"].startswith("Xload.") for edge in summary["edges"])
+    assert any(any(node.startswith("Xload.") for node in edge["terminals"]) for edge in summary["edges"])
 
 
 def test_subcircuit_ports_map_onto_the_callers_nets(tmp_path):

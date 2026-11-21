@@ -16,7 +16,7 @@ from typing import Any
 from .case import Case
 from .component_models import observed_components
 from .inputs import DEFAULT_LOAD_REFERENCE_PLANE, load_plane_label, reject_unknown
-from .probes import LOAD_AMMETER, REPORT_ENERGY_COLUMNS, RESERVED_PROBE_COLUMNS, NamedProbe, ProbePlan
+from .probes import LOAD_AMMETER, RESERVED_PROBE_COLUMNS, NamedProbe, ProbePlan
 from .simulation import LOAD_CURRENT_COLUMN, SOURCE_VOLTAGE_COLUMN, AnalysisRequest
 from .sources import ac_source_name, source_vectors
 
@@ -137,9 +137,7 @@ def resolve_analysis_request(
     return AnalysisRequest.from_config(_solver_config(case), params)
 
 
-def _declared_probes(
-    case: Case, measurement: Mapping[str, Any], *, allow_legacy_energy_probes: bool
-) -> tuple[NamedProbe, ...]:
+def _declared_probes(case: Case, measurement: Mapping[str, Any]) -> tuple[NamedProbe, ...]:
     raw = measurement.get("probes")
     if raw is None:
         raw = []
@@ -188,7 +186,7 @@ def _declared_probes(
             raise ValueError(f"probe {column!r} unit does not match its voltage/current vector")
         if probe.resolved_unit is None:
             raise ValueError(f"probe {column!r} needs an explicit unit for a general SPICE expression")
-        if column in RESERVED_PROBE_COLUMNS and not (allow_legacy_energy_probes and column in REPORT_ENERGY_COLUMNS):
+        if column in RESERVED_PROBE_COLUMNS:
             raise ValueError(f"probe column {column!r} is reserved by the waveform/AC result format")
         if column in by_column and by_column[column].vector != vector:
             raise ValueError(f"probe column {column!r} names both {by_column[column]!r} and {vector!r}")
@@ -199,11 +197,9 @@ def _declared_probes(
 def _build_probe_plan(
     case: Case,
     measurement: Mapping[str, Any],
-    *,
-    allow_legacy_energy_probes: bool = False,
 ) -> ProbePlan:
     source, source_voltage, source_current = source_vectors(case)
-    declared = list(_declared_probes(case, measurement, allow_legacy_energy_probes=allow_legacy_energy_probes))
+    declared = list(_declared_probes(case, measurement))
     load_current = measurement.get("load_current")
     if load_current in {"auto", LOAD_CURRENT_COLUMN}:
         load_current = LOAD_CURRENT_COLUMN
@@ -276,8 +272,6 @@ def resolve_simulation_case(
     case: Case,
     params: Mapping[str, Any] | None = None,
     solver_override: str | None = None,
-    *,
-    allow_legacy_energy_probes: bool = False,
 ) -> ResolvedSimulationCase:
     """Compile the solver-facing case subset at the orchestration boundary."""
 
@@ -296,7 +290,7 @@ def resolve_simulation_case(
     return ResolvedSimulationCase(
         solver=solver,
         analysis=analysis,
-        probes=_build_probe_plan(case, measurement, allow_legacy_energy_probes=allow_legacy_energy_probes),
+        probes=_build_probe_plan(case, measurement),
         measurement=_measurement_reference(measurement, load),
         netlist_options=tuple((str(name), value) for name, value in options.items()),
     )

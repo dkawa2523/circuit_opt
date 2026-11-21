@@ -155,9 +155,6 @@ def _terminal_impedance_metrics(
         require_simulated=True,
         power_balance_unavailable_reason=ac_power_balance_issue(source_scope),
     )
-    if load_issue := response.diagnostics.get("load_power_unavailable_reason"):
-        metrics["load_real_power_W"] = None
-        metrics["load_real_power_W_unavailable_reason"] = load_issue
     metrics["match_frequency_Hz"] = metrics.pop("frequency_Hz")
     return metrics
 
@@ -204,19 +201,13 @@ TERMINAL_VI_PARAMETERS = (
 
 
 def terminal_observation_frequency_parameter(case: Case) -> str | None:
-    """Resolve the explicit binding or the conventional frequency of old observation rows."""
+    """Read the declared binding between observations and operating frequency."""
 
     name = (case.data.get("target") or {}).get("observation_frequency_parameter")
     if name is not None:
         if not isinstance(name, str) or not name.strip():
             raise ValueError("target.observation_frequency_parameter must name an operating parameter")
         return name
-    study = case.data.get("study") or {}
-    column_map = (study.get("scenario_table") or {}).get("values") or {}
-    if "frequency_Hz" in column_map or any(
-        "frequency_Hz" in (row.get("values") or {}) for row in study.get("scenarios") or ()
-    ):
-        return "frequency_Hz"
     return None
 
 
@@ -280,8 +271,6 @@ def rf_load(case: Case, params: dict[str, Any], response: SimulationResult) -> d
     probes = build_probe_plan(case)
     load_current = response.diagnostics.get("load_current_column", probes.load_current_column)
     if not load_current:
-        if reason := response.diagnostics.get("load_power_unavailable_reason"):
-            raise MeasurementUnavailableError(reason)
         raise ValueError("RF-port metrics require measurement.load_current")
     source_scope = response.diagnostics.get("source_scope")
     balance_issue = transient_power_balance_issue(case, probes.source_name, source_scope=source_scope)

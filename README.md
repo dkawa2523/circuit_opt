@@ -27,6 +27,6 @@ uv run --frozen --no-dev python -m pcd analyze $rc.run_dir --out runs/first/anal
 - 計算の成否、条件別の制約、同定の成立、図表の生成状況。 [出力の読み方](docs/manual-ja.md#results)
 - 指定した回路端子間の小信号S行列。 [多ポート解析](docs/manual-ja.md#multiport)
 - 配布wheelに同梱するサンプルとマニュアルの場所。 [配布wheelの使い方](docs/manual-ja.md#quickstart)
-- [ベンチマークと文献データ](bench/README.md) · [開発と品質検査](docs/manual-ja.md#development) · [変更履歴](CHANGELOG.md)
+- [ベンチマークと文献データ](bench/README.md) · [開発と品質検査](docs/manual-ja.md#development)
 
 有効CCP・ICP回路が表すのは、指定した電気的基準面で見たプラズマ負荷の端子特性です。化学反応、密度、温度、製造歩留まりを求める場合は、対象量を検証できる物理モデルと観測が必要です。 [負荷モデルの選び方](docs/manual-ja.md#loads)

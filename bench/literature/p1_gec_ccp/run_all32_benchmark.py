@@ -421,7 +421,7 @@ def run(*, run_ngspice: bool = True) -> dict[str, Any]:
     result: dict[str, Any] = {
         "schema": "literature_table_benchmark.v1",
         "benchmark_id": "p1_gec_ccp_tables_iii_iv_all32",
-        "status": "PASS" if passed else "FAIL",
+        "passed": passed,
         "checks": checks,
         "source_checks": source_checks,
         "committed_view_checks": committed_view_checks,
@@ -479,7 +479,7 @@ def main() -> int:
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    print(f"P1 GEC CCP Tables III/IV all 32 central points: {result['status']}")
+    print(f"P1 GEC CCP Tables III/IV all 32 central points: {'PASS' if result['passed'] else 'FAIL'}")
     print(f"  source/derived points: {result['counts']['source_rows']}/{result['counts']['derived_rows']}")
     print(
         "  R range: "
@@ -496,7 +496,7 @@ def main() -> int:
         print(f"  ngspice replay: executed; max relative error={result['ngspice']['maximum_relative_error']}")
     else:
         print("  scope: source checks only (--no-ngspice)")
-    return 0 if result["status"] == "PASS" else 1
+    return 0 if result["passed"] else 1
 
 
 if __name__ == "__main__":

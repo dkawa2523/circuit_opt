@@ -571,7 +571,7 @@ study: {objectives: [{metric: load_real_power_W, direction: maximize}]}
 def test_each_rf_load_matches_its_analytic_impedance_in_ngspice(tmp_path, case_name):
     from pcd.analysis import at_frequency, input_impedance
     from pcd.artifacts import yaml_dump
-    from pcd.ngspice_io import read_frequency_response
+    from pcd.records import load_frequency_response
     from pcd.rf_loads import ccp_lumped_impedance, icp_effective_impedance
 
     f0 = 13.56e6
@@ -647,9 +647,7 @@ def test_each_rf_load_matches_its_analytic_impedance_in_ngspice(tmp_path, case_n
     result = pcd("sim-run", str(case), "--run-root", str(tmp_path / "runs"), "--json")
     summary = json.loads(result.stdout)
     run_dir = Path(summary["run_dir"])
-    row = at_frequency(
-        input_impedance(read_frequency_response(run_dir / summary["artifacts"]["frequency_response"])), f0
-    )
+    row = at_frequency(input_impedance(load_frequency_response(run_dir)), f0)
     assert complex(row["resistance_ohm"], row["reactance_ohm"]) == pytest.approx(expected, rel=2e-5, abs=1e-7)
     assert pd.read_csv(run_dir / summary["artifacts"]["waveform"]).empty
 
@@ -658,18 +656,9 @@ def test_each_rf_load_matches_its_analytic_impedance_in_ngspice(tmp_path, case_n
 def test_a_nearly_reactive_load_is_measured_correctly_end_to_end(tmp_path):
     """The integration guard for the whole measurement chain.
 
-    Three numbers are enough: a series R-L-C whose reactance dwarfs its
-    resistance, so the real power is a thousandth of the instantaneous `v*i`
-    product.  Every defect the physics validation turned up shows under those
-    conditions -- sample-versus-time averaging, an FFT over uneven timesteps, a
-    partial cycle -- and all of them are checked against closed forms rather
-    than against a model.
-
-    The record deliberately runs 20.34 cycles rather than 20.  A well-formed
-    case would hide the very failures this exists to catch: with a whole number
-    of cycles the old harmonic code was already within 1%.
-
-    This covers the arithmetic independently of any plasma-state model.
+    The series R-L-C has real power about a thousandth of the instantaneous
+    `v*i` product. A 20.34-cycle record exercises time-weighted integration,
+    uneven timesteps and partial-cycle handling against closed-form values.
     """
 
     import numpy as np
@@ -715,11 +704,9 @@ solver:
 
     # The frequency domain: impedance straight off the AC sweep.
     from pcd.analysis import at_frequency, input_impedance
-    from pcd.ngspice_io import read_frequency_response
+    from pcd.records import load_frequency_response
 
-    row = at_frequency(
-        input_impedance(read_frequency_response(run_dir / summary["artifacts"]["frequency_response"])), f0
-    )
+    row = at_frequency(input_impedance(load_frequency_response(run_dir)), f0)
     assert row["reactance_ohm"] == pytest.approx(expected_z.imag, rel=2e-3)
     assert row["resistance_ohm"] == pytest.approx(expected_z.real, rel=0.05)
 

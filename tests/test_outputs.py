@@ -246,22 +246,6 @@ def test_redraw_preserves_the_saved_source_port_and_checks_the_archived_deck(tmp
     with pytest.raises(ValueError, match="recorded imported_netlist"):
         analyze_run(record.run_dir, output=settings)
 
-    # Older archives hashed the manifest and observations but omitted the imported deck.
-    manifest_path = record.run_dir / "debug" / "manifest.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    for name in ("input_manifest", "imported_netlist"):
-        del manifest["artifact_sha256"][name]
-    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
-    summary_path = record.run_dir / "summary.json"
-    saved_summary = json.loads(summary_path.read_text(encoding="utf-8"))
-    saved_summary["debug_manifest_sha256"] = file_sha256(manifest_path)
-    summary_path.write_text(json.dumps(saved_summary), encoding="utf-8")
-
-    legacy = analyze_run(record.run_dir, output=settings)
-    assert legacy["provenance"]["source_integrity"] == "unverified_dependencies"
-    signals = json.loads((Path(legacy["output_dir"]) / "signals.json").read_text(encoding="utf-8"))
-    assert signals["signals"]["source_voltage_V"]["terminals"] == {"p": "in", "n": "0"}
-
 
 @pytest.mark.e2e
 @pytest.mark.usefixtures("ngspice")

@@ -384,7 +384,7 @@ def _write_selected_projections(
         for name, value in values.items():
             table[f"{role}.{name}"] = value
     table.to_csv(generation_root / filename, index=False)
-    return {"snapshot_response": str(generation / filename).replace("\\", "/")}
+    return {"snapshot_response": (generation / filename).as_posix()}
 
 
 def _constant_parameter_inputs(
@@ -418,7 +418,7 @@ def _write_pareto_projection(
         selected_candidate_id=best.candidate.candidate_id,
         dataset_id=dataset_id,
     ).to_csv(generation_root / filename, index=False)
-    artifacts = {"pareto_front": str(generation / filename).replace("\\", "/")}
+    artifacts = {"pareto_front": (generation / filename).as_posix()}
     summary = {
         "schema": "pareto_summary.v1",
         "scope": "declared_grid" if case.has_exact_candidate_enumeration else "observed_candidates",
@@ -634,7 +634,7 @@ def _run_trials(
 
 
 def _generated_path(generation: Path, name: str) -> str:
-    return str(generation / name).replace("\\", "/")
+    return (generation / name).as_posix()
 
 
 def _generation_artifacts(
@@ -645,7 +645,7 @@ def _generation_artifacts(
     pareto: Mapping[str, Any],
 ) -> dict[str, Any]:
     artifacts = {
-        "generation": str(generation).replace("\\", "/"),
+        "generation": generation.as_posix(),
         "case": _generated_path(generation, "case.yaml"),
         "input_manifest": _generated_path(generation, "input_manifest.json"),
         "best_candidate": _generated_path(generation, selected_candidate_path.name),
@@ -744,6 +744,7 @@ def _finalize_study(
     }
     # Publish only after every referenced file has been committed.
     write_json(generation_root / "study_history.json", trials.history)
+    store.capture_generation_evidence(payload)
     if "output" in case.data and candidate_role(case) is ParameterRole.DESIGN:
         from .reporting import render_requested_output
         from .reporting.study import render_study_outputs

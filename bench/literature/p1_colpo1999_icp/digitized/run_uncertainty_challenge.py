@@ -188,7 +188,7 @@ def _pi_reflection(load: complex, frequency: float, c1: float, inductance: float
 
 def _render_report(payload: dict[str, Any]) -> str:
     fixed, bounded = payload["platform_design_challenge"]["outcomes"]
-    status = "PASS" if payload["benchmark_integrity_passed"] else "FAIL"
+    status = "PASS" if payload["passed"] else "FAIL"
     return f"""# Colpo 1999 digitization-corner challenge
 
 Overall: **{status}**
@@ -214,6 +214,7 @@ independent operating observations.
 
 
 def run(run_root: Path, solver: str) -> dict[str, Any]:
+    run_root.mkdir(parents=True)
     manifest = yaml.safe_load((HERE / "uncertainty_challenge.yaml").read_text(encoding="utf-8"))
     central_rows = _read_csv(HERE / manifest["source"]["central_table"])
     corner_path = HERE / manifest["corner_expansion"]["derived_table"]
@@ -350,7 +351,6 @@ def run(run_root: Path, solver: str) -> dict[str, Any]:
         "benchmark_id": manifest["benchmark_id"],
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "passed": passed,
-        "benchmark_integrity_passed": passed,
         "source": manifest["source"],
         "central_point_count": len(central_rows),
         "corner_point_count": len(corner_rows),
@@ -370,7 +370,6 @@ def run(run_root: Path, solver: str) -> dict[str, Any]:
         },
         "limitations": boundaries,
     }
-    run_root.mkdir(parents=True, exist_ok=True)
     write_json(run_root / "evaluation.json", payload)
     (run_root / "REPORT.md").write_text(_render_report(payload), encoding="utf-8")
     return payload

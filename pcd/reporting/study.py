@@ -41,9 +41,7 @@ def _relative(path: Path, root: Path) -> str:
         return path.resolve().as_posix()
 
 
-def _artifact_hashes(
-    payload: dict[str, Any], root: Path, destination: Path, names: tuple[str, ...]
-) -> dict[str, str | None]:
+def _artifact_hashes(payload: dict[str, Any], root: Path, destination: Path, names: tuple[str, ...]) -> dict[str, str]:
     artifacts = payload["artifacts"]
     paths = ((name, resolve_artifact_path(root, artifacts[name])) for name in names if name in artifacts)
     return {_relative(path, destination): evidence_digest(payload, name, path) for name, path in paths}
@@ -77,7 +75,9 @@ def analyze_saved(
     root, payload = record.root, record.payload
     generation = _analysis_generation(record) if payload["schema"] == "study_result.v1" else None
     if output is None:
-        case = record.artifact_path("case") or root / "input" / "case.yaml"
+        case = record.artifact_path("case")
+        if case is None:
+            raise ValueError("saved result does not declare its executable case")
         output = read_input_mapping(case).get("output")
     settings = output_settings(output)
     requested = (Path(out_dir) if out_dir is not None else root / "analysis").resolve()
@@ -90,7 +90,7 @@ def analyze_saved(
     source = {"record": _relative(record.path, destination), "sha256": record.sha256}
     if generation is not None:
         source["generation"] = _relative(generation, destination)
-        source["aggregate_integrity"] = "verified" if "artifact_sha256" in payload else "unverified_legacy"
+        source["aggregate_integrity"] = "verified"
         return _study_outputs(payload, root, destination, settings, source=source)
     return _identification_outputs(payload, root, destination, settings, source=source)
 
@@ -120,24 +120,12 @@ def _search(payload: dict[str, Any], root: Path) -> list[dict[str, Any]]:
     rows = []
     for row in frame.to_dict(orient="records"):
         manifest = row.get("artifact.manifest")
-        control = row.get("control")
-        if not isinstance(control, str):
-            # Older evaluation tables only stored flattened controls.
-            control = json.dumps(
-                {
-                    str(key).removeprefix("control."): value
-                    for key, value in row.items()
-                    if str(key).startswith("control.") and pd.notna(value)
-                },
-                sort_keys=True,
-                allow_nan=False,
-            )
         rows.append(
             {
                 "candidate_id": row["candidate_id"],
                 "scenario_id": row["scenario_id"],
                 "phase": "search",
-                "control": control,
+                "control": row["control"],
                 "status": row["status"],
                 "manifest": str(resolve_artifact_path(root, manifest)) if isinstance(manifest, str) else "",
             }
@@ -609,7 +597,7 @@ def _identification_outputs(
         figure.colorbar(image, ax=axis)
         figures.extend(save_figure(figure, destination, "local_sensitivity", settings["formats"]))
     if source is not None:
-        integrity = "unverified_legacy" if "artifact_sha256" not in payload else "incomplete" if missing else "verified"
+        integrity = "incomplete" if missing else "verified"
         source = {**source, "aggregate_integrity": integrity}
     result = {
         "schema": "identification_analysis.v1",

@@ -386,13 +386,13 @@ def test_a_frequency_domain_objective_does_not_require_a_waveform_target(make_ca
 
 
 def test_strict_mode_promotes_warnings_to_failure(make_case):
-    case = _variable_case(make_case, {"bounds": [1, 10], "default": 1})
+    case = _variable_case(make_case, {"bounds": [1, 10], "default": 99})
     normal = validate_case(case).to_dict()
     strict = validate_case(case, strict=True).to_dict()
     assert normal["ok"] is True
     assert strict["ok"] is False
     assert strict["issues"] == normal["issues"]
-    assert [issue["code"] for issue in strict["issues"]] == ["variable.implicit_design"]
+    assert [issue["code"] for issue in strict["issues"]] == ["variable.default_out_of_bounds"]
 
 
 def test_auto_metering_without_a_load_is_an_error(make_case):

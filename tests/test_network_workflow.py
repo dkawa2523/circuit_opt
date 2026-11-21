@@ -11,7 +11,7 @@ import pytest
 
 from pcd.api import execute_case, load_case, measure_response, run_case_study, run_network
 from pcd.core.models import MeasurementUnavailableError
-from pcd.records import load_simulation_result, read_sim_record
+from pcd.records import read_sim_record
 from pcd.reporting import analyze_run
 from pcd.validation import validate_case
 
@@ -280,10 +280,3 @@ def test_attached_load_power_uses_its_own_current_and_keeps_the_named_probe(make
     report = analyze_run(run.record.run_dir, output={"schematic": False, "plots": []})
     assert report["measurement"]["load_current"] == "load_current_A"
     assert report["analyses"]["transient"]["periodic"]["load_real_power_W"] == pytest.approx(actual_power, rel=1e-3)
-
-    legacy = read_sim_record(run.record.run_dir)
-    legacy["diagnostics"].pop("load_current_column")
-    legacy["measurement"]["load_current"] = "feed_current"
-    old_metrics = measure_response(case, load_simulation_result(legacy))
-    assert old_metrics["load_real_power_W"] is None
-    assert "attached load's own current" in old_metrics["load_real_power_W_unavailable_reason"]

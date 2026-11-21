@@ -137,7 +137,7 @@ def _evaluation_rows(study: dict[str, Any], study_root: Path) -> list[dict[str, 
 
 
 def _cache_hits(rows: list[dict[str, str]]) -> int:
-    return sum(row.get("from_cache", "").lower() in {"1", "true", "yes"} for row in rows)
+    return sum(row["from_cache"] == "True" for row in rows)
 
 
 def _conditions(study: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -248,7 +248,7 @@ def _evaluation_coverage(rows: list[dict[str, str]], history: list[dict[str, Any
             return False
         counts[trial, candidate] += 1
         keys.add((trial, candidate, scenario, json.dumps(control, sort_keys=True)))
-        if row.get("selected_control", "").lower() in {"1", "true", "yes"}:
+        if row["selected_control"] == "True":
             selections[trial, candidate, scenario] += 1
     return (
         bool(expected and scenario_ids)
@@ -271,7 +271,7 @@ def _selected_replay_evidence(
     search_controls = {
         row["scenario_id"]: json.loads(row["control"])
         for row in rows
-        if row["candidate_id"] == best and row["selected_control"].lower() in {"1", "true", "yes"}
+        if row["candidate_id"] == best and row["selected_control"] == "True"
     }
     search_manifests = {resolve_artifact_path(root, row["artifact.manifest"]).resolve() for row in rows}
     replay_manifests: set[Path] = set()
@@ -316,7 +316,7 @@ def _study_common(bundle: dict[str, Any], required: tuple[str, ...]) -> dict[str
         and int(verification.get("n_failed_evaluations", 1)) == 0
         and all(row.get("status") == "ok" for row in rows),
         "complete_evaluation_evidence": study["best"]["evaluation_evidence"] == "complete",
-        "fresh_solver_evidence": all(row.get("from_cache", "").lower() in {"0", "false", "no"} for row in rows),
+        "fresh_solver_evidence": all(row["from_cache"] == "False" for row in rows),
         "selected_candidate_was_replayed_fresh": verification.get("status") == "verified"
         and verification.get("cache_reused") is False
         and int(verification.get("n_evaluations", 0)) == len(scenario_ids)

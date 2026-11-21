@@ -12,7 +12,7 @@ from pcd.records import artifact_path, read_sim_record
 from pcd.sim_registry import register_solver
 from pcd.simulation import SimulationResult
 from pcd.simulation_input import SolverRunRequest
-from pcd.spice import param_ref_or_value
+from pcd.spice import resolve_value
 
 
 def fake_waveform(case: Case, params: dict[str, Any]) -> pd.DataFrame:
@@ -48,7 +48,7 @@ def _source_waveform(
     def value(*keys: str, default: Any) -> float:
         for key in keys:
             if key in source:
-                return float(param_ref_or_value(source[key], params, default))
+                return float(resolve_value(source[key], params, default))
         return float(default)
 
     if source_type in {"voltage_pulse", "pulse"}:

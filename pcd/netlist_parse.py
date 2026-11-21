@@ -41,15 +41,21 @@ Subckts = dict[str, tuple[list[str], list[str]]]
 @dataclass(frozen=True)
 class NetlistEdge:
     ref: str
-    n1: str
-    n2: str
+    terminals: tuple[str, ...]
     value: str = ""
     kind: str = "component"
-    terminals: tuple[str, ...] = ()
+
+    @property
+    def n1(self) -> str:
+        return self.terminals[0]
+
+    @property
+    def n2(self) -> str:
+        return self.terminals[2] if self.kind == "tline" else self.terminals[1]
 
     @property
     def nodes(self) -> tuple[str, ...]:
-        return self.terminals or (self.n1, self.n2)
+        return self.terminals
 
 
 @dataclass(frozen=True)
@@ -238,7 +244,7 @@ def parse_netlist(path_or_text: str | Path, *, netlist_mode: str = "auto") -> Pa
                     return
             else:
                 parsed.issues.append(f"unexpanded subcircuit: {ref} ({model})")
-            parsed.edges.append(NetlistEdge(ref, external[0], external[1], model, "subckt", tuple(external)))
+            parsed.edges.append(NetlistEdge(ref, tuple(external), model, "subckt"))
             return
         count = _PORTS.get(prefix, 2)
         if prefix == "Q" and len(parts) >= 6 and parts[4].lower() not in models:
@@ -250,9 +256,7 @@ def parse_netlist(path_or_text: str | Path, *, netlist_mode: str = "auto") -> Pa
             parsed.issues.append(f"unsupported or truncated component: {ref}: {line}")
             return
         terminals = tuple(node(item) for item in parts[1 : count + 1])
-        # Keep the conventional signal-path endpoints for old two-terminal readers.
-        n2 = terminals[2] if prefix in {"T", "O"} else terminals[1]
-        parsed.edges.append(NetlistEdge(ref, terminals[0], n2, " ".join(parts[count + 1 :]), _KINDS[prefix], terminals))
+        parsed.edges.append(NetlistEdge(ref, terminals, " ".join(parts[count + 1 :]), _KINDS[prefix]))
 
     for line in top:
         visit(line)

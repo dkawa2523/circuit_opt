@@ -368,6 +368,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     run_root = Path(args.run_root).resolve()
+    run_root.mkdir(parents=True)
     cases = sorted(
         (run_case(path, run_root, str(args.solver)) for path in CASE_PATHS),
         key=lambda item: item["benchmark_id"],
@@ -385,7 +386,6 @@ def main(argv: list[str] | None = None) -> int:
         "n_evaluations": sum(item["n_evaluations"] for item in cases),
         "cases": cases,
     }
-    run_root.mkdir(parents=True, exist_ok=True)
     write_json(run_root / "benchmark_result.json", payload)
     report_path = Path(args.report).resolve() if args.report else run_root / "REPORT.md"
     report_path.parent.mkdir(parents=True, exist_ok=True)

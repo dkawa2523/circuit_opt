@@ -24,7 +24,7 @@ from .sim_registry import load_plugins as load_sim_plugins
 from .simulation import AC_FILE, LOAD_CURRENT_COLUMN, WAVEFORM_FILE, AcSweep, AnalysisRequest, TransientAnalysis
 from .simulation_input import MeasurementReference, ResolvedSimulationCase, bind_load_probe
 from .sources import ac_source_name, source_name, source_specs
-from .spice import param_ref_or_value, should_emit_spice_param, spice_value
+from .spice import resolve_value, should_emit_spice_param, spice_value
 
 
 @dataclass
@@ -150,8 +150,7 @@ def _selected_name(cfg: dict[str, Any], params: dict[str, Any], key: str, variab
 
 def select_circuit_name(case: Case, params: dict[str, Any]) -> str:
     cfg = circuit_config(case)
-    key = "builder" if "builder" in cfg or "topology" not in cfg else "topology"
-    return _selected_name(cfg, params, key, "builder_variable", "from_yaml")
+    return _selected_name(cfg, params, "builder", "builder_variable", "from_yaml")
 
 
 def select_load_name(case: Case, params: dict[str, Any]) -> str:
@@ -311,8 +310,8 @@ def _pick(src: dict[str, Any], params: dict[str, Any], *keys: str, default: Any 
 
     for key in keys:
         if key in src:
-            return param_ref_or_value(src[key], params)
-    return param_ref_or_value(default, params)
+            return resolve_value(src[key], params)
+    return resolve_value(default, params)
 
 
 def _sine_peak(src: dict[str, Any], params: dict[str, Any]) -> Any:
@@ -369,16 +368,16 @@ def _source_ac_suffix(src: dict[str, Any], params: dict[str, Any]) -> str:
     """Use an explicit AC magnitude, or the sine peak amplitude, for stress."""
 
     if "ac_magnitude" in src:
-        magnitude = param_ref_or_value(src["ac_magnitude"], params)
+        magnitude = resolve_value(src["ac_magnitude"], params)
     elif "ac_magnitude_V" in src:
-        magnitude = param_ref_or_value(src["ac_magnitude_V"], params)
+        magnitude = resolve_value(src["ac_magnitude_V"], params)
     elif "ac_magnitude_A" in src:
-        magnitude = param_ref_or_value(src["ac_magnitude_A"], params)
+        magnitude = resolve_value(src["ac_magnitude_A"], params)
     elif str(src.get("type", "sine_voltage")) in {"sine_voltage", "rf_voltage", "voltage_sine", "sine"}:
         magnitude = _sine_peak(src, params)
     else:
         magnitude = 1.0
-    phase = param_ref_or_value(src.get("ac_phase_deg", 0.0), params)
+    phase = resolve_value(src.get("ac_phase_deg", 0.0), params)
     return f" AC {spice_value(magnitude)} {spice_value(phase)}"
 
 

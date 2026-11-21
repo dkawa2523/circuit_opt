@@ -190,7 +190,6 @@ def execute(run_root: Path) -> dict[str, Any]:
         "benchmark_id": str(source["benchmark_id"]),
         "source_doi": str(source["source"]["doi"]),
         "passed": passed,
-        "benchmark_integrity_passed": passed,
         "source_fidelity": {
             "passed": bool(table_result["passed"]),
             "claim": "Table-I equivalent-circuit arithmetic at 13.56 MHz",
@@ -230,7 +229,7 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.run_root:
-        args.run_root.mkdir(parents=True, exist_ok=True)
+        args.run_root.mkdir(parents=True)
         payload = execute(args.run_root.resolve())
     else:
         with tempfile.TemporaryDirectory(prefix="pcd_p0_lee2021_") as temporary:

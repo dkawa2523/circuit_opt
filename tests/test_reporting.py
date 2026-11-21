@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
 
+from pcd.artifacts import write_json
 from pcd.case import load_case
+from pcd.probes import signal_catalog
 from pcd.reporting import analyze_run
-from pcd.validation import validate_case
+from pcd.sim_core import prepare_case, write_sim_record
+from pcd.simulation_input import resolve_simulation_case
 
 
 def _waveform(n: int = 64) -> pd.DataFrame:
@@ -42,32 +44,36 @@ def _ac(resistance: float, reactance: float, frequencies: tuple[float, ...] = (1
     )
 
 
-def _saved_run(tmp_path, name, case_id, case_text, waveform, frequency_response=None):
-    """Write the same public/data/debug layout produced by ``sim-run``."""
+def _saved_run(tmp_path, name, case_text, waveform, frequency_response=None):
+    """Publish controlled observations through the current simulation writer."""
 
-    run_dir = tmp_path / name
-    data_dir = run_dir / "data"
-    debug_dir = run_dir / "debug"
-    data_dir.mkdir(parents=True)
-    debug_dir.mkdir()
-    (debug_dir / "case.yaml").write_text(case_text, encoding="utf-8")
-    waveform.to_csv(data_dir / "transient.csv", index=False)
-    artifacts = {"case": "debug/case.yaml", "waveform": "data/transient.csv"}
+    case_path = tmp_path / f"{name}.yaml"
+    case_path.write_text(case_text, encoding="utf-8")
+    case = load_case(case_path)
+    record = prepare_case(case, run_root=tmp_path, run_id=name)
+    record.status = "ok"
+    waveform = waveform.copy()
+    if "load_voltage_V" not in waveform:
+        waveform["load_voltage_V"] = waveform["voltage_V"]
+    waveform.to_csv(record.run_dir / record.waveform_file, index=False)
     if frequency_response is not None:
-        frequency_response.to_csv(data_dir / "ac.csv", index=False)
-        artifacts["frequency_response"] = "data/ac.csv"
-    manifest = {
-        "schema": "simulation_record.v2",
-        "case_id": case_id,
-        "status": "ok",
-        "solver": "ngspice_cli",
-        "run_dir": str(run_dir),
-        "params": {},
-        "artifacts": artifacts,
-        "provenance": {"solver": {"version": "ngspice-test"}},
-    }
-    (debug_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-    return run_dir
+        record.frequency_response_file = "data/ac.csv"
+        frequency_response = frequency_response.copy()
+        for part in ("re", "im"):
+            frequency_response[f"voltage_V_{part}"] = frequency_response[f"load_voltage_V_{part}"]
+        frequency_response.to_csv(record.run_dir / record.frequency_response_file, index=False)
+    simulation = resolve_simulation_case(case)
+    write_json(
+        record.run_dir / record.signals_file,
+        signal_catalog(
+            simulation.probes,
+            record.measurement,
+            transient_columns=tuple(waveform.columns) if not waveform.empty else (),
+            ac_columns=tuple(frequency_response.columns) if frequency_response is not None else (),
+        ),
+    )
+    write_sim_record(record)
+    return record.run_dir
 
 
 def test_analyze_run_regenerates_summary_and_figures_from_saved_artifacts(tmp_path, monkeypatch):
@@ -83,7 +89,7 @@ def test_analyze_run_regenerates_summary_and_figures_from_saved_artifacts(tmp_pa
     )
     ac = _ac(reference, 0.0, (1e7,)).assign(load_voltage_V_re=1.0, load_voltage_V_im=0.0)
     empty = pd.DataFrame(columns=["time_s", "voltage_V", "current_A"])
-    run_dir = _saved_run(tmp_path, "run", "saved_ac", case_text, empty, ac)
+    run_dir = _saved_run(tmp_path, "run", case_text, empty, ac)
 
     report_dir = tmp_path / "report"
     summary = analyze_run(run_dir, out_dir=report_dir)
@@ -100,7 +106,7 @@ def test_analyze_run_regenerates_summary_and_figures_from_saved_artifacts(tmp_pa
     assert (report_dir / "frequency_response.png").stat().st_size > 0
     assert (report_dir / "operating_point.png").stat().st_size > 0
     provenance = summary["provenance"]
-    assert provenance["source_integrity"] == "unverified_legacy"
+    assert provenance["source_integrity"] == "verified"
     assert len(provenance["implementation_sha256"]) == 64
     assert provenance["inputs"]["frequency_response"]["sha256"]
     assert provenance["environment"]["libraries"]["numpy"]
@@ -116,55 +122,6 @@ def test_analyze_run_regenerates_summary_and_figures_from_saved_artifacts(tmp_pa
     assert relative["output_dir"] == str(tmp_path / "report_003")
 
 
-def test_schematic_netlist_contents_change_analysis_identity(tmp_path):
-    case_text = (
-        "schema: case_yaml.v1\ncase_id: diagram\n"
-        "source: {type: dc_voltage, name: Vsrc, p: src, n: 0, voltage_V: 1}\n"
-        "circuit: {builder: from_yaml, output_node: out, components: [{ref: R1, n1: src, n2: out, value: 1000}]}\n"
-        "solver: {tran: {step_s: 1.0e-8, stop_s: 4.0e-6}}\n"
-    )
-    run_dir = _saved_run(tmp_path, "diagram", "diagram", case_text, _waveform())
-    manifest = run_dir / "debug" / "manifest.json"
-    record = json.loads(manifest.read_text(encoding="utf-8"))
-    record["artifacts"]["netlist"] = "debug/netlist.cir"
-    manifest.write_text(json.dumps(record), encoding="utf-8")
-    netlist = run_dir / "debug" / "netlist.cir"
-    original = "diagram\nVsrc src 0 DC 1\nR1 src out 1000\nR2 out 0 1000\n"
-    netlist.write_text(original + ".end\n", encoding="utf-8")
-    settings = {"formats": ["svg"], "plots": []}
-    before = analyze_run(run_dir, output=settings)
-    netlist.write_text(original + "Rextra out 0 123\n.end\n", encoding="utf-8")
-    after = analyze_run(run_dir, output=settings)
-    assert before["provenance"]["inputs"]["netlist"]["sha256"] != after["provenance"]["inputs"]["netlist"]["sha256"]
-    assert before["provenance"]["analysis_id"] != after["provenance"]["analysis_id"]
-    assert "Rextra" in (Path(after["output_dir"]) / "circuit.json").read_text(encoding="utf-8")
-
-
-def test_archived_energy_named_voltage_probe_keeps_its_own_signal(tmp_path):
-    case_text = (
-        "schema: case_yaml.v1\ncase_id: legacy_probe\n"
-        "source: {type: dc_voltage, name: Vsrc, p: src, n: 0, voltage_V: 1}\n"
-        "circuit: {builder: from_yaml, output_node: out, components: [{ref: R1, n1: src, n2: out, value: 1000}]}\n"
-        "measurement: {probes: {source_net_energy_J: {vector: 'v(out)', unit: V}}}\n"
-        "solver: {tran: {step_s: 1.0e-8, stop_s: 4.0e-6}}\n"
-    )
-    waveform = _waveform()
-    waveform["source_net_energy_J"] = waveform["voltage_V"]
-    run_dir = _saved_run(tmp_path, "legacy_probe", "legacy_probe", case_text, waveform)
-    assert not validate_case(load_case(run_dir / "debug" / "case.yaml")).ok
-    report = analyze_run(
-        run_dir,
-        output={"schematic": False, "plots": [{"type": "waveform", "signals": ["source_net_energy_J"]}]},
-    )
-    destination = Path(report["output_dir"])
-    catalog = json.loads((destination / "signals.json").read_text(encoding="utf-8"))["signals"]
-    assert catalog["source_net_energy_J"]["unit"] == "V"
-    assert catalog["derived.source_net_energy_J"]["unit"] == "J"
-    plot = report["output"]["plots"][0]["data"][0]
-    assert plot["unit"] == "V"
-    assert np.allclose(pd.read_csv(destination / plot["file"])["source_net_energy_J"], waveform["voltage_V"])
-
-
 def test_analyze_run_recomputes_periodic_metrics_from_saved_waveform(tmp_path):
     case_text = (
         "schema: case_yaml.v1\n"
@@ -175,7 +132,7 @@ def test_analyze_run_recomputes_periodic_metrics_from_saved_waveform(tmp_path):
         "measurement: {load_current: auto}\n"
         "solver: {name: ngspice_cli, tran: {step_s: 1.0e-9, stop_s: 4.0e-6}}\n"
     )
-    run_dir = _saved_run(tmp_path, "transient_run", "saved_transient", case_text, _waveform(257))
+    run_dir = _saved_run(tmp_path, "transient_run", case_text, _waveform(257))
 
     summary = analyze_run(run_dir, output={"schematic": False, "formats": ["png", "svg"]})
 
@@ -219,7 +176,7 @@ def test_saved_sweep_interpolates_phasors_before_impedance_and_reflection(tmp_pa
         load_voltage_V_im=0.0,
     )
     empty = pd.DataFrame(columns=["time_s", "voltage_V", "current_A"])
-    run_dir = _saved_run(tmp_path, "sweep", "interpolated", case_text, empty, ac)
+    run_dir = _saved_run(tmp_path, "sweep", case_text, empty, ac)
     summary = analyze_run(run_dir)
     metrics = summary["analyses"]["ac"]
     assert metrics["resistance_ohm"] == pytest.approx(50.0)
@@ -230,7 +187,7 @@ def test_saved_sweep_interpolates_phasors_before_impedance_and_reflection(tmp_pa
     assert rows.loc[0, "frequency_lower_Hz"] == 1e6
     assert rows.loc[0, "frequency_upper_Hz"] == 3e6
     ac.iloc[:1].to_csv(run_dir / "data" / "ac.csv", index=False)
-    with pytest.raises(ValueError, match="differ from the requested sweep"):
+    with pytest.raises(ValueError, match="recorded frequency_response"):
         analyze_run(run_dir)
 
 
@@ -246,17 +203,23 @@ def test_ac_sweep_reports_without_a_periodic_fundamental(tmp_path, drive):
         voltage_re=drive, current_re=-drive / 50, load_voltage_V_re=drive, load_voltage_V_im=0.0
     )
     empty = pd.DataFrame(columns=["time_s", "voltage_V", "current_A"])
-    run_dir = _saved_run(tmp_path, "sweep", "dc_ac_sweep", case_text, empty, ac)
+    run_dir = _saved_run(tmp_path, "sweep", case_text, empty, ac)
 
     summary = analyze_run(run_dir)
     assert summary["status"] == ("complete" if drive else "partial")
     assert summary["measurement"]["ac_frequency_Hz"] is None
-    assert summary["analyses"]["ac"]["sweep"]["reflection_sample_count"] == (3 if drive else 0)
+    if drive:
+        assert summary["analyses"]["ac"]["sweep"]["reflection_sample_count"] == 3
+    else:
+        assert "no independent AC excitation" in summary["analyses"]["ac"]["source_port_unavailable_reason"]
     assert "frequency_metrics" in summary["artifacts"]
     assert "operating_metrics" not in summary["artifacts"]
 
     selected = analyze_run(run_dir, frequency_hz=2e6)
-    assert selected["analyses"]["ac"]["reflection_magnitude"] == (0.0 if drive else None)
+    if drive:
+        assert selected["analyses"]["ac"]["reflection_magnitude"] == 0.0
+    else:
+        assert "reflection_magnitude" not in selected["analyses"]["ac"]
     assert "NaN" not in (run_dir / "analysis_001" / "summary.json").read_text(encoding="utf-8")
 
 
@@ -272,10 +235,10 @@ def test_ac_reporting_preserves_probes_when_the_observed_source_is_not_driven(tm
     )
     ac = _ac(50.0, 0.0, (1e6,)).assign(voltage_re=0.0, load_voltage_V_re=1.0, load_voltage_V_im=0.0)
     empty = pd.DataFrame(columns=["time_s", "voltage_V", "current_A"])
-    run_dir = _saved_run(tmp_path, "other_port", "separate_ports", case_text, empty, ac)
+    run_dir = _saved_run(tmp_path, "other_port", case_text, empty, ac)
 
     summary = analyze_run(run_dir)
-    assert "Vobserve" in summary["analyses"]["ac"]["source_port_unavailable_reason"]
+    assert "do not establish the AC source port" in summary["analyses"]["ac"]["source_port_unavailable_reason"]
     derived = pd.read_csv(run_dir / "analysis" / summary["artifacts"]["frequency_metrics"])
     assert "reflection_magnitude" not in derived
     assert derived["load_voltage_V_re"].iloc[0] == 1.0
@@ -306,7 +269,7 @@ def test_analyze_run_marks_dc_transient_periodic_metrics_not_applicable(tmp_path
             "component_R1_current_A": np.linspace(0.2, 0.1, len(time_s)),
         }
     )
-    run_dir = _saved_run(tmp_path, "dc_transient_run", "saved_dc_transient", case_text, waveform)
+    run_dir = _saved_run(tmp_path, "dc_transient_run", case_text, waveform)
 
     summary = analyze_run(run_dir)
 
@@ -319,10 +282,9 @@ def test_analyze_run_marks_dc_transient_periodic_metrics_not_applicable(tmp_path
     assert set(summary["artifacts"]) >= {"summary", "transient_response"}
 
 
-def test_analyze_run_rejects_failed_records(tmp_path):
-    debug = tmp_path / "debug"
-    debug.mkdir()
-    manifest = debug / "manifest.json"
-    manifest.write_text(json.dumps({"status": "failed", "run_dir": str(tmp_path)}), encoding="utf-8")
+def test_analyze_run_rejects_failed_records(tmp_path, make_case):
+    record = prepare_case(make_case({}), run_root=tmp_path / "run")
+    record.status = "failed"
+    write_sim_record(record)
     with pytest.raises(ValueError, match="status 'failed'"):
-        analyze_run(manifest)
+        analyze_run(record.run_dir)

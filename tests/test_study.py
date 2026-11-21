@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from pcd.artifacts import file_sha256
 from pcd.case import Case, load_case
 from pcd.core import (
     Candidate,
@@ -500,63 +501,6 @@ def test_best_decision_summary_distinguishes_failed_evidence_and_control_margin(
     assert limited["conditions"][0]["failed_constraints"] == [margin_constraint.to_dict()]
 
 
-def test_candidate_summary_matches_evidence_coverage_and_objective_direction(tmp_path, monkeypatch):
-    study_root = tmp_path / "summary"
-    generation = study_root / "generations" / "g_test"
-    generation.mkdir(parents=True)
-    history = []
-
-    def save(candidate_id, success, feasible, score, margin):
-        history.append(
-            {
-                "candidate_id": candidate_id,
-                "params": {},
-                "success_fraction": success,
-                "feasible_fraction": feasible,
-                "total_violation": 0.0,
-                "aggregates": {"score": score},
-                "control_margin": margin,
-            }
-        )
-
-    save("failed", 0.5, 0.5, 1000.0, 1.0)
-    save("incomplete", 1.0, 0.5, 100.0, 1.0)
-    save("complete-low", 1.0, 1.0, 1.0, 1.0)
-    save("complete-edge", 1.0, 1.0, 2.0, 0.0)
-    save("complete-center", 1.0, 1.0, 2.0, 1.0)
-    (generation / "study_history.json").write_text(json.dumps(history), encoding="utf-8")
-    pointer = study_root / "study_result.json"
-    pointer.write_text(
-        json.dumps(
-            {
-                "study": {"objectives": [{"metric": "score", "direction": "maximize", "aggregation": "worst"}]},
-                "best": {"candidate": {"candidate_id": "complete-center"}},
-                "artifacts": {"history": "generations/g_test/study_history.json"},
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    reads = []
-    read_bytes = Path.read_bytes
-
-    def track_read(path, *args, **kwargs):
-        if path == pointer:
-            reads.append(path)
-        return read_bytes(path, *args, **kwargs)
-
-    monkeypatch.setattr(Path, "read_bytes", track_read)
-    summary = candidate_summary(study_root)
-    assert reads == [pointer]
-    assert summary["candidate_id"].tolist() == [
-        "complete-center",
-        "complete-edge",
-        "complete-low",
-        "incomplete",
-        "failed",
-    ]
-
-
 def test_candidate_summary_uses_saved_rank_when_weighted_coverage_hides_a_failed_condition(tmp_path):
     history = []
     for candidate_id, incomplete, objective in (("partial", 1.0, 1.0), ("complete", 0.0, 2.0)):
@@ -570,10 +514,20 @@ def test_candidate_summary_uses_saved_rank_when_weighted_coverage_hides_a_failed
                 "rank": [incomplete, 0.0, 0.0, 0.0, objective, None],
             }
         )
-    (tmp_path / "history.json").write_text(json.dumps(history), encoding="utf-8")
-    (tmp_path / "study_result.json").write_text(
-        json.dumps({"artifacts": {"history": "history.json"}}), encoding="utf-8"
-    )
+    generation = tmp_path / "generations" / "g_0000000000000001"
+    generation.mkdir(parents=True)
+    path = generation / "history.json"
+    path.write_text(json.dumps(history), encoding="utf-8")
+    result = {
+        "schema": "study_result.v1",
+        "artifacts": {
+            "generation": "generations/g_0000000000000001",
+            "history": "generations/g_0000000000000001/history.json",
+        },
+        "artifact_sha256": {"history": file_sha256(path)},
+    }
+    (generation / "generation_result.json").write_text(json.dumps(result), encoding="utf-8")
+    (tmp_path / "study_result.json").write_bytes((generation / "generation_result.json").read_bytes())
 
     assert candidate_summary(tmp_path)["candidate_id"].tolist() == ["complete", "partial"]
 
@@ -592,6 +546,10 @@ def test_study_readers_pin_a_published_generation_and_reject_a_conflicting_point
             "best_candidate": f"{relative}/best.json",
             "evaluation_table": f"{relative}/evaluations.csv",
         },
+        "artifact_sha256": {
+            "best_candidate": file_sha256(generation / "best.json"),
+            "evaluation_table": file_sha256(generation / "evaluations.csv"),
+        },
     }
     pointer = tmp_path / "study_result.json"
     saved = generation / "generation_result.json"
@@ -607,7 +565,9 @@ def test_study_readers_pin_a_published_generation_and_reject_a_conflicting_point
     with pytest.raises(ValueError, match="does not match its published generation"):
         read_best_candidate(saved)
 
-    (generation / ".published").touch()
+    digest = file_sha256(saved)
+    assert digest is not None
+    (generation / ".published").write_text(digest, encoding="utf-8")
     assert read_best_candidate(saved) == candidate
 
 
@@ -760,7 +720,7 @@ def test_case_evaluation_keeps_a_successful_ac_response_canonical(tmp_path):
     assert result.aggregates["reflection_magnitude"] == pytest.approx(0.0)
 
 
-def test_deep_windows_workspace_keeps_internal_artifacts_below_legacy_limit(tmp_path, topology_case):
+def test_deep_windows_workspace_uses_short_internal_artifact_paths(tmp_path, topology_case):
     long_id = "literature_colpo1999_fixed_digitization_corners"
     case = Case(
         topology_case.path,
@@ -769,13 +729,9 @@ def test_deep_windows_workspace_keeps_internal_artifacts_below_legacy_limit(tmp_
         topology_case.resolved_plan,
     )
 
-    # This root reproduces the old 261-character raw-result temp path while
-    # remaining representative of a repository nested below a user profile.
+    # Represent a repository nested below a Windows user profile.
     padding = max(0, 124 - len(str(tmp_path)) - 1)
     deep_root = tmp_path / ("d" * padding) if padding else tmp_path
-    old_temp_length = len(str(deep_root)) + 1 + len(long_id) + len("\\raw\\" + "0" * 64 + "\\raw_result.json.tmp")
-    assert old_temp_length >= 260
-
     _spec, runner, store = build_case_runner(case, deep_root, solver_override="test_fake")
     runner.evaluate_candidate(Candidate("fixed"))
 

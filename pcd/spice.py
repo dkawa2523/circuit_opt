@@ -55,9 +55,6 @@ def resolve_value(value: Any, params: dict[str, Any], default: Any | None = None
     return value
 
 
-param_ref_or_value = resolve_value
-
-
 def periodic_frequency_hz(case: Case, params: dict[str, Any] | None = None) -> float | None:
     """Declared periodic fundamental; never invent 1 Hz for an unknown source."""
 

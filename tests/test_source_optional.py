@@ -60,7 +60,12 @@ def test_unpowered_rc_discharge_preserves_real_probes_without_creating_a_source(
     assert {"current_A", "source_voltage_V"}.isdisjoint(catalog["signals"])
 
 
-def test_an_existing_raw_default_source_keeps_its_observation(make_case):
-    case = make_case({"circuit": {"components": [{"raw": "Vsrc src 0 DC 1"}]}})
+def test_a_raw_source_uses_its_declared_observation(make_case):
+    case = make_case(
+        {
+            "circuit": {"components": [{"raw": "Vsrc src 0 DC 1"}]},
+            "measurement": {"current_source": "Vsrc", "source_voltage": "v(src)"},
+        }
+    )
     probes = resolve_simulation_case(case).probes
     assert (probes.source_name, probes.source_voltage_vector, probes.source_current) == ("Vsrc", "v(src)", "i(Vsrc)")

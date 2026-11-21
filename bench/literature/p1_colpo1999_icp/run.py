@@ -78,7 +78,7 @@ def _complex_at_frequency(response: Any, frequency_hz: float) -> complex:
 
 
 def run(run_root: Path) -> dict[str, Any]:
-    run_root.mkdir(parents=True, exist_ok=True)
+    run_root.mkdir(parents=True)
     resonance_record = execute_case(
         load_case(HERE / "dummy_resonance.yaml"),
         run_root=run_root,

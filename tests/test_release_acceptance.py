@@ -50,8 +50,8 @@ def test_release_root_must_be_new(tmp_path):
         run_suite.run_release_suite(run_root)
 
 
-def test_cache_hits_parse_boolean_csv_values():
-    assert run_suite._cache_hits([{"from_cache": "True"}, {"from_cache": "0"}, {"from_cache": "yes"}]) == 2
+def test_cache_hits_count_reused_evaluations():
+    assert run_suite._cache_hits([{"from_cache": "True"}, {"from_cache": "False"}, {"from_cache": "True"}]) == 2
 
 
 @pytest.mark.parametrize("termination", ["declared_grid_completed", "candidate_budget_exhausted"])

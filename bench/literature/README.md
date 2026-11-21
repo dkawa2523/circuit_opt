@@ -2,7 +2,7 @@
 
 ## 文献ベンチマーク一括実行
 
-リポジトリのルートで実行します。
+リポジトリのルートで、まだ存在しない出力先を指定して実行します。
 
 ```powershell
 uv run --frozen python bench/literature/run_suite.py --run-root runs/literature/suite

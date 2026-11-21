@@ -31,8 +31,7 @@ _RAW_CACHE_KEY = re.compile(rf"[a-f0-9]{{{_CACHE_PATH_KEY_LENGTH}}}")
 def prune_generations(study_root: str | Path, *, keep: int = 3, apply: bool = False) -> dict[str, Any]:
     """Plan or remove old generations while always preserving the active one.
 
-    Retain unmarked generations, which may be in progress or contain legacy
-    replay inputs. The default is a dry run.
+    Retain unmarked generations that may still be in progress. The default is a dry run.
     """
 
     if keep < 1:
@@ -129,14 +128,7 @@ def _remove_generation(path: Path) -> bool:
 
 def _has_study_identity(root: Path) -> bool:
     identity = root / _STUDY_ID_FILE
-    if identity.is_file() and identity.resolve() == identity:
-        return bool(identity.read_text(encoding="utf-8"))
-    pointer = root / "study_result.json"
-    if not pointer.is_file() or pointer.resolve() != pointer:
-        return False
-    result = read_json(pointer)
-    study = result.get("study") if isinstance(result, dict) and result.get("schema") == "study_result.v1" else None
-    return isinstance(study, dict) and isinstance(study.get("study_id"), str) and bool(study["study_id"])
+    return identity.is_file() and identity.resolve() == identity and bool(identity.read_text(encoding="utf-8"))
 
 
 def _raw_cache_entries(root: Path) -> list[tuple[int, Path, int]]:

@@ -3,6 +3,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from bench import run_suite as core_suite
+from bench.literature import run_suite as literature_suite
 from bench.literature.p0_lee2021_bias.run import _table_case
 from bench.literature.p1_colpo1999_icp.digitized.run_uncertainty_challenge import _decision_stability
 from bench.literature.p1_gec_ccp import run_all32_benchmark as hargis_source
@@ -11,7 +13,6 @@ from bench.literature.p1_gec_ccp.run_hardware_family_comparison import (
     _materialize_family_case,
 )
 from bench.literature.p1_lee2020_icp import run_benchmark as lee_equations
-from bench.literature.run_suite import _payload_passed
 from pcd.api import prepare_case
 from pcd.case import load_case
 
@@ -20,10 +21,13 @@ GEC = ROOT / "bench" / "literature" / "p1_gec_ccp"
 LEE = ROOT / "bench" / "literature" / "p0_lee2021_bias"
 
 
-def test_literature_suite_requires_boolean_result_fields() -> None:
-    assert _payload_passed({"passed": True})
-    assert not _payload_passed({"passed": "false"})
-    assert not _payload_passed({"benchmark_integrity_passed": False, "passed": True})
+def test_benchmark_suites_require_new_output_roots(tmp_path) -> None:
+    root = tmp_path / "existing"
+    root.mkdir()
+    with pytest.raises(FileExistsError):
+        literature_suite.run(root)
+    with pytest.raises(FileExistsError):
+        core_suite.main(["--run-root", str(root)])
 
 
 @pytest.mark.parametrize("benchmark", [hargis_source, lee_equations], ids=["hargis", "lee"])
@@ -50,7 +54,7 @@ def test_hargis_source_runner_checks_committed_views_without_rewriting_them() ->
 
     result = hargis_source.run(run_ngspice=False)
 
-    assert result["status"] == "PASS"
+    assert result["passed"]
     assert not result["ngspice"]["executed"]
     assert "ngspice_replay" not in result["checks"]
     assert result["checks"]["committed_views"]
@@ -68,7 +72,6 @@ def test_hargis_hardware_comparison_declares_independent_unweighted_families() -
     ]
     assert "scenario_count" not in spec
     assert "weights" not in spec
-    assert not (GEC / "hardware_authority_spec.yaml").exists()
 
 
 def test_hargis_hardware_comparison_generates_a_valid_exact_candidate_case(tmp_path: Path) -> None:

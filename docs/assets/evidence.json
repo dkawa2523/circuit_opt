@@ -1,8 +1,8 @@
 {
-  "generated_utc": "2026-10-25T23:28:46.491432+00:00",
+  "generated_utc": "2026-11-21T12:06:51.713495+00:00",
   "platform_version": "0.22.1",
   "solver_version": "ngspice-46",
-  "hash_convention": "SHA-256 of UTF-8 text with LF line endings",
+  "hash_convention": "SHA-256 of UTF-8 text with LF line endings; generated SVG lines have trailing whitespace removed",
   "examples": [
     {
       "command": "pcd sim-run examples/circuit_outputs.yaml",
@@ -10,19 +10,26 @@
         "examples/circuit_outputs.yaml": "fa9ff4908b6839028622e7a256ed245177b8a0d543dc16e376dbb709cdcc0258"
       },
       "figures": {
-        "rc-circuit.svg": "c3a0e2407bec80c48e3734db774834a15f9c51b01dc19f357ea6854b9b5242cd",
-        "rc-transfer.svg": "35ba02ad96762c8125337ee68b5a2cc35f7cf6999a7b1e8be56ebeedcfb59717"
+        "rc-circuit.svg": "c2c8ee5ee037f774f1f1c2b6e39ac874428fb7dafd79f825e4223a9298ade9ee",
+        "rc-transfer.svg": "a096e484fde34201b3c1f99139b16adebd29b23a3d697b8e289c667e1d6828ac"
       }
     },
     {
       "command": "pcd identify examples/terminal_identification.yaml",
-      "additional_output_settings": {"formats": ["png", "svg"], "schematic": false, "plots": []},
+      "additional_output_settings": {
+        "formats": [
+          "png",
+          "svg"
+        ],
+        "schematic": false,
+        "plots": []
+      },
       "inputs": {
         "examples/terminal_identification.yaml": "133d2759dd60838cfc832b6938f3989eedac3917064d4d1f947842447e31aa60",
         "examples/terminal_observations.csv": "3bcf600c524519ed44dc72389aae991822fd604f5ba9f9503cde923311462674"
       },
       "figures": {
-        "terminal-fit.svg": "8842168a90f5010c857b25e9e0e252b6b7df332f0c015812bfeba4cbfa9cb264"
+        "terminal-fit.svg": "aff8c48863a120af126a43f73c7e5bf37f4e32873c09c34653c00f2a1d0e2777"
       }
     }
   ]

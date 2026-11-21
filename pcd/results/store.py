@@ -105,26 +105,18 @@ def _claim_study_root(path: Path, study_id: str) -> Path | None:
     with _store_lock(root, _PUBLICATION_LOCK):
         if identity.is_file():
             return root if identity.read_bytes() == study_id.encode("utf-8") else None
-        result = root / "study_result.json"
-        if result.is_file():
-            saved = read_json(result)
-            study = saved.get("study") if isinstance(saved, dict) else None
-            owner = study.get("study_id") if isinstance(study, dict) else None
-            if not isinstance(owner, str):
-                raise ValueError(f"saved result does not identify the owner of its study directory: {result}")
-            if owner != study_id:
-                return None
+        if (root / "study_result.json").is_file():
+            return None
         atomic_write_text(identity, study_id)
     return root
 
 
 def _study_root(base: Path, study_id: str) -> Path:
     name = _study_segment(base, study_id)
-    legacy = base / name
-    # Reuse an exact legacy spelling. New mixed-case names receive a digest
-    # so moving the output tree onto a case-insensitive volume stays safe.
+    proposed = base / name
+    # Mixed-case names receive a digest on every platform.
     needs_digest = name == study_id and name != name.casefold()
-    if (legacy.is_dir() or not needs_digest) and (root := _claim_study_root(legacy, study_id)) is not None:
+    if not needs_digest and (root := _claim_study_root(proposed, study_id)) is not None:
         return root
     alternate = base / _study_segment(base, f"{study_id} [study identity]")
     if (root := _claim_study_root(alternate, study_id)) is not None:
@@ -136,12 +128,12 @@ def _cache_path_key(full_key: str) -> str:
     return full_key[:_CACHE_PATH_KEY_LENGTH]
 
 
-def _read_cache(path: Path) -> dict[str, Any]:
+def _read_cache(path: Path) -> dict[str, Any] | None:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return {}
-    return payload if isinstance(payload, dict) else {}
+        return None
+    return payload if isinstance(payload, dict) else None
 
 
 class FileResultStore:
@@ -226,15 +218,24 @@ class FileResultStore:
                 raise ValueError(f"case archive content does not match its snapshot: {destination / name}")
         return destination
 
+    def capture_generation_evidence(self, payload: dict[str, Any]) -> None:
+        """Record the generation's file evidence before rendering or publication."""
+        generation = self._generation_root
+        if generation is None:
+            raise RuntimeError("evidence capture requires an active result generation")
+        payload["artifact_sha256"] = capture_evidence(
+            self.root,
+            {name: path for name, path in payload["artifacts"].items() if name != "generation"},
+            within=generation,
+        )
+
     def publish_generation(self, payload: dict[str, Any]) -> None:
         """Commit a result once and make the generation eligible for retention."""
 
         generation = self._generation_root
         if generation is None:
             raise RuntimeError("publication requires an active result generation")
-        payload["artifact_sha256"] = capture_evidence(
-            self.root, {name: payload["artifacts"][name] for name in GENERATION_EVIDENCE}, within=generation
-        )
+        self.capture_generation_evidence(payload)
         root_result = self.root / "study_result.json"
         immutable = generation / GENERATION_RESULT_FILE
         with _store_lock(self.root, _PUBLICATION_LOCK):
@@ -281,10 +282,12 @@ class FileResultStore:
             return None
         with _store_lock(self.root, _RAW_CACHE_LOCK):
             payload = _read_cache(path)
-        if "identity" not in payload:
+        if payload is None:
             return None
+        if payload.get("schema") != "raw_evaluation_cache.v2":
+            raise ValueError(f"raw result cache must use raw_evaluation_cache.v2: {path}")
         expected_key = self.raw_key(request)
-        if payload.get("cache_key", expected_key) != expected_key:
+        if payload.get("cache_key") != expected_key:
             raise ValueError(f"cached raw key does not match its shortened path: {path}")
         expected = raw_evaluation_identity(request, self.raw_runtime_fingerprint)
         if payload.get("identity") != expected:
@@ -312,7 +315,7 @@ class FileResultStore:
             "raw": raw.to_dict(),
         }
         with _store_lock(self.root, _RAW_CACHE_LOCK):
-            existing = _read_cache(path)
+            existing = _read_cache(path) or {}
             if existing.get("cache_key", key) != key or existing.get("identity", identity) != identity:
                 raise ValueError(f"shortened raw cache path collision: {path}")
             self._write_json(path, payload)

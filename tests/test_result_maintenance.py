@@ -75,7 +75,7 @@ def test_generation_prune_cli_requires_apply_before_removal(tmp_path, capsys):
     result = json.loads(capsys.readouterr().out)
 
     assert result["applied"]
-    assert paths[0].exists()  # Older in-flight or legacy generation.
+    assert paths[0].exists()  # In-flight generation.
     assert paths[1].exists()
     assert sum(path.exists() for path in paths) == 3
 
@@ -201,24 +201,6 @@ def test_raw_cache_retention_requires_a_study_root_and_explicit_budget(tmp_path)
         prune_raw_cache(root, max_bytes=-1)
 
 
-def test_raw_cache_retention_recognizes_legacy_study_root(tmp_path):
-    root, _ = _study_with_generations(tmp_path)
-    pointer = root / "study_result.json"
-    result = json.loads(pointer.read_text(encoding="utf-8"))
-    result.update({"schema": "study_result.v1", "study": {"study_id": "study"}})
-    pointer.write_text(json.dumps(result), encoding="utf-8")
-    path = root / "raw" / ("a" * 24) / "raw_result.json"
-    path.parent.mkdir(parents=True)
-    path.write_bytes(b"cache")
-
-    plan = prune_raw_cache(root, max_bytes=0)
-
-    assert plan["removed"] == [path.relative_to(root).as_posix()]
-    assert plan["removed_bytes"] == 5
-    assert path.is_file()
-    assert not (root / ".study_id").exists()
-
-
 def test_study_refuses_to_reuse_a_modified_replay_input(tmp_path, topology_case):
     options = {"run_root": tmp_path, "n_trials": 1, "solver_override": "test_fake", "seed": 3}
     first = run_case_study(topology_case, **options)
@@ -247,13 +229,3 @@ def test_study_ids_that_differ_by_case_use_distinct_result_roots(tmp_path, topol
     assert not first_root.samefile(second["run_root"])
     assert pointer.read_bytes() == original
     assert run("ReviewCase")["run_root"] == first["run_root"]
-
-
-def test_existing_mixed_case_study_retains_its_legacy_root(tmp_path):
-    legacy = tmp_path / "ReviewCase"
-    legacy.mkdir()
-    pointer = legacy / "study_result.json"
-    pointer.write_text(json.dumps({"study": {"study_id": "ReviewCase"}}), encoding="utf-8")
-
-    assert FileResultStore(tmp_path, "ReviewCase").root == legacy
-    assert not FileResultStore(tmp_path, "reviewcase").root.samefile(legacy)

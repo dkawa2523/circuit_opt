@@ -209,10 +209,6 @@ def _phase_case(
     # phase is an ordinary executable study and should validate only its own
     # resolved candidate space and scenarios.
     data.pop("identification", None)
-    if (data.get("target") or {}).get("objective") == "terminal_vi_fit":
-        frequency_parameter = terminal_observation_frequency_parameter(case)
-        if frequency_parameter is not None:
-            data["target"]["observation_frequency_parameter"] = frequency_parameter
     study = mapping(data.get("study"), "study")
     study.pop("scenario_table", None)
     study["scenarios"] = [_inline_scenario(scenario, control.values) for scenario, control in points]

@@ -154,6 +154,7 @@ def _summarize_case(case: dict[str, Any]) -> dict[str, Any]:
 
 
 def run(run_root: Path, solver: str) -> dict[str, Any]:
+    run_root.mkdir(parents=True)
     integrity, datasets = _validate_datasets()
     design_root = run_root / "design_runs"
     cases = [run_case(path, design_root, solver, EXPECTATIONS) for path in CASE_PATHS]
@@ -207,7 +208,6 @@ def run(run_root: Path, solver: str) -> dict[str, Any]:
         "schema": "literature_phase_sensitivity.v2",
         "benchmark": "p1_gec_ccp_common_mode_phase_sensitivity",
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "status": "PASS" if passed else "FAIL",
         "passed": passed,
         "source": {
             "hargis_doi": "https://doi.org/10.1063/1.1144770",
@@ -246,7 +246,6 @@ def run(run_root: Path, solver: str) -> dict[str, Any]:
         },
         "n_evaluations": sum(int(case["n_evaluations"]) for case in cases),
     }
-    run_root.mkdir(parents=True, exist_ok=True)
     write_json(run_root / "evaluation.json", payload)
     return payload
 
@@ -261,7 +260,7 @@ def main() -> int:
         json.dumps(
             {
                 "benchmark": report["benchmark"],
-                "status": report["status"],
+                "passed": report["passed"],
                 "n_evaluations": report["n_evaluations"],
                 "design_cases": report["platform_design_challenge"]["outcomes"],
                 "comparisons_to_baseline": report["platform_design_challenge"]["comparisons_to_baseline"],

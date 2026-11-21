@@ -46,7 +46,7 @@ def _physical_edges(parsed: ParsedNetlist, view: str) -> tuple[list[NetlistEdge]
                 hidden.append(edge.ref)
     mapping = {node: find(node) for node in parsed.nodes}
     edges = [
-        NetlistEdge(e.ref, mapping[e.n1], mapping[e.n2], e.value, e.kind, tuple(mapping[n] for n in e.nodes))
+        NetlistEdge(e.ref, tuple(mapping[n] for n in e.nodes), e.value, e.kind)
         for e in parsed.edges
         if e.ref not in hidden
     ]

@@ -440,21 +440,11 @@ class EvaluationResult:
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> EvaluationResult:
         raw = RawResult.from_dict(data["raw"])
-        constraints = [ConstraintResult.from_dict(item) for item in data.get("constraints", []) or []]
-        # Earlier records represented the raw-status penalty as a synthetic constraint.
-        legacy_status = ConstraintResult(
-            "evaluation_success",
-            raw.ok,
-            violation=float(not raw.ok),
-            detail=None if raw.ok else raw.error or raw.status,
-        )
-        if legacy_status in constraints:
-            constraints.remove(legacy_status)
         return cls(
             request=EvaluationRequest.from_dict(data["request"]),
             raw=raw,
             metrics=MetricSet.from_dict(data.get("metrics", {}) or {}),
-            constraints=tuple(constraints),
+            constraints=tuple(ConstraintResult.from_dict(item) for item in data["constraints"]),
             raw_cache_key=str(data.get("raw_cache_key", "")),
             duration_s=float(data.get("duration_s", 0.0)),
             from_cache=bool(data.get("from_cache", False)),

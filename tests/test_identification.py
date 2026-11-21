@@ -175,10 +175,6 @@ def test_public_identification_rejects_observation_at_a_different_planned_freque
     assert "observed frequency" in validate_case(case).format_text()
     with pytest.raises(ValueError, match=message):
         run_identification(case, tmp_path / "runs")
-    legacy_data = deepcopy(case.data)
-    del legacy_data["target"]["observation_frequency_parameter"]
-    with pytest.raises(ValueError, match=message):
-        run_identification(type(case)(case.path, legacy_data), tmp_path / "runs")
     assert not (tmp_path / "runs").exists()
 
     del raw["identification"]["observations"][0]["frequency_Hz"]

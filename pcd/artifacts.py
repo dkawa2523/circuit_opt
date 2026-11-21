@@ -75,13 +75,12 @@ def file_sha256(path: str | Path) -> str | None:
     return digest.hexdigest()
 
 
-def evidence_digest(record: Mapping[str, Any], name: str, path: Path) -> str | None:
-    """Compare evidence with the digest saved at publication, when present."""
+def evidence_digest(record: Mapping[str, Any], name: str, path: Path) -> str:
+    """Compare a published artifact with its recorded digest."""
     digest = file_sha256(path.resolve())
-    if "artifact_sha256" in record:
-        saved = record["artifact_sha256"]
-        if not isinstance(saved, Mapping) or not digest or saved.get(name) != digest:
-            raise ValueError(f"saved evidence differs from its recorded {name}: {path}")
+    saved = record.get("artifact_sha256")
+    if not isinstance(saved, Mapping) or not digest or saved.get(name) != digest:
+        raise ValueError(f"saved evidence differs from its recorded {name}: {path}")
     return digest
 
 
@@ -99,9 +98,9 @@ def capture_evidence(root: Path, artifacts: Mapping[str, str], *, within: Path |
 
 
 def resolve_artifact_path(root: Path, declared: str) -> Path:
-    """Resolve a saved artifact reference, including legacy Windows separators."""
+    """Resolve a saved artifact reference relative to its owning result."""
 
-    path = Path(declared.replace("\\", "/"))
+    path = Path(declared)
     return path if path.is_absolute() else root / path
 
 

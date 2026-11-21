@@ -169,22 +169,9 @@ def _sorted_candidate_frame(
     selected_id = ((payload.get("best") or {}).get("candidate") or {}).get("candidate_id")
     if selected_id is not None:
         frame.insert(1, "selected", frame["candidate_id"].eq(selected_id))
-    if all("rank" in row for row in history):
-        ranks = [tuple(float("inf") if value is None else float(value) for value in row["rank"]) for row in history]
-        positions = sorted(range(len(ranks)), key=ranks.__getitem__)
-        return frame.iloc[positions].reset_index(drop=True)
-
-    # Older result files may not record the engine's rank.
-    objectives = [name for name in frame.columns if name.startswith("objective.")]
-    directions = {
-        f"objective.{objective.get('metric', '')}": str(objective.get("direction", "minimize"))
-        for objective in (payload.get("study") or {}).get("objectives") or []
-    }
-    order = ["success_fraction", "feasible_fraction", "total_violation", *objectives, "control_margin"]
-    ascending = [False, False, True]
-    ascending.extend(directions.get(name, "minimize") != "maximize" for name in objectives)
-    ascending.append(False)
-    return frame.sort_values(order, ascending=ascending, na_position="last").reset_index(drop=True)
+    ranks = [tuple(float("inf") if value is None else float(value) for value in row["rank"]) for row in history]
+    positions = sorted(range(len(ranks)), key=ranks.__getitem__)
+    return frame.iloc[positions].reset_index(drop=True)
 
 
 def candidate_summary(study_root: str | Path) -> pd.DataFrame:

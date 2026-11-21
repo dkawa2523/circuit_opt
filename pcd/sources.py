@@ -246,15 +246,8 @@ def _unmetered_energy_issue(deck: str, *, mode: str = "fragment") -> str | None:
 
 
 def ac_power_balance_issue(source_scope: Mapping[str, Any] | None) -> str | None:
-    """Read AC balance evidence without trusting an older rendered inventory."""
-
-    if source_scope is None:
-        return None
-    if "ac_power_balance_unavailable_reason" in source_scope:
-        return source_scope["ac_power_balance_unavailable_reason"]
-    if source_scope.get("basis") == "rendered_ngspice_deck":
-        return "saved source inventory does not establish complete AC power balance. Reanalyze the saved netlist."
-    return None
+    """Read the power-balance judgment supplied by the execution layer."""
+    return source_scope["ac_power_balance_unavailable_reason"] if source_scope is not None else None
 
 
 def selected_source(case: Case) -> tuple[str | None, Mapping[str, Any] | None]:
@@ -296,14 +289,9 @@ def source_vectors(case: Case) -> tuple[str | None, str | None, str | None]:
     measurement = case.data.get("measurement") or {}
     voltage = measurement.get("source_voltage")
     if name is None:
-        # Preserve the implicit branch used by older raw decks when it exists.
-        raw = _circuit_source_cards(case).get("vsrc")
-        if raw is not None and raw["type"] == "imported_voltage":
-            name = raw["name"]
-        elif voltage is None:
+        if voltage is None:
             return None, None, None
-        else:
-            raise ValueError("measurement.source_voltage requires a source or measurement.current_source")
+        raise ValueError("measurement.source_voltage requires a source or measurement.current_source")
     if voltage is not None:
         requested = _voltage_terminals(str(voltage))
         if requested is None:

@@ -85,14 +85,14 @@ class CaseEvaluationBackend:
         manifest = record.manifest()
         names = manifest["artifacts"]
         artifacts = {
-            "manifest": str(relative_run / DEBUG_MANIFEST_FILE),
-            "waveform": str(relative_run / str(names["waveform"])),
-            "netlist": str(relative_run / str(names["netlist"])),
-            "solver_log": str(relative_run / str(names["solver_log"])),
-            "signals": str(relative_run / str(names["signals"])),
+            "manifest": (relative_run / DEBUG_MANIFEST_FILE).as_posix(),
+            "waveform": (relative_run / names["waveform"]).as_posix(),
+            "netlist": (relative_run / names["netlist"]).as_posix(),
+            "solver_log": (relative_run / names["solver_log"]).as_posix(),
+            "signals": (relative_run / names["signals"]).as_posix(),
         }
         if names.get("frequency_response"):
-            artifacts["frequency_response"] = str(relative_run / str(names["frequency_response"]))
+            artifacts["frequency_response"] = (relative_run / names["frequency_response"]).as_posix()
         return RawResult(
             status="ok" if record.status == "ok" else "failed",
             artifacts=artifacts,

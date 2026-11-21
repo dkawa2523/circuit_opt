@@ -16,20 +16,7 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 
 
-def _payload_passed(payload: dict[str, Any] | None) -> bool:
-    if not payload:
-        return False
-    if "benchmark_integrity_passed" in payload:
-        return payload["benchmark_integrity_passed"] is True
-    if "passed" in payload:
-        return payload["passed"] is True
-    if isinstance(payload.get("summary"), dict) and "passed" in payload["summary"]:
-        return payload["summary"]["passed"] is True
-    return str(payload.get("status", "")).upper() == "PASS"
-
-
 def _execute(label: str, command: list[str], result_path: Path, log_dir: Path) -> dict[str, Any]:
-    result_path.unlink(missing_ok=True)
     completed = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, check=False)
     log_dir.mkdir(parents=True, exist_ok=True)
     (log_dir / f"{label}.log").write_text(
@@ -41,8 +28,8 @@ def _execute(label: str, command: list[str], result_path: Path, log_dir: Path) -
     if result_path.exists():
         try:
             parsed = json.loads(result_path.read_text(encoding="utf-8"))
-            if not isinstance(parsed, dict):
-                raise ValueError("expected a JSON result object")
+            if not isinstance(parsed, dict) or not isinstance(parsed.get("passed"), bool):
+                raise ValueError("expected a JSON result object with a boolean passed verdict")
             payload = parsed
         except (OSError, ValueError) as exc:
             error = f"invalid result file: {exc}"
@@ -54,7 +41,7 @@ def _execute(label: str, command: list[str], result_path: Path, log_dir: Path) -
         "result_path": str(result_path.resolve()),
         "payload": payload,
         "execution_error": error,
-        "passed": completed.returncode == 0 and error is None and _payload_passed(payload),
+        "passed": completed.returncode == 0 and payload is not None and payload["passed"] is True,
     }
 
 
@@ -342,7 +329,7 @@ corners describe robustness within 15 parent pressure-power conditions.
 
 
 def run(run_root: Path) -> dict[str, Any]:
-    run_root.mkdir(parents=True, exist_ok=True)
+    run_root.mkdir(parents=True)
     log_dir = run_root / "logs"
     python = sys.executable
     specs: list[tuple[str, list[str], Path]] = [

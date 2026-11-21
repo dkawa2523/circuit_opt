@@ -112,19 +112,11 @@ def _validate_parameters(case: Case, report: ValidationReport) -> ParameterSet |
     except (TypeError, ValueError) as exc:
         report.add("error", "parameter.invalid", str(exc))
         return None
-    explicit_design = (case.data.get("study") or {}).get("design_variables") or {}
     for definition in parameters.definitions:
         spec = definition.spec
         path = f"$.variables.{definition.name}"
         if "default" in spec:
             _warn_on_default(spec, report, path)
-        if "bounds" in spec and "role" not in spec and definition.name not in explicit_design:
-            report.add(
-                "warning",
-                "variable.implicit_design",
-                "legacy bounds imply design search, not tolerance; declare role: design or explicit tolerance conditions",
-                path,
-            )
     return parameters
 
 

@@ -45,13 +45,10 @@ def test_ac_controlled_source_withholds_aggregate_power_in_study_and_reports(tmp
     assert "Eaux" in row["metric.network_loss_W_unavailable_reason"]
 
     record = read_sim_record(root / row["artifact.manifest"])
-    # A saved record from the earlier schema lacks this diagnostic. Its
-    # canonical deck still contains the evidence needed to rederive it.
-    del record["diagnostics"]["source_scope"]["ac_power_balance_unavailable_reason"]
-    legacy_metrics = measure_response(case, load_simulation_result(record))
-    assert legacy_metrics["network_loss_W"] is None
-    assert "saved source inventory" in legacy_metrics["network_loss_W_unavailable_reason"]
-    assert legacy_metrics["source_real_power_W"] == pytest.approx(row["metric.source_real_power_W"])
+    metrics = measure_response(case, load_simulation_result(record))
+    assert metrics["network_loss_W"] is None
+    assert "Eaux" in metrics["network_loss_W_unavailable_reason"]
+    assert metrics["source_real_power_W"] == pytest.approx(row["metric.source_real_power_W"])
     report = analyze_run(record, output={"schematic": False, "plots": []})
     ac = report["analyses"]["ac"]
     assert ac["network_loss_W"] is None

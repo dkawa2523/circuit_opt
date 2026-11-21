@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -34,7 +34,7 @@ from pcd.component_models import observed_components
 from pcd.core.models import MeasurementUnavailableError, UnsettledMeasurementError
 from pcd.netlist_import import flatten_netlist_file
 from pcd.output import output_settings
-from pcd.probes import ComponentObservation, signal_catalog
+from pcd.probes import ComponentObservation
 from pcd.records import artifact_path, load_simulation_result, read_sim_record
 from pcd.signals import time_average
 from pcd.simulation import LOAD_VOLTAGE_COLUMN
@@ -71,10 +71,10 @@ def analyze_run(
     if record.get("status") != "ok":
         raise ValueError(f"cannot analyze simulation record with status {record.get('status')!r}")
     case = _archived_case(record)
-    params = dict(record.get("params") or {})
+    params = dict(record["params"])
     settings = output_settings(case.data.get("output") if output is None else output)
     provenance = _analysis_provenance(record, case, params, frequency_hz, settings)
-    simulation = resolve_simulation_case(case, params, allow_legacy_energy_probes=True)
+    simulation = resolve_simulation_case(case, params)
     components = observed_components(case, params)
     z0 = reference_impedance_ohm(case.data.get("measurement"))
     response = load_simulation_result(record, ac_columns=(LOAD_VOLTAGE_COLUMN, *simulation.probes.ac_columns))
@@ -84,11 +84,10 @@ def analyze_run(
     if frequency_hz is not None and (ac is None or ac.empty):
         raise ValueError("--frequency-Hz selects an AC operating point; this run has no AC response")
     periodic_hz = periodic_frequency_hz(case, params)
-    measured = dict(record.get("measurement") or {})
-    saved_load_current = measured.get("load_current", simulation.probes.load_current_column)
+    measured = dict(record["measurement"])
+    saved_load_current = measured["load_current"]
     load_current = response.diagnostics.get("load_current_column", saved_load_current)
-    load_power_issue = response.diagnostics.get("load_power_unavailable_reason")
-    source_name = measured.get("current_source", simulation.probes.source_name)
+    source_name = measured["current_source"]
     analyses: dict[str, Any] = {}
     operating_points: dict[str, dict[str, Any]] = {}
     marker_hz = None
@@ -103,8 +102,8 @@ def analyze_run(
             source_scope = rendered_source_scope(
                 netlist.read_text(encoding="utf-8"),
                 source_name,
-                observed_voltage=measured.get("source_voltage_vector", simulation.probes.source_voltage_vector),
-                observed_current=measured.get("source_current_vector", simulation.probes.source_current_vector),
+                observed_voltage=measured["source_voltage_vector"],
+                observed_current=measured["source_current_vector"],
             )
     transient_port_issue = (source_scope or {}).get("transient_port_unavailable_reason")
     if ac is not None and not ac.empty:
@@ -151,35 +150,11 @@ def analyze_run(
 
     requested = (Path(out_dir) if out_dir is not None else Path(record["run_dir"]) / "analysis").resolve()
     destination = create_run_directory(requested.parent, requested.name)
-    title = str(record.get("case_id", case.case_id))
-    p = simulation.measurement.load_positive or str((case.data.get("circuit") or {}).get("output_node", "out"))
-    n = simulation.measurement.load_negative
-    load_vector = f"v({p},{n})" if n != "0" else f"v({p})"
-    measured.setdefault("load_ports", {"p": p, "n": n})
-    measured["load_reference_plane"] = simulation.measurement.reference_plane
-    measured.setdefault(
-        "output_voltage_vector",
-        f"v({simulation.measurement.voltage_node})" if simulation.measurement.voltage_node else load_vector,
-    )
-    measured.setdefault("drive_basis", (case.data.get("metadata") or {}).get("drive_basis", "declared_or_imported"))
+    title = str(record["case_id"])
     signals_path = artifact_path(record, "signals")
-    if signals_path is not None and signals_path.is_file():
-        catalog = read_json(signals_path)
-        if load_power_issue and (probe := catalog["signals"].get(saved_load_current)):
-            probe["positive_direction"] = "as_declared"
-    else:
-        catalog = signal_catalog(
-            replace(
-                simulation.probes,
-                source_name=source_name,
-                source_voltage_vector=measured.get("source_voltage_vector", simulation.probes.source_voltage_vector),
-                source_current_vector=measured.get("source_current_vector", simulation.probes.source_current_vector),
-                load_current_column=load_current,
-            ),
-            measured,
-            transient_columns=tuple(waveform.columns) if not waveform.empty else (),
-            ac_columns=tuple(ac.columns) if ac is not None else (),
-        )
+    if signals_path is None:
+        raise ValueError("simulation record does not declare its signal catalog")
+    catalog = read_json(signals_path)
     artifacts = {"summary": SUMMARY_FILE, "signals": "signals.json"}
     power = pd.DataFrame()
     if not waveform.empty:
@@ -278,9 +253,7 @@ def analyze_run(
         },
         "measurement": {
             "load_reference_plane": measured["load_reference_plane"],
-            "impedance_reference_plane": measured.get(
-                "impedance_reference_plane", "source_port" if source_name is not None else None
-            ),
+            "impedance_reference_plane": measured["impedance_reference_plane"],
             "drive_basis": measured["drive_basis"],
             "observed_source": source_name,
             "reference_impedance_ohm": z0,
@@ -290,7 +263,6 @@ def analyze_run(
             "observed_voltage_node": measured.get("voltage_node"),
             "load_ports": measured["load_ports"],
             "load_current": load_current,
-            **({"load_power_unavailable_reason": load_power_issue} if load_power_issue else {}),
         },
         "analyses": analyses,
         "provenance": provenance,
@@ -370,10 +342,9 @@ def _periodic_harmonic_table(periodic: dict[str, Any], load_current: str | None)
     return pd.DataFrame(rows)
 
 
-def _analysis_inputs(record: dict[str, Any], case: Case, *, schematic: bool) -> tuple[dict[str, dict[str, Any]], str]:
-    names = ["case", "waveform", "frequency_response", "signals", "netlist"]
-    saved = record.get("artifact_sha256") or {}
-    names.extend(name for name in ("input_manifest", "imported_netlist") if name in saved)
+def _analysis_inputs(record: dict[str, Any], case: Case, *, schematic: bool) -> dict[str, dict[str, Any]]:
+    names = ("case", "waveform", "frequency_response", "signals", "netlist", "input_manifest", "imported_netlist")
+    saved = record["artifact_sha256"]
     inputs = {}
     expected: dict[Path, str] = {}
     for name in names:
@@ -385,8 +356,7 @@ def _analysis_inputs(record: dict[str, Any], case: Case, *, schematic: bool) -> 
         path = path.resolve()
         digest = evidence_digest(record, name, path)
         inputs[name] = {"path": str(path), "sha256": digest}
-        if digest is not None and name in saved:
-            expected[path] = digest
+        expected[path] = digest
         if name == "input_manifest":
             for item in read_json(path)["inputs"]:
                 if item["artifact"] is not None:
@@ -397,21 +367,16 @@ def _analysis_inputs(record: dict[str, Any], case: Case, *, schematic: bool) -> 
     if schematic and (netlist := artifact_path(record, "netlist")) is not None and netlist.is_file():
         _, includes = flatten_netlist_file(netlist)
         sources.update({f"netlist:include[{index}]": path for index, path in enumerate(includes)})
-    unverified = []
     for name, path in sources.items():
         path = path.resolve()
         digest = file_sha256(path)
         if path not in expected:
-            unverified.append(name)
-        elif expected[path] != digest:
+            raise ValueError(f"saved evidence has no recorded digest for {name}: {path}")
+        if digest is None or expected[path] != digest:
             raise ValueError(f"saved evidence differs from its recorded {name}: {path}")
         inputs[name] = {"path": str(path), "sha256": digest}
 
-    if "artifact_sha256" not in record:
-        return inputs, "unverified_legacy"
-    if not record.get("manifest_sha256_verified"):
-        return inputs, "unverified_manifest"
-    return inputs, "unverified_dependencies" if unverified else "verified"
+    return inputs
 
 
 def _analysis_provenance(
@@ -419,13 +384,13 @@ def _analysis_provenance(
 ) -> dict[str, Any]:
     from importlib.metadata import version
 
-    inputs, integrity = _analysis_inputs(record, case, schematic=settings["schematic"]["enabled"])
+    inputs = _analysis_inputs(record, case, schematic=settings["schematic"]["enabled"])
     identity = {
         "platform_version": __version__,
         "implementation_sha256": package_source_sha256(),
         "environment": runtime_environment(),
         "inputs": inputs,
-        "source_integrity": integrity,
+        "source_integrity": "verified",
         "simulation_record_sha256": hashlib.sha256(
             json.dumps(
                 {key: value for key, value in record.items() if key != "output"}, sort_keys=True, default=str

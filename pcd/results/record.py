@@ -10,7 +10,7 @@ from typing import Any
 
 from pcd.artifacts import evidence_digest, file_sha256, resolve_artifact_path
 
-from .store import GENERATION_EVIDENCE, GENERATION_RESULT_FILE, PUBLISHED_GENERATION_FILE
+from .store import GENERATION_RESULT_FILE, PUBLISHED_GENERATION_FILE
 
 _STUDY_RESULT = "study_result.json"
 _RESULT_SCHEMAS = {
@@ -33,11 +33,10 @@ class SavedResult:
         if not isinstance(declared, str) or not declared.strip():
             return None
         path = resolve_artifact_path(self.root, declared)
-        if self.generation is not None and name in GENERATION_EVIDENCE:
+        if self.generation is not None and name != "generation":
             if not path.resolve().is_relative_to(self.generation):
                 raise ValueError(f"saved study artifact {name!r} is outside its declared generation")
-            if "artifact_sha256" in self.payload:
-                evidence_digest(self.payload, name, path)
+            evidence_digest(self.payload, name, path)
         return path
 
 
@@ -60,12 +59,10 @@ def read_saved_result(source: str | Path, *, study_only: bool = False) -> SavedR
     payload = json.loads(data)
     if not isinstance(payload, dict):
         raise ValueError(f"saved result must be a JSON object: {path}")
-    schema = payload.get("schema")
-    legacy = study_only and schema is None and path.name == _STUDY_RESULT
-    if schema != _RESULT_SCHEMAS[path.name] and not legacy:
+    if payload.get("schema") != _RESULT_SCHEMAS[path.name]:
         raise ValueError(f"unsupported saved result record: {path}")
     artifacts = payload.get("artifacts")
-    if artifacts is not None and not isinstance(artifacts, dict):
+    if not isinstance(artifacts, dict):
         raise ValueError(f"saved result artifacts must be a JSON object: {path}")
     digest = hashlib.sha256(data).hexdigest()
     if path.name == "identification_result.json":
@@ -80,8 +77,6 @@ def _study_record(path: Path, payload: dict[str, Any], digest: str) -> SavedResu
     root = path.parents[2] if immutable else path.parent
     record = SavedResult(path, root, payload, digest)
     declared = record.artifact_path("generation")
-    if declared is None and not immutable and "generation" not in (payload.get("artifacts") or {}):
-        return record
     generation = declared.resolve() if declared is not None else None
     if generation is None or generation.parent != root.resolve() / "generations" or not generation.is_dir():
         raise ValueError(f"saved study result does not point to an available generation under {root}")
@@ -94,10 +89,9 @@ def _study_record(path: Path, payload: dict[str, Any], digest: str) -> SavedResu
     if marker_hash and marker_hash != digest:
         raise ValueError(f"saved generation record differs from its publication: {pinned}")
     if immutable:
-        published = bool(marker_hash) or (marker_hash == "" and "artifact_sha256" not in payload)
-        if generation != path.parent.resolve() or (not published and file_sha256(root / _STUDY_RESULT) != digest):
+        if generation != path.parent.resolve() or (not marker_hash and file_sha256(root / _STUDY_RESULT) != digest):
             raise ValueError(f"saved study result does not match its published generation: {path}")
-    elif pinned.is_file():
+    else:
         if file_sha256(pinned) != digest:
             raise ValueError("active study result does not match its generation record")
         path = pinned

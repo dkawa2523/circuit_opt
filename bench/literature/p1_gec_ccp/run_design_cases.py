@@ -24,6 +24,7 @@ CASE_PATHS = tuple(HERE / name for name in EXPECTATIONS)
 
 
 def run(run_root: Path, solver: str) -> dict[str, Any]:
+    run_root.mkdir(parents=True)
     cases = [run_case(path, run_root, solver, EXPECTATIONS) for path in CASE_PATHS]
     payload: dict[str, Any] = {
         "schema": "literature_design_benchmark.v1",
@@ -43,7 +44,6 @@ def run(run_root: Path, solver: str) -> dict[str, Any]:
         "n_evaluations": sum(int(case["n_evaluations"]) for case in cases),
         "cases": cases,
     }
-    run_root.mkdir(parents=True, exist_ok=True)
     write_json(run_root / "design_evaluation.json", payload)
     return payload
 

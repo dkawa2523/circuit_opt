@@ -725,7 +725,9 @@ study IDは大文字と小文字を区別する。衝突を避けるため、出
 
 設計探索・同定では、同じ入力を再計算できる回路を使う。外部SPICEに`AGAUSS`、`TRRANDOM`などの乱数式や乱数源がある場合は`sim-run`で個別に計算する。設計探索・同定でばらつきを比較する場合は、具体的な値をケースの条件として宣言する。
 
-同じ入力アーカイブは`archives/`で共有する。`result-prune`は公開済みの旧世代を整理し、現行世代、処理中の世代、および公開済みマーカーのない旧版の世代を保持する。旧世代を参照する分析と、削除を伴う世代整理は別の時間に実行する。`archives/`と個別計算の証跡は残るため、保持した評価行から参照した計算を再解析できる。
+同じ入力アーカイブは`archives/`で共有する。`result-prune`は公開済みの世代を整理し、現在の公開世代と処理中の世代を保持する。世代を参照する分析と、削除を伴う世代整理は別の時間に実行する。`archives/`と個別計算の証跡は残るため、保持した評価行から参照した計算を再解析できる。
+
+保存結果は現行の書込み形式で読み込む。形式を変更したときは、保存した入力から新しい結果を生成する。元データや測定記録は入力として管理し、ベンチマークも新しい出力先へ計算し直す。
 
 ### 11.3 解析用の統合CSV
 
@@ -839,7 +841,9 @@ print(record.summary())
 | 目的と制約 | `target`、`study.objectives` |
 | 試行数と手法 | `run.trials`、`optimizer` |
 
-parameter仕様は`default`、`bounds`、`choices`または`values`、`type`、`scale`、control用`grid`、`role`、`unit`、`description/metadata/extensions`を扱う。`choices`と`values`は併記しない。重複宣言や役割の重複は拒否する。上級入力でroleなしのboundsはdesignとして警告し、固定値へ読み替えない。
+parameter仕様は`default`、`bounds`、`choices`または`values`、`type`、`scale`、control用`grid`、`role`、`unit`、`description/metadata/extensions`を扱う。`choices`と`values`は併記しない。重複宣言や役割の重複は拒否する。上級入力は`role`やstudyの宣言で所有者を指定でき、省略した範囲・複数候補はdesignとして扱う。
+
+上級入力の`terminal_vi_fit`で観測行ごとの周波数を使う場合は、`target.observation_frequency_parameter`に運転パラメータ名を指定する。通常の`pcd.rf.v1`入力では観測の`frequency_Hz`からこの設定を生成する。
 
 上級複数目的はfeasibility-firstの辞書順で選択し、適格な評価済み候補の`pareto_front.csv`も作る。連続探索のParetoは観測した候補の非劣集合であり、未探索空間のfrontではない。
 

@@ -387,6 +387,7 @@ def run(*, cases_path: Path, run_ngspice: bool = True) -> dict[str, Any]:
     passed = all(result["passed"] for result in results) and all(coverage.values()) and all(symmetry.values())
     return {
         "benchmark": "p1_lee2020_icp_equations_18_19",
+        "passed": passed,
         "source": {
             "title": "A simple model of solenoidal inductively coupled plasma sources considering finite size",
             "doi": PAPER_DOI,
@@ -429,13 +430,12 @@ def run(*, cases_path: Path, run_ngspice: bool = True) -> dict[str, Any]:
             "case_count": len(results),
             "passed_case_count": sum(bool(result["passed"]) for result in results),
             "failed_case_ids": [result["case"]["case_id"] for result in results if not result["passed"]],
-            "passed": passed,
         },
     }
 
 
 def _print_human(report: dict[str, Any]) -> None:
-    status = "PASS" if report["summary"]["passed"] else "FAIL"
+    status = "PASS" if report["passed"] else "FAIL"
     ngspice = report["ngspice"]
     print(f"Lee 2020 ICP Eq.18/19 benchmark: {status}")
     print(
@@ -486,7 +486,7 @@ def main() -> int:
         print(json.dumps(report, indent=2, ensure_ascii=False))
     else:
         _print_human(report)
-    return 0 if report["summary"]["passed"] else 1
+    return 0 if report["passed"] else 1
 
 
 if __name__ == "__main__":

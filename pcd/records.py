@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -16,11 +15,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from .artifacts import evidence_digest, resolve_artifact_path
-from .ngspice_io import read_frequency_response
-from .simulation import CURRENT_COLUMN, LOAD_CURRENT_COLUMN, TIME_COLUMN, VOLTAGE_COLUMN, SimulationResult
-
-_DEBUG_MANIFEST = Path("debug/manifest.json")
+from .artifacts import resolve_artifact_path
+from .simulation import CURRENT_COLUMN, TIME_COLUMN, VOLTAGE_COLUMN, SimulationResult
 
 
 def read_sim_record(record_or_path: dict[str, Any] | str | Path) -> dict[str, Any]:
@@ -32,11 +28,10 @@ def read_sim_record(record_or_path: dict[str, Any] | str | Path) -> dict[str, An
     else:
         path = Path(record_or_path)
         if path.is_dir():
-            manifest, summary = path / _DEBUG_MANIFEST, path / "summary.json"
-            path = summary if not manifest.is_file() and summary.is_file() else manifest
+            path = path / "summary.json"
         rec = _read_record_file(path.resolve())
-    if "run_dir" not in rec and (manifest := rec.get("manifest_path")):
-        rec["run_dir"] = str(Path(manifest).parent.parent)
+    if rec.get("schema") != "simulation_record.v2":
+        raise ValueError("simulation record must use simulation_record.v2")
     return rec
 
 
@@ -47,26 +42,26 @@ def _read_record_file(path: Path) -> dict[str, Any]:
         return _summary_manifest(payload, path.parent)
     run_dir = path.parent.parent
     summary = run_dir / "summary.json"
-    verified = summary.is_file() and _verified_manifest(_read_record_object(summary), path, data)
-    return _located_manifest(payload, path, run_dir, verified)
+    _verify_manifest(_read_record_object(summary), path, data)
+    return _located_manifest(payload, path, run_dir)
 
 
 def _summary_manifest(summary: dict[str, Any], run_dir: Path) -> dict[str, Any]:
-    declared = _artifact_links(summary).get("debug_manifest", _DEBUG_MANIFEST.as_posix())
+    declared = _artifact_links(summary).get("debug_manifest")
     if not isinstance(declared, str) or not declared.strip():
         raise ValueError("simulation summary must declare a valid debug manifest path")
     manifest = resolve_artifact_path(run_dir, declared).resolve()
     data = manifest.read_bytes()
     payload = _read_record_object(manifest, data)
-    return _located_manifest(payload, manifest, run_dir.resolve(), _verified_manifest(summary, manifest, data))
+    _verify_manifest(summary, manifest, data)
+    return _located_manifest(payload, manifest, run_dir.resolve())
 
 
-def _verified_manifest(summary: dict[str, Any], manifest: Path, data: bytes) -> bool:
-    if "debug_manifest_sha256" not in summary:
-        return False
-    if hashlib.sha256(data).hexdigest() != summary["debug_manifest_sha256"]:
+def _verify_manifest(summary: dict[str, Any], manifest: Path, data: bytes) -> None:
+    if summary.get("schema") != "simulation_summary.v1":
+        raise ValueError("simulation summary must use simulation_summary.v1")
+    if hashlib.sha256(data).hexdigest() != summary.get("debug_manifest_sha256"):
         raise ValueError(f"saved simulation manifest differs from its public summary: {manifest}")
-    return True
 
 
 def _read_record_object(path: Path, data: bytes | None = None) -> dict[str, Any]:
@@ -76,11 +71,8 @@ def _read_record_object(path: Path, data: bytes | None = None) -> dict[str, Any]
     return payload
 
 
-def _located_manifest(rec: dict[str, Any], path: Path, run_dir: Path, verified: bool) -> dict[str, Any]:
+def _located_manifest(rec: dict[str, Any], path: Path, run_dir: Path) -> dict[str, Any]:
     rec["manifest_path"] = str(path)
-    rec.pop("manifest_sha256_verified", None)
-    if verified:
-        rec["manifest_sha256_verified"] = True
     # Use the record location when a run was copied or moved.
     rec["run_dir"] = str(run_dir)
     return rec
@@ -122,18 +114,7 @@ def frequency_response_path(record: dict[str, Any] | str | Path) -> Path | None:
 def load_waveform(record: dict[str, Any] | str | Path) -> pd.DataFrame:
     if isinstance(record, (str, Path)) and Path(record).is_file() and Path(record).suffix.lower() == ".csv":
         return pd.read_csv(record)
-    resolved = read_sim_record(record)
-    frame = pd.read_csv(waveform_path(resolved))
-    measurement = resolved.get("measurement") or {}
-    ports = measurement.get("load_ports") or {}
-    if (
-        not frame.empty
-        and measurement.get("load_current")
-        and "load_voltage_V" not in frame
-        and (measurement.get("voltage_node") != ports.get("p") or str(ports.get("n", "0")) != "0")
-    ):
-        raise ValueError("saved waveform has no load-port voltage; rerun this case to measure load power")
-    return frame
+    return pd.read_csv(waveform_path(record))
 
 
 def load_frequency_response(
@@ -145,7 +126,18 @@ def load_frequency_response(
     path = frequency_response_path(record)
     if path is None:
         raise ValueError("simulation manifest does not declare a frequency-response artifact")
-    return read_frequency_response(path, extra_columns)
+    return _canonical_frequency_response(path, extra_columns)
+
+
+def _canonical_frequency_response(path: Path, extra_columns: Sequence[str] | None) -> pd.DataFrame:
+    frame = pd.read_csv(path)
+    required = ["frequency_Hz", "voltage_re", "voltage_im", "current_re", "current_im"]
+    required.extend(f"{name}_{part}" for name in (extra_columns or ()) for part in ("re", "im"))
+    if missing := [name for name in required if name not in frame]:
+        raise ValueError(f"canonical AC output is missing columns {missing}: {path}")
+    for name in required:
+        frame[name] = pd.to_numeric(frame[name], errors="raise").astype(float)
+    return frame
 
 
 def load_simulation_result(
@@ -162,41 +154,14 @@ def load_simulation_result(
         current_A=_available_current(numeric.get(CURRENT_COLUMN)),
         status=str(record.get("status", "failed")),
         log=_solver_log(record),
-        diagnostics=_observation_diagnostics(record),
-        frequency_response=read_frequency_response(ac_path, ac_columns) if ac_path is not None else None,
+        diagnostics=dict(record.get("diagnostics") or {}),
+        frequency_response=_canonical_frequency_response(ac_path, ac_columns) if ac_path is not None else None,
         probes={
             name: values
             for name, values in numeric.items()
             if name not in {TIME_COLUMN, VOLTAGE_COLUMN, CURRENT_COLUMN}
         },
     )
-
-
-def _observation_diagnostics(record: dict[str, Any]) -> dict[str, Any]:
-    diagnostics = dict(record.get("diagnostics") or {})
-    if "load_current_column" in diagnostics:
-        return diagnostics
-    column = (record.get("measurement") or {}).get("load_current")
-    if not column:
-        return diagnostics
-    if column != LOAD_CURRENT_COLUMN and record.get("load") not in {None, "none"}:
-        path = artifact_path(record, "netlist")
-        if path is not None and path.is_file():
-            evidence_digest(record, "netlist", path)
-            # The compiler emits this top-level instance only for an attached load.
-            attached = (
-                re.search(r"(?im)^Xload[ \t]+\S+[ \t]+\S+[ \t]+load_model[ \t]*$", path.read_text(encoding="utf-8"))
-                is not None
-            )
-        else:
-            attached = True
-        if attached:
-            diagnostics["load_power_unavailable_reason"] = (
-                "the saved run did not observe the attached load's own current; rerun to measure it"
-            )
-            column = None
-    diagnostics["load_current_column"] = column
-    return diagnostics
 
 
 def _numeric_waveform(waveform: pd.DataFrame) -> dict[str, np.ndarray]:
